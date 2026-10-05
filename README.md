@@ -422,6 +422,53 @@ AA 55 | valid(1B) | u(2B,小端) | v(2B,小端) | scale*100(2B,小端) | XOR校�
   用来肉眼确认"这些恶劣条件都能锁住"。
 - 设备上代码实际落在哪：**运行项目** → `/tmp/maixpy_run/`；**安装成应用后** →
   `/root/apps/target_center_25e/`。main.py 会在这两处自动找工程根目录，所以从哪个目录启动都能 import。
-- 打包时 `app.yaml` 的 `exclude` 已排除 `tools` / `dist` / `reference` / `.workbuddy`（单文件版**不参与打包**，
-  它只是给「运行当前文件」调试用；装在板上的应用走的是模块化源码）。`reference/` 是 upstream 参考资料，
-  不属于本应用的代码，同样不进包。
+- 打包时 `app.yaml` 的 `exclude` 已排除 `tools` / `dist` / `reference` / `maixcam2_rect_center` /
+  `.workbuddy`（单文件版**不参与打包**，它只是给「运行当前文件」调试用；装在板上的应用走的是
+  模块化源码）。`reference/` 是 upstream 参考资料、`maixcam2_rect_center/` 是**另一个自带 app.yaml
+  的独立应用**，都不属于本应用的代码，不进包。
+
+## 九、版本管理（git）
+
+仓库根目录就是本工程目录 `25Efork/`（**不是**上一层 `电赛/` —— 那里面有建模/报销/小车代码等
+共 800MB 无关内容，不能进同一个仓库）。
+
+### 提交前先跑门禁（和"上板前门禁"同一套）
+```bash
+python tools/build_single.py --check    # 源码改了要重新生成 dist/main_single.py
+python tools/smoke_main.py              # 模块化工程预检
+python tools/test_pc.py                 # 精度回归
+python tools/test_hardscene.py --ab     # 硬场景 + 误检反向验证
+git add -A && git commit -m "..."
+```
+
+### 什么进库 / 什么不进库
+
+| 内容 | 是否跟踪 | 原因 |
+|---|---|---|
+| `main.py` `config.py` `app.yaml` `vision/` `assets/` | ✅ | 应用本体 |
+| `tools/`（含 `maix_stub/` 桩模块） | ✅ | 离线验证与调参工具 |
+| `dist/main_single.py` | ✅ | 「运行当前文件」直接用，且有 `--check` 守着与源码同步 |
+| `.workbuddy/memory/*.md` | ✅ | 设计记录：记的是"为什么这么改、踩过哪些坑" |
+| `reference/` | ✅ | upstream 对照资料（他人开源代码，**不是本工程代码**） |
+| `__pycache__/` `*.pyc` | ❌ | 缓存 |
+| `tools/*.jpg` | ❌ | 跑脚本自动重生成，跟踪会造成无意义 diff（要入库用 `git add -f`） |
+| `*.zip` 打包产物 | ❌ | 用 `tools/pack_zip.py` 重新生成 |
+| `.workbuddy/` 除 `memory/` 外 | ❌ | 会话临时状态 |
+
+### 两条已配好的约定（别改）
+- **`.gitattributes` 强制 `eol=lf`**：源码要拷到 MaixCAM2（Linux）上跑，
+  仓库里绝不能出现 CRLF；同时避免 `core.autocrlf=true` 时"一检出就变脏"。
+- **`core.quotepath=false`**（仓库本地配置）：中文文件名在 `git status` / `git log` 里正常显示。
+
+### 常用
+```bash
+git log --oneline                 # 看历史
+git status --short                # 工作区状态
+git diff --stat                   # 改动概览
+git add -f tools/hardscene_montage.jpg   # 强制把某张被忽略的图加进来
+```
+
+> 还没有配置远程仓库。要传 GitHub/Gitee 时：
+> `git remote add origin <仓库地址> && git push -u origin main`
+> （提交身份当前用的是全局配置 `CloudyRain <cloudyrain@example.com>`，
+> 如果是占位邮箱，先 `git config user.email "你的邮箱"` 再改历史或下次提交生效。）

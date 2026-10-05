@@ -1,106 +1,79 @@
-"""Perspective robust black rectangle center detector for MaixCAM2.
+"""黑环/亮面双候选、稀疏透视验证、四边直线跟踪。仅依赖 cv2/numpy。
 
-Pipeline:
-    grayscale -> Canny -> polygon approximation -> nested outer/inner quads
-    -> edge gray-profile verification -> 8x8 homography solve -> 72-point
-    standard-circle inverse mapping.
-
-The implementation intentionally keeps the homography solve in NumPy/Python.
-This makes the eight equations visible and avoids depending on a desktop-only
-OpenCV transform helper. OpenCV is still used for image and contour operations.
+搜索在缩小图上执行；精修和坐标输出始终使用当前帧的原始分辨率。
+已锁定时只采样四条窄带，不运行全图 Canny、轮廓扫描或阈值遍历。
 """
-
-import math
+import time
 
 import cv2
 import numpy as np
 
 
+def _polygon_area(p):
+    return float(cv2.contourArea(np.asarray(p, np.float32).reshape(-1, 1, 2), oriented=True))
+
+
 def _order_quad(points):
-    """Return [top-left, top-right, bottom-right, bottom-left]."""
-    p = np.asarray(points, dtype=np.float64).reshape(4, 2)
+    p = np.asarray(points, np.float32).reshape(4, 2)
     c = p.mean(axis=0)
-    a = np.arctan2(p[:, 1] - c[1], p[:, 0] - c[0])
-    p = p[np.argsort(a)]
+    p = p[np.argsort(np.arctan2(p[:, 1] - c[1], p[:, 0] - c[0]))]
     if _polygon_area(p) < 0:
         p = p[::-1]
-    # The first point is the one nearest the upper-left image corner.
-    start = int(np.argmin(p[:, 0] + p[:, 1]))
-    p = np.roll(p, -start, axis=0)
-    return p.astype(np.float32)
-
-
-def _polygon_area(points):
-    p = np.asarray(points, dtype=np.float64)
-    return 0.5 * float(np.sum(p[:, 0] * np.roll(p[:, 1], -1) -
-                              p[:, 1] * np.roll(p[:, 0], -1)))
+    return np.roll(p, -int(np.argmin(p.sum(axis=1))), axis=0).copy()
 
 
 def _side_lengths(q):
     return np.linalg.norm(np.roll(q, -1, axis=0) - q, axis=1)
 
 
-def _angles_are_rectangular(q, min_angle):
-    for i in range(4):
-        v1 = q[(i - 1) % 4] - q[i]
-        v2 = q[(i + 1) % 4] - q[i]
-        d = np.linalg.norm(v1) * np.linalg.norm(v2)
-        if d < 1e-6:
-            return False
-        c = float(np.clip(np.dot(v1, v2) / d, -1.0, 1.0))
-        angle = math.degrees(math.acos(c))
-        if angle < min_angle or angle > 180.0 - min_angle:
-            return False
-    return True
-
-
 def _gaussian_solve(a, b):
-    """Solve an 8x8 system with partial-pivot Gaussian elimination."""
-    m = np.concatenate((np.asarray(a, dtype=np.float64),
-                        np.asarray(b, dtype=np.float64).reshape(-1, 1)), axis=1)
-    n = m.shape[0]
-    for col in range(n):
+    """带部分主元的高斯消元；消去行向量化，避免 64 次 Python 行循环。"""
+    m = np.column_stack((np.asarray(a, np.float64), np.asarray(b, np.float64)))
+    for col in range(len(m)):
         pivot = col + int(np.argmax(np.abs(m[col:, col])))
         if abs(m[pivot, col]) < 1e-10:
-            raise ValueError("singular homography system")
+            raise ValueError("degenerate quadrilateral")
         if pivot != col:
             m[[col, pivot]] = m[[pivot, col]]
         m[col] /= m[col, col]
-        for row in range(n):
-            if row == col:
-                continue
-            factor = m[row, col]
-            if abs(factor) > 1e-12:
-                m[row] -= factor * m[col]
+        factors = m[:, col].copy()
+        factors[col] = 0.0
+        m -= factors[:, None] * m[col]
     return m[:, -1]
 
 
+def _homography(src, dst):
+    """显式构建 8×8 方程；先归一化坐标以提高大像素坐标下的稳定性。"""
+    src, dst = np.asarray(src, np.float64), np.asarray(dst, np.float64)
+    sc, dc = src.mean(axis=0), dst.mean(axis=0)
+    ss, ds = float(np.max(np.abs(src - sc))), float(np.max(np.abs(dst - dc)))
+    if min(ss, ds) < 1e-8:
+        raise ValueError("zero-size rectangle")
+    xy, uv = (src - sc) / ss, (dst - dc) / ds
+    a = np.zeros((8, 8), np.float64)
+    a[0::2, :3] = np.column_stack((xy, np.ones(4)))
+    a[1::2, 3:6] = a[0::2, :3]
+    a[0::2, 6:] = -uv[:, :1] * xy
+    a[1::2, 6:] = -uv[:, 1:] * xy
+    v = _gaussian_solve(a, uv.reshape(-1))
+    hn = np.append(v, 1.0).reshape(3, 3)
+    ts = np.array([[1 / ss, 0, -sc[0] / ss], [0, 1 / ss, -sc[1] / ss], [0, 0, 1]])
+    td_inv = np.array([[ds, 0, dc[0]], [0, ds, dc[1]], [0, 0, 1]])
+    h = td_inv @ hn @ ts
+    return h / h[2, 2] if abs(h[2, 2]) > 1e-12 else h
+
+
 def homography_8x8(src_quad, width_mm, height_mm):
-    """Map image quad to a 1 px = 1 mm rectangle using eight equations."""
-    src = np.asarray(src_quad, dtype=np.float64).reshape(4, 2)
-    dst = np.array([[0.0, 0.0], [width_mm, 0.0],
-                    [width_mm, height_mm], [0.0, height_mm]], dtype=np.float64)
-    a = []
-    b = []
-    for (x, y), (u, v) in zip(src, dst):
-        a.append([x, y, 1.0, 0.0, 0.0, 0.0, -u * x, -u * y])
-        b.append(u)
-        a.append([0.0, 0.0, 0.0, x, y, 1.0, -v * x, -v * y])
-        b.append(v)
-    h = _gaussian_solve(a, b)
-    return np.array([[h[0], h[1], h[2]],
-                     [h[3], h[4], h[5]],
-                     [h[6], h[7], 1.0]], dtype=np.float64)
+    return _homography(src_quad, [[0, 0], [width_mm, 0],
+                                 [width_mm, height_mm], [0, height_mm]])
 
 
 def project_points(matrix, points):
-    p = np.asarray(points, dtype=np.float64).reshape(-1, 2)
-    q = np.concatenate((p, np.ones((len(p), 1))), axis=1)
-    z = q.dot(np.asarray(matrix, dtype=np.float64).T)
-    good = np.abs(z[:, 2]) > 1e-10
-    out = np.zeros((len(p), 2), dtype=np.float64)
-    out[good] = z[good, :2] / z[good, 2:3]
-    return out
+    p = np.asarray(points, np.float64).reshape(-1, 2)
+    z = np.column_stack((p, np.ones(len(p)))) @ np.asarray(matrix).T
+    if np.any(np.abs(z[:, 2]) < 1e-9):
+        raise ValueError("point at projective infinity")
+    return z[:, :2] / z[:, 2:]
 
 
 def inverse_map_points(h, points):
@@ -108,325 +81,335 @@ def inverse_map_points(h, points):
 
 
 def standard_circle(width_mm, height_mm, radius_mm, samples=72):
-    """Generate a 72-point circle in the rectified 1 mm coordinate system."""
-    c = np.array([width_mm * 0.5, height_mm * 0.5], dtype=np.float64)
-    angles = np.arange(int(samples), dtype=np.float64) * (2.0 * math.pi / samples)
-    return c + float(radius_mm) * np.column_stack((np.cos(angles), np.sin(angles)))
+    a = np.arange(samples) * (2 * np.pi / samples)
+    return np.array([width_mm / 2, height_mm / 2]) + radius_mm * np.column_stack((np.cos(a), np.sin(a)))
 
 
-def _sample_gray(gray, x, y):
-    h, w = gray.shape[:2]
-    xi = int(round(max(0.0, min(float(w - 1), x))))
-    yi = int(round(max(0.0, min(float(h - 1), y))))
-    return float(gray[yi, xi])
+def _rectangle(w, h, inset=0.0):
+    return np.array([[inset, inset], [w - inset, inset],
+                     [w - inset, h - inset], [inset, h - inset]], np.float64)
 
 
-def edge_gray_profile(gray, outer, inner, samples=14):
-    """Measure white/black/white values across each of the four black bands."""
-    outer = np.asarray(outer, dtype=np.float64)
-    inner = np.asarray(inner, dtype=np.float64)
-    edge_rows = []
-    for i in range(4):
-        values = []
-        for t in np.linspace(0.12, 0.88, int(samples)):
-            po = outer[i] * (1.0 - t) + outer[(i + 1) % 4] * t
-            pi = inner[i] * (1.0 - t) + inner[(i + 1) % 4] * t
-            band = pi - po
-            # 0 = just outside the outer edge, 1 = just inside inner edge.
-            positions = (-0.18, 0.50, 1.18)
-            values.append([_sample_gray(gray, *(po + band * k)) for k in positions])
-        row = np.asarray(values, dtype=np.float64)
-        outside, dark, inside = np.median(row, axis=0)
-        contrast = min(outside, inside) - dark
-        edge_rows.append(dict(outside=float(outside), dark=float(dark),
-                              inside=float(inside), contrast=float(contrast)))
-    contrasts = [r["contrast"] for r in edge_rows]
-    return edge_rows, float(np.median(contrasts)), float(min(contrasts))
+def _sample(gray, points):
+    """一次 OpenCV remap 双线性采样整批点，越界由调用方拒绝。"""
+    shape = points.shape[:-1]
+    p = points.reshape(-1, 2).astype(np.float32)
+    values = cv2.remap(gray, p[:, 0].reshape(1, -1), p[:, 1].reshape(1, -1),
+                       cv2.INTER_LINEAR, borderMode=cv2.BORDER_REPLICATE)
+    return values.reshape(shape)
 
 
 class RectangleCenterDetector:
-    """Detect a white target surrounded by a black rectangular frame."""
-
     def __init__(self, config):
         self.cfg = config
         self.last = None
         self._smooth = None
+        self._track = None
+        self._locked_th = None
+        self._frame = 0
+        self._kernel = np.ones((3, 3), np.uint8)
+        self._t = np.linspace(0.12, 0.88, config.EDGE_SAMPLES, dtype=np.float32)
+        self._circle_cache = {}
+        self._search_count = 0
+        self._threshold_count = 0
 
-    def _extract_quads(self, binary, w, h, source):
-        """Extract relaxed quadrilateral candidates from one binary image.
+    def _valid_quad(self, q, shape, margin=1):
+        h, w = shape
+        if (q[:, 0].min() < margin or q[:, 1].min() < margin or
+                q[:, 0].max() >= w - margin or q[:, 1].max() >= h - margin):
+            return False
+        if not cv2.isContourConvex(np.asarray(q, np.float32).reshape(-1, 1, 2)):
+            return False
+        e = np.roll(q, -1, axis=0) - q
+        lengths = np.linalg.norm(e, axis=1)
+        if lengths.min() < 12:
+            return False
+        # 透视图不要求四角接近 90 度，只排除退化尖角和过扁的四边形。
+        sine = np.abs(e[:, 0] * np.roll(e[:, 1], -1) -
+                      e[:, 1] * np.roll(e[:, 0], -1)) / (lengths * np.roll(lengths, -1))
+        return bool(sine.min() > 0.20)
 
-        The original implementation only used Canny contours. On the target
-        board, glare and the printed target rings often split one black tape
-        edge into several short Canny contours. A dark-pixel mask is much more
-        stable for this scene, so it is used as a complementary candidate
-        source and both lists are deduplicated later.
+    def _layout(self, q, kind):
+        lengths = _side_lengths(q)
+        horizontal = lengths[0] + lengths[2] > lengths[1] + lengths[3]
+        w, h = ((self.cfg.TARGET_LONG_MM, self.cfg.TARGET_SHORT_MM) if horizontal
+                else (self.cfg.TARGET_SHORT_MM, self.cfg.TARGET_LONG_MM))
+        inset = self.cfg.BLACK_FRAME_MM if kind == "inner" else 0.0
+        return w, h, _rectangle(w, h, inset)
+
+    def _verify(self, gray, q, kind):
+        """在正视面选取四边稀疏采样点并投影，不生成整幅 warp 图。
+
+        每条边检查胶带厚度方向的暗带覆盖率与内侧亮区对比，允许局部反光；
+        背景可以是黑色，不再强制外侧为白色。普通纸边及实心黑块会失败。
         """
-        image_area = float(w * h)
-        contours = cv2.findContours(binary, cv2.RETR_LIST,
-                                     cv2.CHAIN_APPROX_SIMPLE)[-2]
-        out = []
-        for cnt in contours:
-            area = abs(float(cv2.contourArea(cnt)))
-            if area < image_area * self.cfg.MIN_AREA_RATIO or area > image_area * self.cfg.MAX_AREA_RATIO:
+        if not self._valid_quad(q, gray.shape):
+            return None
+        w, h, physical_quad = self._layout(q, kind)
+        tape = float(self.cfg.BLACK_FRAME_MM)
+        if tape <= 0 or 2 * tape >= min(w, h):
+            raise ValueError("BLACK_FRAME_MM must be between 0 and half the short side")
+        try:
+            rect_to_image = _homography(physical_quad, q)
+            t = self._t
+            # 三个点覆盖黑带的中部，再在内边缘后采两个亮面点。
+            offsets = tape * np.array([0.25, 0.50, 0.75, 1.22, 1.45])
+            p = np.empty((4, len(t), 5, 2), np.float64)
+            p[0, :, :, 0] = (tape + t * (w - 2 * tape))[:, None]
+            p[0, :, :, 1] = offsets
+            p[1, :, :, 0] = w - offsets
+            p[1, :, :, 1] = (tape + t * (h - 2 * tape))[:, None]
+            p[2, :, :, 0] = (tape + (1 - t) * (w - 2 * tape))[:, None]
+            p[2, :, :, 1] = h - offsets
+            p[3, :, :, 0] = offsets
+            p[3, :, :, 1] = (tape + (1 - t) * (h - 2 * tape))[:, None]
+            mapped = project_points(rect_to_image, p.reshape(-1, 2)).reshape(p.shape)
+        except (ValueError, np.linalg.LinAlgError):
+            return None
+        gh, gw = gray.shape
+        if (mapped[..., 0].min() < 0 or mapped[..., 1].min() < 0 or
+                mapped[..., 0].max() >= gw - 1 or mapped[..., 1].max() >= gh - 1):
+            return None
+        samples = _sample(gray, mapped).astype(np.float32)
+        dark = np.median(samples[:, :, :3], axis=2)
+        bright = np.median(samples[:, :, 3:], axis=2)
+        delta = bright - dark
+        coverage = (delta >= self.cfg.MIN_EDGE_CONTRAST).mean(axis=1)
+        edge_contrast = np.median(delta, axis=1)
+        # 至少三边的大部分采样成立，第四边也必须有证据，不接受凭亮中心猜框。
+        if (np.count_nonzero(coverage >= self.cfg.MIN_EDGE_COVERAGE) < 3 or
+                coverage.min() < self.cfg.WEAK_EDGE_COVERAGE or
+                np.median(edge_contrast) < self.cfg.MIN_EDGE_CONTRAST):
+            return None
+        rows = [dict(dark=float(np.median(dark[i])), inside=float(np.median(bright[i])),
+                     contrast=float(edge_contrast[i]), coverage=float(coverage[i])) for i in range(4)]
+        outer = project_points(rect_to_image, _rectangle(w, h)).astype(np.float32)
+        if not self._valid_quad(outer, gray.shape):
+            return None
+        return dict(quad=q, outer_quad=outer,
+                    inner_quad=project_points(rect_to_image, _rectangle(w, h, tape)).astype(np.float32),
+                    kind=kind, rect_to_image=rect_to_image, width_mm=w, height_mm=h,
+                    edge_profile=rows, contrast=float(np.median(edge_contrast)),
+                    min_contrast=float(edge_contrast.min()), coverage=coverage,
+                    score=float(np.median(edge_contrast) + 60 * coverage.mean()))
+
+    def _refine(self, gray, q, kind, radius):
+        """当前帧四条灰度窄带 -> 有方向的边缘跳变 -> fitLine -> 四角交点。"""
+        q = np.asarray(q, np.float32)
+        nxt = np.roll(q, -1, axis=0)
+        e = nxt - q
+        lengths = np.linalg.norm(e, axis=1)
+        if lengths.min() < 10:
+            return None
+        normal = np.column_stack((-e[:, 1], e[:, 0])) / lengths[:, None]
+        base = q[:, None, :] * (1 - self._t[None, :, None]) + nxt[:, None, :] * self._t[None, :, None]
+        offsets = np.arange(-radius, radius + 1, dtype=np.float32)
+        points = base[:, :, None, :] + normal[:, None, None, :] * offsets[None, None, :, None]
+        gh, gw = gray.shape
+        inside = ((points[..., 0] >= 1) & (points[..., 0] < gw - 1) &
+                  (points[..., 1] >= 1) & (points[..., 1] < gh - 1)).all(axis=2)
+        values = _sample(gray, points).astype(np.float32)
+        gradient = values[:, :, 2:] - values[:, :, :-2]
+        if kind == "outer":
+            gradient *= -1
+        # 近预测边缘优先，避免捕获靶纸内部印刷圆或另一侧的胶带边缘。
+        penalty = np.abs(offsets[1:-1])[None, None, :] * 0.45
+        indices = np.argmax(gradient - penalty, axis=2)
+        strength = np.take_along_axis(gradient, indices[..., None], axis=2)[..., 0]
+        selected = offsets[indices + 1]
+        lines = []
+        for i in range(4):
+            good = inside[i] & (strength[i] >= self.cfg.MIN_EDGE_CONTRAST * 0.7)
+            if good.sum() < max(5, len(self._t) * self.cfg.WEAK_EDGE_COVERAGE):
+                return None
+            shifts = selected[i, good]
+            med = float(np.median(shifts))
+            good &= np.abs(selected[i] - med) <= max(2.5, float(np.median(np.abs(shifts - med))) * 3)
+            if good.sum() < 5:
+                return None
+            samples = base[i, good] + selected[i, good, None] * normal[i]
+            vx, vy, x, y = cv2.fitLine(samples, cv2.DIST_HUBER, 0, 0.01, 0.01).reshape(4)
+            # 直线 ax+by+c=0。
+            lines.append(np.array([-vy, vx, vy * x - vx * y], np.float64))
+        lines = np.asarray(lines)
+        crosses = np.cross(np.roll(lines, 1, axis=0), lines)
+        if np.any(np.abs(crosses[:, 2]) < 1e-8):
+            return None
+        refined = (crosses[:, :2] / crosses[:, 2:]).astype(np.float32)
+        if (np.linalg.norm(refined - q, axis=1).max() > radius * 2.8 or
+                not self._valid_quad(refined, gray.shape)):
+            return None
+        return refined
+
+    def _candidate_quads(self, mask):
+        """用轮廓树的孔/黑环关系代替候选两两组合。"""
+        contours, hierarchy = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)[-2:]
+        if hierarchy is None:
+            return []
+        hierarchy = hierarchy[0]
+        h, w = mask.shape
+        candidates = []
+        # 先用廉价的包围框/面积筛选，仅拟合最大的少数轮廓。
+        eligible = []
+        for i, cnt in enumerate(contours):
+            x, y, cw, ch = cv2.boundingRect(cnt)
+            if min(cw, ch) < 15 or cw * ch < w * h * self.cfg.MIN_AREA_RATIO:
                 continue
-            perimeter = cv2.arcLength(cnt, True)
-            if perimeter <= 1.0:
-                continue
-            # Threshold masks can have a small notch at a specular highlight;
-            # the larger epsilon is intentional and still keeps four corners.
-            eps = float(self.cfg.APPROX_EPSILON) * perimeter
-            approx = cv2.approxPolyDP(cnt, eps, True)
+            area = abs(cv2.contourArea(cnt))
+            if w * h * self.cfg.MIN_AREA_RATIO <= area <= w * h * self.cfg.MAX_AREA_RATIO:
+                eligible.append((area, i))
+        for area, i in sorted(eligible, reverse=True)[:self.cfg.MAX_CANDIDATES]:
+            cnt = contours[i]
+            peri = cv2.arcLength(cnt, True)
+            approx = cv2.approxPolyDP(cnt, self.cfg.APPROX_EPSILON * peri, True)
+            # 不使用凸包修补任意背景：凸包可把桌面阴影拼成错误大四边形。
             if len(approx) != 4 or not cv2.isContourConvex(approx):
-                hull = cv2.convexHull(cnt)
-                approx = cv2.approxPolyDP(hull, eps * 1.25, True)
-            if len(approx) != 4 or not cv2.isContourConvex(approx):
                 continue
-            q = _order_quad(approx.reshape(4, 2))
-            if not _angles_are_rectangular(q, self.cfg.MIN_ANGLE_DEG):
+            q = _order_quad(approx)
+            if not self._valid_quad(q, mask.shape):
                 continue
-            sides = _side_lengths(q)
-            if min(sides) < 15.0:
-                continue
-            border = np.any((q[:, 0] < 2) | (q[:, 1] < 2) |
-                            (q[:, 0] > w - 3) | (q[:, 1] > h - 3))
-            out.append(dict(quad=q, area=area, sides=sides,
-                            center=q.mean(axis=0), border=bool(border),
-                            source=source))
-        return out
+            parent, depth = int(hierarchy[i][3]), 0
+            while parent >= 0:
+                depth += 1
+                parent = int(hierarchy[parent][3])
+            kind = "inner" if depth % 2 else "outer"
+            if kind == "outer" and hierarchy[i][2] < 0:
+                continue  # 实心黑块没有亮孔。
+            candidates.append((q, kind))
+        # 亮面孔比与背景粘连的黑环更稳定。
+        return sorted(candidates, key=lambda c: c[1] != "inner")
 
-    @staticmethod
-    def _dedupe_quads(candidates):
-        """Keep one candidate when Canny and threshold masks found the same quad."""
-        kept = []
-        for c in sorted(candidates, key=lambda x: x["area"], reverse=True):
-            duplicate = False
-            for k in kept:
-                if abs(c["area"] - k["area"]) / max(c["area"], k["area"], 1.0) > 0.12:
-                    continue
-                if np.mean(np.linalg.norm(c["quad"] - k["quad"], axis=1)) < 10.0:
-                    duplicate = True
-                    break
-            if not duplicate:
-                kept.append(c)
-        return kept
-
-    def _quad_candidates(self, gray):
-        h, w = gray.shape[:2]
-        edges = cv2.Canny(gray, int(self.cfg.CANNY_LOW), int(self.cfg.CANNY_HIGH), L2gradient=True)
-        all_candidates = self._extract_quads(edges, w, h, "canny")
-
-        # Otsu is useful with the low-contrast/underexposed frames visible in
-        # the screenshot. Also try a few fixed thresholds because a bright
-        # reflection can move Otsu to the wrong side of the tape histogram.
-        otsu, _ = cv2.threshold(gray, 0, 255,
-                                cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        thresholds = [int(otsu)]
-        for th in getattr(self.cfg, "DARK_THRESHOLDS", (35, 55, 75, 95, 115)):
-            if abs(int(th) - int(otsu)) > 8:
-                thresholds.append(int(th))
+    def _search(self, gray, roi=None):
+        self._search_count += 1
+        x, y, w, h = roi if roi is not None else (0, 0, gray.shape[1], gray.shape[0])
+        crop = gray[y:y + h, x:x + w]
+        scale = min(1.0, self.cfg.SEARCH_WIDTH / float(w))
+        sw, sh = max(32, int(round(w * scale))), max(24, int(round(h * scale)))
+        small = cv2.resize(crop, (sw, sh), interpolation=cv2.INTER_AREA) if scale < 1 else crop
+        sx, sy = w / float(sw), h / float(sh)
+        thresholds = [self._locked_th] if self._locked_th is not None else []
+        otsu, _ = cv2.threshold(small, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+        for th in (int(otsu),) + tuple(self.cfg.DARK_THRESHOLDS):
+            if not any(abs(th - t) < 6 for t in thresholds):
+                thresholds.append(th)
         for th in thresholds:
-            _, dark = cv2.threshold(gray, th, 255, cv2.THRESH_BINARY_INV)
-            kernel = np.ones((3, 3), np.uint8)
-            dark = cv2.morphologyEx(dark, cv2.MORPH_CLOSE, kernel, iterations=1)
-            all_candidates.extend(self._extract_quads(dark, w, h, "dark_%d" % th))
-
-        all_candidates = self._dedupe_quads(all_candidates)
-        all_candidates.sort(key=lambda x: x["area"], reverse=True)
-        return edges, all_candidates[:64]
-
-    def _pair_score(self, gray, outer, inner):
-        oq, iq = outer["quad"], inner["quad"]
-        ratio = inner["area"] / max(outer["area"], 1.0)
-        if not (self.cfg.MIN_INNER_RATIO <= ratio <= self.cfg.MAX_INNER_RATIO):
-            return None
-        if any(cv2.pointPolygonTest(oq.reshape(-1, 1, 2), tuple(p), False) <= 0 for p in iq):
-            return None
-        outer_ratio = max(outer["sides"]) / max(min(outer["sides"]), 1e-6)
-        inner_ratio = max(inner["sides"]) / max(min(inner["sides"]), 1e-6)
-        expected = self.cfg.TARGET_LONG_MM / self.cfg.TARGET_SHORT_MM
-        shape_score = max(0.0, 1.0 - abs(outer_ratio - expected) / expected)
-        shape_score = max(shape_score, max(0.0, 1.0 - abs(outer_ratio - 1.0 / expected) * expected))
-        if abs(outer_ratio - inner_ratio) > 0.35 * max(outer_ratio, 1.0):
-            return None
-        rows, contrast, min_contrast = edge_gray_profile(gray, oq, iq)
-        if min_contrast < self.cfg.MIN_EDGE_CONTRAST:
-            return None
-        # A4-style tape has a predictable inner/outer area ratio. Keep this
-        # as a soft score so non-A4 rectangular clutter is less likely to win,
-        # while still allowing a different frame width after field tuning.
-        frame_mm = max(0.0, float(getattr(self.cfg, "BLACK_FRAME_MM", 0.0)))
-        short_mm = float(self.cfg.TARGET_SHORT_MM)
-        long_mm = float(self.cfg.TARGET_LONG_MM)
-        expected_ratio = ((short_mm - 2.0 * frame_mm) *
-                          (long_mm - 2.0 * frame_mm) /
-                          max(short_mm * long_mm, 1.0))
-        ratio_score = max(0.0, 1.0 - abs(ratio - expected_ratio) / 0.30)
-        # Prefer a strong, consistently dark band and a candidate away from a crop edge.
-        consistency = max(0.0, min_contrast / max(contrast, 1.0))
-        score = (contrast * 2.0 + min_contrast + 45.0 * shape_score +
-                 20.0 * consistency + 8.0 * (1.0 - ratio) + 18.0 * ratio_score)
-        if outer["border"]:
-            score -= 35.0
-        return score, rows, contrast, min_contrast
-
-    def _select_pair(self, gray, candidates):
-        best = None
-        for i, outer in enumerate(candidates):
-            for inner in candidates[i + 1:]:
-                if inner["area"] >= outer["area"]:
+            self._threshold_count += 1
+            _, mask = cv2.threshold(small, th, 255, cv2.THRESH_BINARY_INV)
+            mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self._kernel)
+            for q, kind in self._candidate_quads(mask):
+                q = q * np.array([sx, sy], np.float32) + np.array([x, y], np.float32)
+                verified = self._verify(gray, q, kind)
+                if verified is None:
                     continue
-                result = self._pair_score(gray, outer, inner)
-                if result is None:
-                    continue
-                score, rows, contrast, min_contrast = result
-                if best is None or score > best["score"]:
-                    best = dict(score=score, outer=outer, inner=inner,
-                                rows=rows, contrast=contrast,
-                                min_contrast=min_contrast, fallback=False)
-        return best
-
-    def _fallback_quad(self, gray, candidates):
-        # If only one edge is available, synthesize the other edge around the
-        # quad center. Try both directions: a contour may be the outer tape
-        # edge, or it may be the bright paper's inner edge.
-        for c in candidates:
-            q = c["quad"].astype(np.float64)
-            center = q.mean(axis=0)
-            best = None
-            for scale in (0.68, 0.76, 0.84, 0.90, 0.94, 1.08, 1.18, 1.30, 1.42):
-                other = center + scale * (q - center)
-                if scale < 1.0:
-                    outer_q, inner_q = q, other
-                else:
-                    outer_q, inner_q = other, q
-                rows, contrast, min_contrast = edge_gray_profile(gray, outer_q, inner_q)
-                if best is None or min_contrast > best[0]:
-                    best = (min_contrast, contrast, rows, outer_q, inner_q)
-            min_contrast, contrast, rows, outer_q, inner_q = best
-            if min_contrast >= self.cfg.MIN_EDGE_CONTRAST:
-                outer = dict(c)
-                outer["quad"] = outer_q.astype(np.float32)
-                inner = dict(quad=inner_q.astype(np.float32), area=c["area"] * 0.70,
-                             sides=_side_lengths(inner_q), center=inner_q.mean(axis=0), border=False)
-                return dict(score=contrast, outer=outer, inner=inner, rows=rows,
-                            contrast=contrast, min_contrast=min_contrast,
-                            fallback=True)
-            # A dark-mask contour is already evidence that the candidate is
-            # made from black pixels. If glare breaks the white/black/white
-            # profile, accept it when the enclosed center is demonstrably
-            # bright. This is the important recovery path for the uploaded
-            # frame: the black tape is visible, but its Canny profile is not
-            # monotonic because of specular reflections.
-            if str(c.get("source", "")).startswith("dark_") and not c.get("border"):
-                cc = c["center"]
-                radius = max(4, int(0.10 * min(c["sides"])))
-                x, y = int(round(cc[0])), int(round(cc[1]))
-                patch = gray[max(0, y - radius):y + radius + 1,
-                             max(0, x - radius):x + radius + 1]
-                center_mean = float(patch.mean()) if patch.size else 0.0
-                dark_limit = float(getattr(self.cfg, "DARK_CENTER_MIN", 90.0))
-                if center_mean >= dark_limit:
-                    scale = math.sqrt(max(0.30, min(0.94,
-                        ((self.cfg.TARGET_SHORT_MM - 2.0 * self.cfg.BLACK_FRAME_MM) *
-                         (self.cfg.TARGET_LONG_MM - 2.0 * self.cfg.BLACK_FRAME_MM) /
-                         (self.cfg.TARGET_SHORT_MM * self.cfg.TARGET_LONG_MM)))))
-                    iq = center + scale * (q - center)
-                    inner = dict(quad=iq.astype(np.float32),
-                                 area=c["area"] * scale * scale,
-                                 sides=_side_lengths(iq), center=iq.mean(axis=0),
-                                 border=False)
-                    # A conservative diagnostic score; it is only used for
-                    # choosing between fallback candidates.
-                    return dict(score=center_mean, outer=c, inner=inner,
-                                rows=[], contrast=center_mean,
-                                min_contrast=center_mean - dark_limit,
-                                fallback=True)
+                refined = self._refine(gray, q, kind, self.cfg.REFINE_RADIUS)
+                if refined is not None:
+                    precise = self._verify(gray, refined, kind)
+                    if precise is not None:
+                        verified = precise
+                self._locked_th = th
+                return verified
+        # Canny 是失锁后的最后辅助，避免每帧全图计算梯度。
+        edges = cv2.Canny(small, self.cfg.CANNY_LOW, self.cfg.CANNY_HIGH)
+        contours = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)[-2]
+        contours = sorted(contours, key=cv2.contourArea, reverse=True)[:self.cfg.MAX_CANDIDATES]
+        for cnt in contours:
+            if cv2.contourArea(cnt) < sw * sh * self.cfg.MIN_AREA_RATIO:
+                continue
+            ap = cv2.approxPolyDP(cnt, self.cfg.APPROX_EPSILON * cv2.arcLength(cnt, True), True)
+            if len(ap) != 4 or not cv2.isContourConvex(ap):
+                continue
+            q = _order_quad(ap) * [sx, sy] + [x, y]
+            for kind in ("inner", "outer"):
+                verified = self._verify(gray, q, kind)
+                if verified is not None:
+                    refined = self._refine(gray, q, kind, self.cfg.REFINE_RADIUS)
+                    precise = self._verify(gray, refined, kind) if refined is not None else None
+                    return precise or verified
         return None
 
     def process(self, gray, timestamp=None):
+        started = time.perf_counter()
         g = np.asarray(gray)
-        if g.ndim == 3:
+        if g.ndim == 3 and g.shape[2] == 1:
             g = g[:, :, 0]
-        if g.dtype != np.uint8:
-            g = np.clip(g, 0, 255).astype(np.uint8)
-        edges, candidates = self._quad_candidates(g)
-        pair = self._select_pair(g, candidates)
-        if pair is None:
-            pair = self._fallback_quad(g, candidates)
-        if pair is None:
-            self.last = dict(valid=False, edges=edges, candidates=len(candidates),
-                             stage="no_black_frame")
+        if g.ndim != 2 or g.dtype != np.uint8:
+            raise ValueError("process expects a uint8 grayscale image")
+        self._frame += 1
+        self._search_count = self._threshold_count = 0
+        candidate, stage = None, "search"
+        if self._track is not None:
+            q, kind = self._track["quad"], self._track["kind"]
+            q = self._refine(g, q, kind, self.cfg.TRACK_RADIUS)
+            if q is not None:
+                candidate = self._verify(g, q, kind)
+                stage = "track"
+        if candidate is None and self._track is not None:
+            q = self._track["outer_quad"]
+            lo, hi = q.min(axis=0), q.max(axis=0)
+            pad = np.maximum((hi - lo) * self.cfg.ROI_PADDING, 24)
+            lo = np.maximum(0, np.floor(lo - pad)).astype(int)
+            hi = np.minimum([g.shape[1], g.shape[0]], np.ceil(hi + pad)).astype(int)
+            candidate = self._search(g, (int(lo[0]), int(lo[1]), int(hi[0] - lo[0]), int(hi[1] - lo[1])))
+            stage = "roi_search"
+        if candidate is None:
+            candidate = self._search(g)
+            stage = "full_search"
+        if candidate is None:
+            self._track = self._smooth = None
+            self._locked_th = None
+            self.last = dict(valid=False, stage="no_black_frame", search_count=self._search_count,
+                             thresholds=self._threshold_count, detector_ms=(time.perf_counter() - started) * 1000)
             return self.last
-
-        oq = _order_quad(pair["outer"]["quad"])
-        side0, side1 = _side_lengths(oq)[0], _side_lengths(oq)[1]
-        short_mm, long_mm = self.cfg.TARGET_SHORT_MM, self.cfg.TARGET_LONG_MM
-        if side0 > side1:
-            width_mm, height_mm = long_mm, short_mm
+        self._track = candidate
+        w, h = candidate["width_mm"], candidate["height_mm"]
+        matrix = candidate["rect_to_image"]
+        # 直接映射正视面圆心才是正确中心，圆周采样不用于平均中心。
+        raw = project_points(matrix, [[w / 2, h / 2]])[0]
+        alpha = float(self.cfg.CENTER_ALPHA)
+        if (self._smooth is None or alpha <= 0 or
+                np.linalg.norm(raw - self._smooth) > self.cfg.FILTER_RESET_PX):
+            center = raw
         else:
-            width_mm, height_mm = short_mm, long_mm
-        try:
-            h_img_to_rect = homography_8x8(oq, width_mm, height_mm)
-            circle = standard_circle(width_mm, height_mm,
-                                     self.cfg.CIRCLE_RADIUS_MM,
-                                     self.cfg.CIRCLE_SAMPLES)
-            mapped = inverse_map_points(h_img_to_rect, circle)
-            # The mean of points after a projective inverse map is not the
-            # projective image of the circle center. Under strong perspective
-            # it can shift by many pixels. Keep the requested 72-point map for
-            # calibration/visualization, but use the mapped rectified center
-            # as the actual target center.
-            rect_center = np.array([[width_mm * 0.5, height_mm * 0.5]], dtype=np.float64)
-            raw_center = inverse_map_points(h_img_to_rect, rect_center)[0]
-        except (ValueError, np.linalg.LinAlgError):
-            self.last = dict(valid=False, edges=edges, candidates=len(candidates),
-                             stage="singular_homography")
-            return self.last
-        if self._smooth is None or self.cfg.CENTER_ALPHA <= 0.0:
-            center = raw_center
-        else:
-            a = float(self.cfg.CENTER_ALPHA)
-            center = self._smooth * (1.0 - a) + raw_center * a
+            center = self._smooth + alpha * (raw - self._smooth)
         self._smooth = center
-        result = dict(valid=True, u=float(center[0]), v=float(center[1]),
-                      raw_u=float(raw_center[0]), raw_v=float(raw_center[1]),
-                      quad=oq, inner_quad=_order_quad(pair["inner"]["quad"]),
-                      homography=h_img_to_rect, circle_points=mapped,
-                      edge_profile=pair["rows"], contrast=pair["contrast"],
-                      min_contrast=pair["min_contrast"], score=pair["score"],
-                      fallback=pair["fallback"], candidates=len(candidates),
-                      width_mm=width_mm, height_mm=height_mm, edges=edges,
-                      stage="ok")
+        key = (w, h, self.cfg.CIRCLE_RADIUS_MM, self.cfg.CIRCLE_SAMPLES)
+        if key not in self._circle_cache:
+            self._circle_cache[key] = standard_circle(*key)
+        result = dict(candidate)
+        result.update(valid=True, u=float(center[0]), v=float(center[1]), raw_u=float(raw[0]), raw_v=float(raw[1]),
+                      quad=candidate["outer_quad"], detected_quad=candidate["quad"],
+                      outer_inferred=candidate["kind"] == "inner",
+                      circle_points=project_points(matrix, self._circle_cache[key]),
+                      stage=stage, threshold=self._locked_th, search_count=self._search_count,
+                      thresholds=self._threshold_count, detector_ms=(time.perf_counter() - started) * 1000)
         self.last = result
         return result
 
 
-def draw_result(gray, result):
-    """Create a BGR debug image without requiring Maix-specific APIs."""
-    g = np.asarray(gray)
-    if g.ndim == 3:
-        g = g[:, :, 0]
+def draw_result(gray, result, show_width=480):
+    """缩小后再转 BGR 和描边，输出坐标仍为相机原图坐标。"""
+    g = np.asarray(gray).squeeze()
+    scale = min(1.0, float(show_width) / g.shape[1])
+    if scale < 1:
+        g = cv2.resize(g, (int(round(g.shape[1] * scale)), int(round(g.shape[0] * scale))))
     canvas = cv2.cvtColor(g, cv2.COLOR_GRAY2BGR)
     if not result.get("valid"):
-        cv2.putText(canvas, "NO BLACK RECTANGLE", (12, 28),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+        cv2.putText(canvas, "NO BLACK RECTANGLE", (8, 24), cv2.FONT_HERSHEY_SIMPLEX, .55, (0, 0, 255), 1)
         return canvas
-    q = np.asarray(result["quad"], dtype=np.int32).reshape(-1, 1, 2)
-    iq = np.asarray(result["inner_quad"], dtype=np.int32).reshape(-1, 1, 2)
-    # Green is the confirmed rectangle outline requested for on-device tuning;
-    # the inner edge is yellow so the tape width can be inspected separately.
-    cv2.polylines(canvas, [q], True, (0, 255, 0), 3)
+    q = np.rint(result["quad"] * scale).astype(np.int32)
+    iq = np.rint(result["inner_quad"] * scale).astype(np.int32)
+    cv2.polylines(canvas, [q], True, (0, 255, 0), 2, cv2.LINE_AA)
     cv2.polylines(canvas, [iq], True, (0, 220, 220), 1)
-    for i, (x, y) in enumerate(np.asarray(result["quad"], dtype=np.float32)):
-        p = (int(round(x)), int(round(y)))
-        cv2.circle(canvas, p, 6, (255, 0, 255), -1)
-        cv2.circle(canvas, p, 8, (255, 255, 255), 1)
-        cv2.putText(canvas, "P%d (%d,%d)" % (i + 1, p[0], p[1]),
-                    (p[0] + 6, p[1] - 8), cv2.FONT_HERSHEY_SIMPLEX,
-                    0.45, (255, 255, 0), 1, cv2.LINE_AA)
-    c = (int(round(result["u"])), int(round(result["v"])))
-    cv2.circle(canvas, c, 5, (255, 0, 0), -1)
-    cv2.putText(canvas, "center=(%d,%d) contrast=%.0f" %
-                (c[0], c[1], result["min_contrast"]), (12, 28),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 220, 0), 2)
+    for i, (x, y) in enumerate(result["quad"]):
+        p = tuple(q[i])
+        cv2.circle(canvas, p, 4, (255, 0, 255), -1)
+        label = "P%d (%d,%d)" % (i + 1, round(float(x)), round(float(y)))
+        tw = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, .36, 1)[0][0]
+        pos = (max(0, min(int(p[0]) + 5, canvas.shape[1] - tw - 1)),
+               max(12, min(int(p[1]) - 7, canvas.shape[0] - 5)))
+        cv2.putText(canvas, label, pos, cv2.FONT_HERSHEY_SIMPLEX, .36, (255, 255, 0), 1, cv2.LINE_AA)
+    c = tuple(np.rint(np.array([result["u"], result["v"]]) * scale).astype(int))
+    cv2.drawMarker(canvas, c, (255, 0, 0), cv2.MARKER_CROSS, 14, 2)
+    cv2.putText(canvas, "(%d,%d) %s %.1fms" % (round(result["u"]), round(result["v"]),
+                result["stage"], result["detector_ms"]), (8, 22), cv2.FONT_HERSHEY_SIMPLEX, .45, (255, 220, 0), 1)
     return canvas
