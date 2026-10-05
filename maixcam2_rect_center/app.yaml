@@ -1,0 +1,12 @@
+id: maixcam2_rect_center
+name: MaixCAM2 Rectangle Center
+name[zh]: MaixCAM2 矩形黑框中心
+version: 1.0.0
+icon: assets/icon.png
+author: 25Efork
+desc: Detect a black rectangle on a white target and output its perspective-correct center.
+desc[zh]: 使用 Canny、多边形逼近和单应性解算识别白底黑框中心。
+exclude:
+  - __pycache__
+  - README.md
+  - test_pc.py

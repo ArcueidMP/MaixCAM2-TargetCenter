@@ -1,0 +1,22 @@
+id: target_center_25e
+name: 25E Target Center
+name[zh]: 25E 靶心识别
+version: 1.0.0
+icon: assets/icon.png
+author: 25Efork
+desc: Locate the bullseye of an A4 target by the black-tape rectangle, output pixel center and px_per_cm.
+desc[zh]: 由 A4 靶纸四周黑胶带矩形反算靶心像素坐标，输出 (u,v) 与 px_per_cm，供云台瞄准解算。
+
+# 默认包含项目目录内所有文件，下面是排除项（.git / __pycache__ 总是排除）
+exclude:
+  - .vscode
+  - .workbuddy
+  - dist
+  - build
+  - tools
+  - reference
+  # ⚠ 嵌套的独立应用目录必须排除：它自带 app.yaml / main.py，
+  #   不排除的话会被当成本应用的普通文件一起打进包里（实测混进 7 个文件）。
+  - maixcam2_rect_center
+  - README.md
+  - 视觉项目代码分析报告.md

@@ -1,0 +1,39 @@
+# =============================================================================
+# .gitignore —— 25Efork（MaixCAM2 靶心识别）
+# 原则：**源码 / 标定 / 文档 / 单文件版要进库；能重新生成的产物、缓存、会话数据不进库。**
+# =============================================================================
+
+# ---- Python 缓存 ----
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ---- 编辑器 / 操作系统 ----
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+Thumbs.db
+~$*
+
+# ---- 工具工作数据 ----
+# .workbuddy/ 里**只有 memory/ 是有长期价值的设计记录**（记录"为什么这么改"、
+# 踩过哪些坑），跟着仓库走；其余是本次会话的临时状态，不进库。
+.workbuddy/*
+!.workbuddy/memory/
+
+# ---- 测试产出的图片 ----
+# tools/*.jpg 都是跑 tools/ 下脚本时自动重新生成的（debug_overlay.jpg /
+# hardscene_montage.jpg / exp_*.jpg），每次都重写会造成大量无意义 diff。
+# 需要把某张图放进仓库时用： git add -f tools/xxx.jpg
+tools/*.jpg
+
+# ---- 打包产物 ----
+# dist/main_single.py **不忽略**（它是「运行当前文件」直接用的交付物，且有
+# build_single.py --check 守着它与源码同步）；这里只忽略压缩包。
+*.zip
