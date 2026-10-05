@@ -328,7 +328,9 @@ class RectangleCenterDetector:
                     return precise or verified
         # 透明膜的反光可能把整条黑环切开，内孔也不再闭合。
         # 仅失锁时从长线段拼四边，并通过相同暗带验证，绝不凭亮中心猜框。
-        return self._line_search(gray, edges, sx, sy, x, y)
+        line_edges = cv2.Canny(cv2.GaussianBlur(small, (5, 5), 0),
+                               self.cfg.CANNY_LOW, self.cfg.CANNY_HIGH)
+        return self._line_search(gray, line_edges, sx, sy, x, y)
 
     def _line_search(self, gray, edges, sx, sy, x, y):
         h, w = edges.shape
@@ -339,8 +341,10 @@ class RectangleCenterDetector:
         p = segments.reshape(-1, 2, 2).astype(np.float64)
         delta = p[:, 1] - p[:, 0]
         lengths = np.linalg.norm(delta, axis=1)
-        ids = np.argsort(lengths)[-32:]
+        ids = np.argsort(lengths)[-64:]
         p, delta, lengths = p[ids], delta[ids], lengths[ids]
+        lines = np.cross(np.column_stack((p[:, 0], np.ones(len(p)))),
+                         np.column_stack((p[:, 1], np.ones(len(p)))))
         angles = np.arctan2(delta[:, 1], delta[:, 0]) % np.pi
         # 以长线段为种子，最多尝试三组主方向，兼容靶紙绕光轴旋转。
         tried, best = [], None
@@ -372,8 +376,6 @@ class RectangleCenterDetector:
                 groups.append(sorted(pairs, reverse=True)[:6])
             for _, a, b in groups[0]:
                 for _, c, d in groups[1]:
-                    lines = np.cross(np.column_stack((p[:, 0], np.ones(len(p)))),
-                                     np.column_stack((p[:, 1], np.ones(len(p)))))
                     intersections = np.cross(lines[[a, b, b, a]], lines[[c, c, d, d]])
                     if np.any(np.abs(intersections[:, 2]) < 1e-8):
                         continue
