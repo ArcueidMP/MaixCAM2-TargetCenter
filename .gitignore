@@ -33,6 +33,20 @@ Thumbs.db
 # 需要把某张图放进仓库时用： git add -f tools/xxx.jpg
 tools/*.jpg
 
+# ---- 调试截图 ----
+# 两条轨道都可能逮到真机画面截图丢在各自目录里（如
+# maixcam2_rect_center/screenshot_optimized.png）。这类是调试素材，不进库；
+# 要留就 git add -f，图片本身不受版本管理约束。
+screenshot*.png
+screenshot*.jpg
+*_screenshot.png
+
+# ---- 调试截图 ----
+# 真机 / MaixVision 抓屏、算法效果截图都是过程产物，随时可重拍；不进库。
+# （应用图标 assets/icon.png 不受影响，它不以 screenshot 开头。）
+screenshot_*.png
+*_screenshot.png
+
 # ---- 打包产物 ----
 # dist/main_single.py **不忽略**（它是「运行当前文件」直接用的交付物，且有
 # build_single.py --check 守着它与源码同步）；这里只忽略压缩包。

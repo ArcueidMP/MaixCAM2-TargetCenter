@@ -445,13 +445,15 @@ git add -A && git commit -m "..."
 
 | 内容 | 是否跟踪 | 原因 |
 |---|---|---|
-| `main.py` `config.py` `app.yaml` `vision/` `assets/` | ✅ | 应用本体 |
+| `main.py` `config.py` `app.yaml` `vision/` `assets/` | ✅ | 应用本体（轨道 A） |
 | `tools/`（含 `maix_stub/` 桩模块） | ✅ | 离线验证与调参工具 |
 | `dist/main_single.py` | ✅ | 「运行当前文件」直接用，且有 `--check` 守着与源码同步 |
 | `.workbuddy/memory/*.md` | ✅ | 设计记录：记的是"为什么这么改、踩过哪些坑" |
 | `reference/` | ✅ | upstream 对照资料（他人开源代码，**不是本工程代码**） |
+| `AGENTS.md` | ✅ | 双轨协作契约（跨轨公共） |
 | `__pycache__/` `*.pyc` | ❌ | 缓存 |
 | `tools/*.jpg` | ❌ | 跑脚本自动重生成，跟踪会造成无意义 diff（要入库用 `git add -f`） |
+| `screenshot*.png` 等调试截图 | ❌ | 真机画面素材，属调试产物 |
 | `*.zip` 打包产物 | ❌ | 用 `tools/pack_zip.py` 重新生成 |
 | `.workbuddy/` 除 `memory/` 外 | ❌ | 会话临时状态 |
 
@@ -467,6 +469,11 @@ git status --short                # 工作区状态
 git diff --stat                   # 改动概览
 git add -f tools/hardscene_montage.jpg   # 强制把某张被忽略的图加进来
 ```
+
+> ⚠ **本仓库有两个 AI 代理共用同一个工作树、并发写盘**（详见 [`AGENTS.md`](AGENTS.md)）：
+> **严禁 `git add -A` / `git add .`** —— 会把对方写到一半的文件一起提交进去。
+> 一律按路径精确 add，提交信息带轨道前缀（`deepseek:` / `gpt:` / `repo:` / `docs:` / `tools:`），
+> 提交前用 `git status --short` 确认暂存区只含自己的路径。
 
 > 还没有配置远程仓库。要传 GitHub/Gitee 时：
 > `git remote add origin <仓库地址> && git push -u origin main`
