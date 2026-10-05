@@ -10,10 +10,10 @@ main_single.py · 25E 靶心识别 —— 单文件自包含版
 用途：在 MaixVision 里点「运行当前文件」即可运行（不必用「运行项目」）。
       行为与模块化工程完全一致，输出也就完全一致。
 
-生成时间：2026-10-05 15:09:51
-    config.py            sha1=78296bf8ff46
-    main.py              sha1=d5043a3a1d09
-    vision/detector.py   sha1=b50272bab7c9
+生成时间：2026-10-05 15:43:29
+    config.py            sha1=42091430c1c7
+    main.py              sha1=c0df766f7db2
+    vision/detector.py   sha1=b3d11a0e4aea
     vision/geometry.py   sha1=aeb94b7f8c58
     vision/overlay.py    sha1=ce3ff7f48092
 """
@@ -21,7 +21,7 @@ main_single.py · 25E 靶心识别 —— 单文件自包含版
 import sys as _sys
 import types as _types
 
-_SRC_SHA1 = {'vision/geometry.py': 'aeb94b7f8c588dbe789efcf59d92c814b8105ffe', 'vision/detector.py': 'b50272bab7c98364c1cf5e97efc4fdb89de2714d', 'vision/overlay.py': 'ce3ff7f4809228e2fcba0b754b22e2a8725eb1b4', 'config.py': '78296bf8ff463ce194a371ab011f07b0a4a36fc4', 'main.py': 'd5043a3a1d09a664bdd1ec178f36cf9e55cb9264'}
+_SRC_SHA1 = {'vision/geometry.py': 'aeb94b7f8c588dbe789efcf59d92c814b8105ffe', 'vision/detector.py': 'b3d11a0e4aeae9ebd328b13a4dac1815b8e36874', 'vision/overlay.py': 'ce3ff7f4809228e2fcba0b754b22e2a8725eb1b4', 'config.py': '42091430c1c779e6970295139b209c82d7b328f9', 'main.py': 'c0df766f7db26feaf677e48d79daaf9a29a58a0c'}
 
 # --------------------------------------------------------------------------
 # ① 各模块源码原样嵌入，运行时装进 sys.modules（保持原 import 语义）
@@ -490,6 +490,7 @@ detector.py · 一帧灰度图 -> 靶心像素坐标（OpenCV + NumPy）
 """
 
 import math
+import time
 
 import numpy as np
 import cv2
@@ -499,7 +500,8 @@ from . import geometry as G
 
 def _empty():
     return dict(valid=False, u=None, v=None, scale=0.0, quad=None, corners=None,
-                stage="none", raw_u=None, raw_v=None, th=None, lvl=0, cand=None)
+                stage="none", raw_u=None, raw_v=None, th=None, lvl=0, cand=None,
+                ms={}, masks=0)
 
 
 def _dbg_rec(th, lvl=0, n=0, score=0.0, kind="-", fg=0.0, fill=0.0, rim=0.0,
@@ -545,6 +547,121 @@ def _rise(x, lo, hi):
     return float(x - lo) / max(1e-9, float(hi) - float(lo))
 
 
+def _top_contours(cnts, limit):
+    """
+    轮廓太多时，只保留"点数最多的前 limit 条"的下标，其余直接不看。
+
+    ★ 为什么需要它（实测数据说话）
+    --------------------------------------------------------------------------
+    噪声/纹理二值图上一张掩膜能有 **2 万条**轮廓。旧实现对每条都做
+    `contourArea` + `boundingRect` + `minAreaRect`（后者内部要算凸包），
+    实测单张掩膜 **260ms**（PC/x86），板上还要乘以十几倍 —— 这就是"每帧几秒"。
+    而 `MAX_CANDIDATES` 只在循环**之后**才截断，救不了这一段。
+
+    为什么用"点数"来排序，而不是直接算面积：
+        `len(contour)` 是**纯 Python** 就能拿到的量，不需要任何 cv2 调用；
+        而"算面积"本身正是我们要躲开的那 2 万次 cv2 调用之一。
+        轮廓的点数与它的尺度正相关（周长越大点越多），用它做排序足够选出大轮廓；
+        真实靶纸框的轮廓点数（上百）远高于噪点碎片（几个），稳居前列。
+
+    什么时候不截断：`len(cnts) <= limit`（干净场景，本来就没几条轮廓）时
+    原样返回 —— 所以常规场景**零额外开销、零行为变化**，只给病态掩膜一个上界。
+
+    返回一个下标序列（list/range，可直接迭代）。
+    """
+    n = len(cnts)
+    lim = max(1, int(limit or 0))
+    if n <= lim:
+        return range(n)
+    sizes = np.fromiter(map(len, cnts), dtype=np.int64, count=n)
+    # argpartition 是 O(n)，先粗选出前 lim 个，再只对这小批做精确排序
+    sel = np.argpartition(-sizes, lim - 1)[:lim]
+    return sel[np.argsort(-sizes[sel], kind="stable")]
+
+
+def boundary_estimate(bw):
+    """
+    廉价估计掩膜的"总边界长度"（隔点采样，成本约 0.3ms）。
+
+    做法：按自适应步长抽稀后，统计水平/垂直方向上 0<->255 的跳变个数。
+    跳变数正比于总边界长度，而 `findContours` 的开销（要创建的轮廓对象数、
+    总点数）也完全由边界长度决定 —— 所以它能**很好地预测 findContours 有多贵**：
+    实测（1280x720）| 估计值 | findContours
+        20 ~ 600     |  0.7 ~ 3ms     （干净掩膜：一条胶带环）
+        9.7k         |  17ms
+        13.7k ~ 18.9k|  19 ~ 48ms
+        72k          |  190ms         （白噪声 + 精细形态档：2.3 万条轮廓）
+
+    步长随分辨率自适应（约每 160 像素取一个），所以同一个场景在
+    1280x720 / 640x480 下估出来的量级一致，阈值不用跟着分辨率改。
+
+    这个量**不参与任何判定结果**，只用来决定"要不要走连通域预筛这条贵路径"。
+    """
+    h, w = bw.shape[:2]
+    step = max(1, int(round(max(w, h) / 160.0)))
+    if step <= 1:
+        return (int(np.count_nonzero(bw[:, 1:] != bw[:, :-1]))
+                + int(np.count_nonzero(bw[1:, :] != bw[:-1, :])))
+    a = bw[::step, :]
+    c = bw[:, ::step]
+    return (int(np.count_nonzero(a[:, 1:] != a[:, :-1]))
+            + int(np.count_nonzero(c[1:, :] != c[:-1, :])))
+
+
+def _survivor_contours(bw, cfg, W, H):
+    """
+    "掩膜碎成渣"时才走的贵路径：先用连通域统计把碎块整体滤掉，再对幸存者描边。
+
+    为什么需要它：`findContours` 在 2 万条轮廓的掩膜上要 **190ms**（PC/x86），
+    因为光是**创建 2 万个小轮廓对象**就占了绝大部分时间 —— 无论后面怎么截断
+    （`_top_contours` 只能省掉循环，省不掉这里的对象创建）都已经晚了。
+    所以必须先"不生成"这些轮廓：连通域统计一次拿到每块的前景面积与外接框，
+    用 numpy 向量化筛出够大的那些，再只在"幸存掩膜"上描边。
+
+    ⚠ 两条"想当然就会静默丢候选"的等价性约束：
+      · 判"够大"用 **像素面积 ≥ amin 或 外接框面积 ≥ amin**（并集，保守）。
+        不能只看像素面积：环的像素面积 = 外框 − 内孔，比内孔还小；
+        亮面族候选（内孔轮廓）的面积可能**大于**它所属连通域的像素面积。
+        只用像素面积会把远距离的亮面候选整族砍掉。
+        取并集后本预筛是**超集**：正常路径能通过的轮廓，这里一定还在。
+      · **这里绝不做"贴边"过滤。** 贴边判断必须留给后面的逐轮廓检查：
+        暗背景场景里整幅深色背景是一条**贴边的巨大连通域**，而真正的靶纸
+        "纸面"（它的内孔）好好地待在内部、并不贴边。在连通域层面按贴边丢弃，
+        会把"暗背景 + 亮面族"这条救命路径一起丢掉。
+
+    因为这条路径只可能在"阈值明显不合理"的碎渣掩膜上触发，这里用
+    `CHAIN_APPROX_SIMPLE` 描边（点数更少）；真正承载靶纸的干净掩膜走的是
+    正常路径、仍然是 `CHAIN_APPROX_NONE`（亚像素精修需要密点）。
+
+    返回 (cnts, hier)；没有够大的连通域时返回 None。
+    """
+    if bw is None or bw.size == 0:
+        return None
+    n, labels, stats, _ = cv2.connectedComponentsWithStats(bw, 8, cv2.CV_32S)
+    if n <= 1:                                  # 只有背景
+        return None
+    st = stats[1:]                              # 去掉 label=0（背景）
+    # stats 列序：LEFT=0, TOP=1, WIDTH=2, HEIGHT=3, AREA=4（用整数下标，跨版本稳）
+    a = st[:, 4].astype(np.int64)
+    box = st[:, 2].astype(np.int64) * st[:, 3].astype(np.int64)
+    amin = float(cfg.MIN_AREA_RATIO) * float(W * H)
+    idx = np.flatnonzero((a >= amin) | (box >= amin))
+    if idx.size == 0:
+        return None
+    cap = int(getattr(cfg, "MAX_SCAN_COMPONENTS", 256) or 0)
+    if cap > 0 and idx.size > cap:
+        rank = np.maximum(a, box)[idx]
+        idx = idx[np.argsort(-rank, kind="stable")[:cap]]
+    lut = np.zeros(n, np.uint8)
+    lut[idx + 1] = 255
+    surv = lut[labels]                          # 一次 C 级查找，整幅一次搞定
+    p = cv2.findContours(surv, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+    cnts, hier = p[-2], p[-1]
+    if hier is not None and getattr(hier, "ndim", 0) == 3:
+        hier = hier[0]
+    return cnts, hier
+
+
 def contour_features(bw, gray, cfg, W, H):
     """
     列出二值图上所有"够大"的候选轮廓，并算出判断"这是不是靶纸框"的结构特征。
@@ -571,18 +688,34 @@ def contour_features(bw, gray, cfg, W, H):
         border     是否贴到画面边缘（靶纸永远不贴边）
         score      结构分（见 score_candidate）
 
-    两趟走，为了远距离也不拖慢帧率：
+    三趟走，为了远距离也不拖慢帧率（顺序很重要，别调换）：
+        第 0 趟 `boundary_estimate` + `_survivor_contours`：先用约 0.3ms 的
+                 "边界长度估计"判断这张掩膜是不是"碎成渣"（2 万条轮廓那种）。
+                 是 -> 走连通域预筛，只对少数幸存连通域描边（避开 findContours
+                 创建 2 万个轮廓对象的 190ms）；不是 -> 正常 findContours 描边，
+                 零额外开销。**干净掩膜永远走正常路径，行为与优化前完全一致。**
+        第 0′ 趟 `_top_contours`：轮廓仍然很多时，按点数只留前 N 条 ——
+                 让后面那批"逐条 cv2 特征计算"的耗时有上界。
         第一趟只算"便宜"的特征（面积/外接框/最小外接矩形）先过硬门槛，把候选砍到
-        MAX_CANDIDATES 个；第二趟才对幸存者算灰度探针（要读图）并打分。
+                 MAX_CANDIDATES 个；第二趟才对幸存者算灰度探针（要读图）并打分。
         MIN_AREA_RATIO 从 0.02 调小后，暗背景下可能出现成百上千个小轮廓，
-        没有这趟预筛 + 上限，帧率会被直接拖垮。
+        没有这三趟预筛 + 上限，帧率会被直接拖垮。
     """
-    p = cv2.findContours(bw, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
-    cnts, hier = p[-2], p[-1]
-    if not cnts:
-        return []
-    if hier is not None and getattr(hier, "ndim", 0) == 3:
-        hier = hier[0]
+    est = boundary_estimate(bw)
+    if est > int(getattr(cfg, "FRAG_BOUNDARY_EST", 8000)):
+        # 碎渣掩膜：先滤碎块，避免 findContours 为 2 万条轮廓创建对象
+        got = _survivor_contours(bw, cfg, W, H)
+        if got is None:
+            return []
+        cnts, hier = got
+    else:
+        p = cv2.findContours(bw, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_NONE)
+        cnts, hier = p[-2], p[-1]
+        if not cnts:
+            return []
+        if hier is not None and getattr(hier, "ndim", 0) == 3:
+            hier = hier[0]
+    scan_order = _top_contours(cnts, getattr(cfg, "MAX_SCAN_CONTOURS", 512))
 
     img_a = float(W * H)
     amin = float(cfg.MIN_AREA_RATIO) * img_a
@@ -592,7 +725,8 @@ def contour_features(bw, gray, cfg, W, H):
 
     # ---- 第一趟：便宜特征 + 硬门槛 ----
     cheap = []
-    for i, c in enumerate(cnts):
+    for i in scan_order:
+        c = cnts[i]
         area = cv2.contourArea(c)
         if area < amin:
             continue
@@ -621,7 +755,9 @@ def contour_features(bw, gray, cfg, W, H):
     for (area, i, c, w, h, fill, aspect) in cheap:
         f = dict(area=float(area), fill=float(fill), aspect=float(aspect),
                  border=False, parent_area=0.0)
-        pp = c.reshape(-1, 2).astype(np.float64)
+        # 只取视图、不拷贝：整条轮廓可能上万点，逐候选 float64 拷贝是纯浪费。
+        # 16 个等距采样点才需要被后续数学用到；`pts` 交给下游按需转换。
+        pp = c.reshape(-1, 2)
         sp = pp[np.linspace(0, len(pp) - 1, 16).astype(int)]     # 16 个等距采样点
         pid = int(hier[i][3]) if hier is not None else -1
 
@@ -885,8 +1021,12 @@ class TargetCenterDetector:
         self._next_sweep = 0          # 下次允许扫描的帧号（防止每帧都全扫）
         self._frame_i = 0
         self._miss = 0                # 连续失败帧数（触发重新标定）
-        self._dbg_pass = ""           # last_debug 来自哪一趟（coarse/full/roi）
+        self._dbg_pass = ""           # last_debug 来自哪一趟（coarse/full/roi/track）
         self.last_debug = []          # 最近一帧各阈值的候选情况（供板端打印诊断）
+        self._sweep_cursor = 0        # 扫描表的轮转游标（每帧掩膜预算用，见 _masks）
+        self.last_masks = 0           # 上一帧实际消费的掩膜数（性能观测用）
+        self._last_quad = None        # 上一帧锁定的四边形（帧间 ROI 跟踪的种子）
+        self._track_miss = 0          # 连续多少帧没能靠 ROI 跟住
 
     # =====================================================================
     # ① 二值化
@@ -926,18 +1066,33 @@ class TargetCenterDetector:
 
     def _mask_specs(self, g, force=False):
         """
-        本帧要试的 (阈值, 形态学档位) 列表（按优先级）。锁定后只有一个 —— 稳态零额外开销。
+        本帧要试的 (阈值, 形态学档位) 列表（按优先级），外加"必试项个数" n_pri。
 
-        排序策略：**先把所有阈值用常规形态学跑一遍，再整体换成精细形态学跑一遍**。
+        排序策略（与旧实现完全同序，只在其前面插了一个"上一帧锁定值"）：
+            ① 上一帧锁定的那个阈值+形态档 —— **放最前面**；
+            ② 常规形态学：先优先阈值（固定 / Otsu），再扫描表 THRESH_SWEEP；
+            ③ 精细形态学：整块再来一遍（救远距离被腐蚀掉的细环）。
         这样近处（常规够用）在第一轮就命中并提前退出，不会为"远距离"付额外代价；
         只有真的什么都找不到时，才会花第二轮去救细环。
 
-        force=True：无视已有的锁定、强制全扫。用于"缩小图这一遍没找到 → 全分辨率升级这一遍"，
-        否则上一遍留下的（可能是错的）锁会把升级这一遍一起锁死，永远救不回来。
+        ★ 为什么要把"上一帧锁定值"提到最前（这是"板上 0.1fps"的直接原因之一）：
+            "缩小图没锁住 → 全分辨率升级"那一趟用的是 force_sweep=True
+            （理由见 docstring 末尾），于是它**无视已有的锁定**、把 12 个阈值 ×
+            2 个形态档 = 24 个掩膜在**全分辨率**上重扫一遍。一旦"缩小图这一遍
+            长期失败"（远距离时胶带在 0.5 倍图上只有 1px，很容易失败），
+            就变成**每一帧**都在全分辨率上重扫 24 个掩膜 —— 每帧几秒。
+            把锁定值排到最前，最常见的"缩小图没看出来、全分辨率一看就中"这种情况
+            第 1 个掩膜就命中并 break（生成器让 break 真正省下后面的工作）。
+
+        返回 (specs, n_pri)：n_pri 之前的条目是"每帧必试"的，不参与预算削减。
+
+        force=True：无视已有的锁定、强制重建完整扫描表。用于"缩小图这一遍没找到
+        → 全分辨率升级这一遍"，否则上一遍留下的（可能是错的）锁会把升级这一遍
+        一起锁死，永远救不回来。
         """
         cfg = self.cfg
         if self._th_lock is not None and not force:
-            return [(int(self._th_lock), int(self._lvl_lock))]
+            return [(int(self._th_lock), int(self._lvl_lock))], 1
 
         if getattr(cfg, "SELECT_MODE", "score") == "largest":
             mode = "otsu" if cfg.USE_OTSU else "fixed"     # 完全复现旧行为
@@ -946,42 +1101,80 @@ class TargetCenterDetector:
             if cfg.USE_OTSU and mode == "fixed":
                 mode = "otsu"
 
-        vals = []
+        # 优先阈值：固定 / Otsu（Otsu 要对本图算一次直方图，很便宜）
+        pri = []
         if mode in ("fixed", "auto"):
-            vals.append(int(cfg.BLACK_THRESH))
+            pri.append(int(cfg.BLACK_THRESH))
         if mode in ("otsu", "auto"):
             t, _ = cv2.threshold(g, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            vals.append(int(round(float(t))))
+            pri.append(int(round(float(t))))
+        # 扫描表：只有"需要重新标定"的帧才加（限流见 THRESH_RELOCK_EVERY）
+        sweep = []
         if (mode != "fixed" and getattr(cfg, "THRESH_RELOCK", False)
                 and (force or self._frame_i >= self._next_sweep)):
-            vals += [int(v) for v in getattr(cfg, "THRESH_SWEEP", ())]
+            sweep = [int(v) for v in getattr(cfg, "THRESH_SWEEP", ())]
 
-        seen, ths = set(), []
-        for v in vals:
-            v = max(1, min(254, int(v)))
-            if v not in seen:
-                seen.add(v)
-                ths.append(v)
+        def _norm(v):
+            return max(1, min(254, int(v)))
 
-        lvls = [0]
-        if getattr(cfg, "MORPH_SEARCH", False):
-            lvls.append(1)
-        return [(t, lvl) for lvl in lvls for t in ths]
+        lvls = [0] + ([1] if getattr(cfg, "MORPH_SEARCH", False) else [])
+        specs, seen = [], set()
+        if self._th_lock is not None:                  # ① 锁定值（含它自己的形态档）
+            s = (_norm(self._th_lock), int(self._lvl_lock))
+            specs.append(s)
+            seen.add(s)
+        for v in pri:                                  # ② 常规形态学下的优先阈值
+            s = (_norm(v), 0)
+            if s not in seen:
+                seen.add(s)
+                specs.append(s)
+        n_pri = len(specs)                             # ← 到此为止每帧必试
+        for v in sweep:                                # ②′ 常规形态学下的扫描表
+            s = (_norm(v), 0)
+            if s not in seen:
+                seen.add(s)
+                specs.append(s)
+        for lvl in lvls[1:]:                           # ③ 精细形态学整块再来一遍
+            for v in pri + sweep:
+                s = (_norm(v), lvl)
+                if s not in seen:
+                    seen.add(s)
+                    specs.append(s)
+        return specs, n_pri
 
-    def _masks(self, g, force=False):
-        """产出 (阈值, 形态学档位, 二值图) 列表；阈值 -1 表示自适应阈值（无固定阈值）。"""
-        outs = []
-        for th, lvl in self._mask_specs(g, force):
+    def _masks(self, g, force=False, budget=None):
+        """
+        产出 (阈值, 形态学档位, 二值图)；阈值 -1 表示自适应阈值（无固定阈值）。
+
+        两个关键点，都是"0.1fps"的成因：
+          · **生成器**：旧实现一次性把所有掩膜算完再返回，于是 `_detect_on` 里
+            的"命中就 break"只省下了描边，**省不掉阈值化 + 形态学** ——
+            24 个掩膜照样全做完。改成生成器后 break 才是真的 break。
+          · **每帧预算 + 轮转游标**：全分辨率兜底那一趟最坏要过 24 个掩膜，
+            单帧耗时没有上界。这里给"必试项"之外的扫描表加预算，超出的部分
+            留到下一帧接着扫（游标轮转），既给单帧耗时一个上界，
+            又不牺牲"最终一定能把扫描表扫完"。
+        """
+        specs, n_pri = self._mask_specs(g, force)
+        if budget is not None and len(specs) > n_pri:
+            budget = max(int(budget), n_pri)
+            if len(specs) > budget:
+                tail = specs[n_pri:]
+                k = min(budget - n_pri, len(tail))
+                off = int(self._sweep_cursor) % len(tail)
+                win = [tail[(off + i) % len(tail)] for i in range(k)]
+                self._sweep_cursor = off + k
+                specs = specs[:n_pri] + win
+        for th, lvl in specs:
             _, bw = cv2.threshold(g, th, 255, cv2.THRESH_BINARY_INV)
-            outs.append((th, lvl, self._morph(bw, lvl)))
+            yield th, lvl, self._morph(bw, lvl)
         if (getattr(self.cfg, "USE_ADAPTIVE", False)
                 and self._th_lock is None and self._frame_i >= self._next_sweep):
             blk = int(self.cfg.ADAPTIVE_BLOCK) | 1
             bw = cv2.adaptiveThreshold(g, 255, cv2.ADAPTIVE_THRESH_MEAN_C,
                                        cv2.THRESH_BINARY_INV, max(3, blk),
                                        float(self.cfg.ADAPTIVE_C))
-            outs.append((-1, 0, self._morph(bw, 0)))
-        return outs
+            yield -1, 0, self._morph(bw, 0)
 
     # =====================================================================
     # ② 描边：取面积最大的闭合轮廓（旧接口，保留给诊断脚本）
@@ -1023,25 +1216,32 @@ class TargetCenterDetector:
             return None
         return dict(quad=q, center=c, method=method)
 
-    def _detect_on(self, g, tag="", force_sweep=False):
+    def _detect_on(self, g, tag="", force_sweep=False, budget=None):
         """
         在一张（可能已缩小的）图上完成 ①~⑤。
 
         会遍历本帧允许尝试的 (阈值, 形态学档位)，用**结构分**在"mask x 候选轮廓"里
         选最优；首次（或重新标定）会顺带把胜出的组合锁下来。
-        tag 只用于诊断：标出这批 dbg 来自哪一趟（coarse / full / roi）；
+        tag 只用于诊断：标出这批 dbg 来自哪一趟（coarse / full / roi / track）；
         force_sweep=True 用于"缩小图失败 → 全分辨率升级"这一趟（见 _mask_specs）。
+        budget：本帧最多消费几个掩膜（None = 不限）。见 _masks 的说明。
         """
         cfg = self.cfg
         h, w = g.shape[:2]
         sweeping = force_sweep or (self._th_lock is None)
         bonus = float(getattr(cfg, "THRESH_LOCK_BONUS", 0.0))
         best, dbg = None, []
+        n_mask = 0
 
-        for th, lvl, bw in self._masks(g, force_sweep):
-            fg = float((bw > 0).mean())
-            lo = float(getattr(cfg, "MASK_FG_MIN", 0.002))
-            hi = float(getattr(cfg, "MASK_FG_MAX", 0.93))
+        lo = float(getattr(cfg, "MASK_FG_MIN", 0.002))
+        hi = float(getattr(cfg, "MASK_FG_MAX", 0.93))
+        px = float(w * h)
+
+        for th, lvl, bw in self._masks(g, force_sweep, budget=budget):
+            n_mask += 1
+            # 前景占比用 countNonZero（C 级计数）算；旧写法 (bw>0).mean() 会先
+            # 分配一整幅 bool 数组再归约，每个掩膜白花一次 O(W·H) 的分配+归约。
+            fg = cv2.countNonZero(bw) / px
             if not (lo <= fg <= hi):
                 # 阈值不合理：太低(什么都切不出)或太高(把背景都当深色)，直接跳过
                 dbg.append(_dbg_rec(th, lvl, n=0, score=0.0, kind="-",
@@ -1075,11 +1275,13 @@ class TargetCenterDetector:
 
         self.last_debug = dbg
         self._dbg_pass = tag
+        self.last_masks = n_mask            # 本帧实际过了几个掩膜（[fps] 日志会显示）
         if sweeping:
             if best is not None:
                 self._th_lock = int(best["th"])      # 锁定胜出组合：后续帧零额外开销
                 self._lvl_lock = int(best["lvl"])
                 self._th_prev = int(best["th"])
+                self._sweep_cursor = 0               # 锁定变了：扫描预算游标归零
             else:
                 # ⚠ 全扫也失败时**绝不能**把阈值锁成"配置值"。
                 #   踩过的坑：这里原来写 self._th_lock = cfg.BLACK_THRESH，
@@ -1161,20 +1363,37 @@ class TargetCenterDetector:
         return self._solve(gray, timestamp)
 
     def _solve(self, gray, timestamp):
+        cfg = self.cfg
         H, W = gray.shape[:2]
         # WORK_SCALE 默认 None（表示"由 main.py 按相机档位注入"），单独用本类时必须兜底
-        _ws = getattr(self.cfg, "WORK_SCALE", None)
+        _ws = getattr(cfg, "WORK_SCALE", None)
         ws = 1.0 if _ws is None else float(_ws)
         ws = max(0.15, min(1.0, ws))
 
         out, stage = None, "none"
+        # 分段耗时（板上靠这个判断瓶颈到底消没消；perf_counter 开销可忽略）
+        ms = {}
+        t0 = time.perf_counter()
+
+        # ---- 第 0 遍（可关）：帧间 ROI 跟踪 ----
+        # 靶纸是静止的，帧间位移很小。直接用上一帧的四边形扩一圈当搜索区，
+        # 在**全分辨率**上只解这一小块 —— 稳态耗时降到全局搜索的几分之一。
+        # 跟丢/跳变超限就返回 None，自动落回下面的全局搜索，所以只会更快、不会更差。
+        if (getattr(cfg, "ROI_TRACK", True) and self._last_quad is not None
+                and ws < 0.999):
+            tr = self._try_track(gray)
+            ms["track"] = (time.perf_counter() - t0) * 1000.0
+            if tr is not None:
+                out, stage = tr, "track"
 
         # ---- 第一遍：缩小图上"粗定位"板框（省内存 / 省时间）----
-        if ws < 0.999:
+        if out is None and ws < 0.999:
+            t0 = time.perf_counter()
             sw, sh = max(64, int(round(W * ws))), max(64, int(round(H * ws)))
             self._small = cv2.resize(gray, (sw, sh), interpolation=cv2.INTER_AREA,
                                      dst=self._small)
             d = self._detect_on(self._small, "coarse")
+            ms["coarse"] = (time.perf_counter() - t0) * 1000.0
             if d is not None:
                 sx, sy = W / float(sw), H / float(sh)
                 out = dict(quad=d["quad"] * np.array([sx, sy], dtype=np.float64),
@@ -1184,21 +1403,32 @@ class TargetCenterDetector:
                            lvl=d.get("lvl", 0))
                 stage = "coarse%.2f" % ws
 
-        # ---- 缩小图失败：整幅全分辨率直接解算 ----
-        # force_sweep=True：这一趟是"升级"，必须无视上一趟留下的（可能是错的）锁定全扫一遍。
+        # ---- 缩小图（或在禁用缩小时的首帧）失败：整幅全分辨率直接解算 ----
+        # force_sweep=True：这一趟是"升级"，必须无视上一趟留下的（可能是错的）锁定。
+        # budget：给这一趟一个"每帧最多几个掩膜"的上界 —— 它在全分辨率上跑，
+        #         24 个掩膜无上界就是"每帧几秒"。超出的部分下一帧接着扫（游标轮转），
+        #         所以既不牺牲"最终扫得完"，也不让单帧爆炸。
         if out is None:
-            d = self._detect_on(gray, "full", force_sweep=True)
+            t0 = time.perf_counter()
+            d = self._detect_on(gray, "full", force_sweep=True,
+                                budget=int(getattr(cfg, "MAX_MASKS_FULL", 8)))
+            ms["full"] = (time.perf_counter() - t0) * 1000.0
             if d is None:
                 self._book_keep(False)
-                return _empty()
+                self._last_quad = None
+                r = _empty()
+                r["ms"], r["masks"] = ms, self.last_masks
+                return r
             out, stage = d, "full"
 
         # ---- 第二遍：在粗定位外接框内用全分辨率精算 ----
         # 缩小图会把边缘量化到小的像素栅格上（约 ±1 个原始像素的偏置）；
         # 这一遍只处理"靶纸附近"的一小块，既拿回全分辨率精度，
         # 内存占用又只与目标在画面中的大小相关。
-        if ws < 0.999:
-            refined = self._refine_in_roi(gray, out)
+        if ws < 0.999 and stage != "track":
+            t0 = time.perf_counter()
+            refined = self._refine_in_roi(gray, out["quad"], tag="roi")
+            ms["roi"] = (time.perf_counter() - t0) * 1000.0
             if refined is not None:
                 out = refined
                 stage += "+roi"
@@ -1208,7 +1438,7 @@ class TargetCenterDetector:
         # 用"深色环外沿(纸边 21x29.7)"还是"亮面矩形(胶带内沿 17.4x26.1)"换算物理尺度
         info = out.get("info") or {}
         inner = (info.get("kind") == "paper")
-        scale = G.estimate_scale(q, self.cfg, inner=inner)
+        scale = G.estimate_scale(q, cfg, inner=inner)
 
         # ⑦ 时序滤波
         if timestamp is None:
@@ -1218,12 +1448,42 @@ class TargetCenterDetector:
             v_f = self.fv(float(c[1]), timestamp)
 
         self._book_keep(True)
+        self._last_quad = np.asarray(q, dtype=np.float64)   # 给下一帧的 ROI 跟踪当种子
         return dict(valid=True, u=float(u_f), v=float(v_f), scale=float(scale),
                     quad=q, corners=q,
                     stage="%s+%s%s" % (stage, out["method"],
                                        "/paper" if inner else ""),
                     raw_u=float(c[0]), raw_v=float(c[1]),
-                    th=out.get("th"), lvl=out.get("lvl", 0), cand=out.get("info"))
+                    th=out.get("th"), lvl=out.get("lvl", 0), cand=out.get("info"),
+                    ms=ms, masks=self.last_masks)
+
+    def _try_track(self, gray):
+        """
+        帧间 ROI 跟踪：拿上一帧的四边形扩一圈当搜索区，只在这一小块上全分辨率解算。
+
+        返回结果字典，或 None（跟丢 → 调用方落回全局搜索）。
+
+        为什么要"跳变门限"：跟踪最大的风险是**跟着跟着跑到别的干扰物上去了**
+        （裁剪区里另一个东西结构分更高）。所以跟到的框必须和上一帧的框基本重合，
+        否则宁可丢掉这一帧、回全局搜索重找 —— 全局搜索只是慢一点，绝不会锁错。
+        """
+        cfg = self.cfg
+        q_prev = np.asarray(self._last_quad, dtype=np.float64)
+        r = self._refine_in_roi(
+            gray, q_prev, tag="track",
+            margin=float(getattr(cfg, "ROI_TRACK_MARGIN", 0.25)))
+        if r is None:
+            self._track_miss += 1
+            return None
+        c0 = q_prev.mean(axis=0)
+        c1 = np.asarray(r["quad"], dtype=np.float64).mean(axis=0)
+        span = max(1.0, float(max(np.ptp(q_prev[:, 0]), np.ptp(q_prev[:, 1]))))
+        jump = float(np.hypot(c1[0] - c0[0], c1[1] - c0[1]))
+        if jump > float(getattr(cfg, "ROI_TRACK_MAX_JUMP", 0.6)) * span:
+            self._track_miss += 1
+            return None
+        self._track_miss = 0
+        return r
 
     def _book_keep(self, ok):
         """记录连续失败帧数：够了就把阈值解锁，下一帧重新扫描标定。"""
@@ -1236,21 +1496,28 @@ class TargetCenterDetector:
                 and self._miss >= int(getattr(self.cfg, "THRESH_RELOCK_MISS", 3))):
             self._th_lock = None
             self._lvl_lock = 0
+            self._sweep_cursor = 0          # 解锁后从头扫，别接着上一轮的残留游标
             self._miss = 0
 
-    def _refine_in_roi(self, gray, coarse):
+    def _refine_in_roi(self, gray, quad, tag="roi", margin=0.08):
         """
-        用粗定位的结果裁出一小块（靶纸外接框 + 8% 余量），在里面以全分辨率重解。
-        返回裁剪坐标系已平移回全图的字典；不满足条件时返回 None（沿用粗定位结果）。
+        用给定的四边形裁出一小块（外接框 + margin 余量 + 6px），在里面以全分辨率重解。
+        返回裁剪坐标系已平移回全图的字典；不满足条件时返回 None（沿用上层结果）。
+
+        margin：0.08 是"粗定位后精算"用的紧余量（缩小图量化偏差很小）；
+                帧间跟踪（tag="track"）要放大到 0.25 —— 目标帧间会移动，
+                余量太小会让框贴到裁剪边界而被判"可能被裁断"、白白跟丢。
         """
         H, W = gray.shape[:2]
-        q = coarse["quad"]
+        q = np.asarray(quad, dtype=np.float64)
+        if q.shape != (4, 2) or not np.isfinite(q).all():
+            return None
         xmin, ymin = q.min(axis=0)
         xmax, ymax = q.max(axis=0)
         bw, bh = xmax - xmin, ymax - ymin
         if bw < 8 or bh < 8:
             return None
-        mx, my = 0.08 * bw + 6.0, 0.08 * bh + 6.0
+        mx, my = float(margin) * bw + 6.0, float(margin) * bh + 6.0
         x0 = int(max(0, np.floor(xmin - mx)))
         y0 = int(max(0, np.floor(ymin - my)))
         x1 = int(min(W, np.ceil(xmax + mx)))
@@ -1261,7 +1528,7 @@ class TargetCenterDetector:
         if cw * ch > 0.85 * W * H:          # 框几乎等于整幅，不值得再来一遍
             return None
 
-        d = self._detect_on(gray[y0:y1, x0:x1], "roi")
+        d = self._detect_on(gray[y0:y1, x0:x1], tag)
         if d is None:
             return None
         sq = d["quad"]
@@ -1285,6 +1552,10 @@ class TargetCenterDetector:
         self._miss = 0
         self._dbg_pass = ""
         self.last_debug = []
+        self._sweep_cursor = 0
+        self.last_masks = 0
+        self._last_quad = None
+        self._track_miss = 0
 '''
 
 # ===== vision.overlay  (vision/overlay.py) =====
@@ -1538,6 +1809,51 @@ class Config:
     REFINE_D_RATIO = 0.05            # 参与拟合的点到边的最大垂直距离系数
 
     # =========================================================================
+    # 四′ 性能预算（把"最坏一帧"的耗时有上界，别让单帧掉到秒级）
+    # =========================================================================
+    # 背景：真机实测帧率曾只有 0.1fps，而算法本身在 PC 上端到端只要 3.4ms
+    # （≈298fps）。也就是说"慢"不是算法复杂度，而是**某些输入下复杂度爆炸**。
+    # 拆开看是两处，本组参数就是给这两处设上界：
+    #   ① 噪声/纹理二值图（尤其"精细形态档"lvl=1 不做开运算，噪点原样保留）
+    #      一张掩膜能有 2 万条轮廓。旧实现对每条做 contourArea + boundingRect
+    #      + minAreaRect（内部要算凸包）—— 单张掩膜实测 260ms（PC/x86），
+    #      而**更贵的是 findContours 本身**：为 2 万条轮廓创建对象就要 190ms。
+    #      现在分三步设上界（见 vision/detector.contour_features）：
+    #        · boundary_estimate（0.3ms）先判断掩膜是不是"碎成渣"；
+    #          是 -> 走连通域预筛（_survivor_contours），只对少数幸存块描边；
+    #          不是 -> 正常描边，**零额外开销、行为与优化前完全一致**；
+    #        · _top_contours 按轮廓点数只取前 MAX_SCAN_CONTOURS 条进 cv2。
+    #      ⚠ 实测过另一条路（无条件用连通域统计预筛）**被否决**：它在每张掩膜上
+    #        固定加 17~20ms，干净场景反而劣化十几倍。所以必须是"按需触发"。
+    #   ② "缩小图没锁住 → 全分辨率升级"那一趟会无视锁定、在**全分辨率**上重扫
+    #      12 阈值 × 2 形态档 = 24 个掩膜。一旦缩小图长期失败（远距离胶带在
+    #      0.5 倍图上只有 1px，很容易失败），就变成每帧几秒。现在：
+    #      锁定值排到最前 + 每帧掩膜预算 MAX_MASKS_FULL（超出的下一帧接着扫）。
+    # 这三个都是"只加天花板、不减能力"的改动，精度不参与权衡。
+    FRAG_BOUNDARY_EST = 13000    # "掩膜碎成渣"的判据（边界跳变数，分辨率无关）。
+                                 # 实测（PC/x86，1280x720）：
+                                 #   est 20~600   -> findContours 约 1~3ms（干净掩膜：一条胶带环）
+                                 #   est ~9000    -> 约 17ms；~9700 -> 约 20ms
+                                 #   est ~13700   -> 约 27ms；~17200 -> 约 58ms
+                                 #   est ~72000   -> 约 190ms（白噪声+精细形态档：2.3 万条轮廓）
+                                 # 13000 是两条路径的**实测交叉点**：低于它走
+                                 # findContours 更便宜，高于它走连通域预筛更便宜。
+                                 # （曾取 8000，实测在 est≈9000 处反而劣化 2 倍，
+                                 #   因为连通域统计本身有约 11ms 的固定开销。）
+    MAX_SCAN_COMPONENTS = 256    # 碎渣掩膜下，最多保留多少个连通域（按面积取前 N）
+    MAX_SCAN_CONTOURS = 512      # 一张掩膜最多对多少条轮廓做 cv2 特征计算（按点数取前 N）
+                                 # 512 对真机靶纸场景绰绰有余；调小=更快、极端杂乱更易漏
+    MAX_MASKS_FULL = 8           # 全分辨率"升级"那一趟每帧最多过几个掩膜
+                                 # 必试项（上一帧锁定值 / 固定阈值 / Otsu）不受此限制
+    ROI_TRACK = True             # 帧间 ROI 跟踪：稳态优先用上一帧框扩一圈只解一小块
+                                 # 跟丢/跳变超限自动落回全局搜索，只更快不更差
+    ROI_TRACK_MARGIN = 0.25      # 跟踪裁剪区的余量（按框尺寸的比例）。太小会因目标
+                                 # 移动而贴到裁剪边界被判"可能被裁断"、白白跟丢
+    ROI_TRACK_MAX_JUMP = 0.6     # 跟踪结果相对上一帧的中心跳变上限（按框尺寸的比例）。
+                                 # 超了就丢掉这一帧、回全局搜索 —— 宁可慢一点，绝不跟错目标
+    PROFILE_STAGES = True        # 在 [fps] 日志里显示分段耗时与掩膜数（板上定位瓶颈用）
+
+    # =========================================================================
     # 五、⑦ 时序滤波（One Euro）
     # =========================================================================
     FILTER_MODE = "static"           # "static"(要稳) 或 "dynamic"(要快)
@@ -1562,11 +1878,19 @@ class Config:
     DEBUG_SHAPE = True           # 启动首帧打印一次 image2cv 的 shape/format
                                  # （不同固件对灰度图的形状约定不同，留着便于定位问题）
     # ---- 锁框失败时的诊断（真机调参全靠它）----
-    DEBUG_DIAG_EVERY = 2.0       # 失败时隔多少秒打印一次"灰度分布 + 候选结构"
+    DEBUG_DIAG_EVERY = 2.0       # 失败时隔多少秒打印一次"灰度分布 + 候选结构"（只打印，很便宜）
     DEBUG_DUMP = True            # 失败时把原始帧/二值图落盘，便于离线分析
     DEBUG_DIR = "/root/target_dbg"   # 落盘目录（只覆盖同名文件，不会写满磁盘）
                                      # 置空字符串即可关闭；板子上可 `ls /root/target_dbg`
                                      # 再用 MaixVision 的文件管理/`scp` 取回电脑
+    # ⚠ 落盘是**秒级**开销：板上把 3 张全分辨率图编成 PNG 写 flash，比重算一帧慢得多，
+    #   而且会和主循环抢同一个 CPU。原来它和"打印诊断"共用 2 秒的节流、每次失败都写，
+    #   一旦检测在失败/成功之间来回跳，帧率会被它压到很低。
+    #   现在单独节流 + 限量 + 可降采样：前三张够定位问题了，之后不再写盘。
+    DEBUG_DUMP_EVERY = 20.0      # 两次落盘之间的最小间隔（秒）
+    DEBUG_DUMP_MAX = 3           # 本次运行最多落盘几次（<=0 表示不限）
+    DEBUG_DUMP_SCALE = 1.0       # 落盘图缩放（1.0=原始分辨率；0.5=写盘快约 4 倍）
+    DEBUG_DUMP_COMPRESS = 1      # PNG 压缩级别 0~9。1 = 明显更快、体积略大
     SHOW_W = 640                 # 显示画布宽度：先缩到这么宽再用 OpenCV 画标注
                                  # （画布只分配一次并复用，避免每帧新建图像）
     ENABLE_UART = False          # 需要给云台主控发坐标时置 True
@@ -1728,7 +2052,7 @@ from vision.overlay import Overlay                     # noqa: E402
 # 构建标识 —— 启动时打印，用来一眼确认板子跑的是不是最新代码。
 # （本项目出现过"本地 main.py 被旧内容覆盖，设备仍在跑旧逻辑"的情况，
 #   日志里对不上这个版本号就说明下发的是旧文件。）
-BUILD_ID = "2026-10-05-r6"
+BUILD_ID = "2026-10-05-r7"
 
 # 档位里的格式名 -> MaixPy 枚举
 _FMT = {
@@ -1845,11 +2169,25 @@ def pack_result(res):
 # 锁框失败时的诊断（真机调参全靠这个 —— 不然只能靠猜）
 # =============================================================================
 def _write_png(path, arr):
-    ok, buf = cv2.imencode(".png", np.ascontiguousarray(arr))
+    # 压缩级别默认 1（不是 OpenCV 默认的 3）：板上写盘是"秒级"操作，
+    # 低压缩级别显著更快、体积只大一点，对"看一眼二值图对不对"完全够用。
+    lvl = max(0, min(9, int(getattr(Config, "DEBUG_DUMP_COMPRESS", 1))))
+    ok, buf = cv2.imencode(".png", np.ascontiguousarray(arr),
+                           [int(cv2.IMWRITE_PNG_COMPRESSION), lvl])
     if ok:
         buf.tofile(path)
         return True
     return False
+
+
+def _maybe_small(arr, cfg):
+    """按 DEBUG_DUMP_SCALE 降采样（1.0 = 原样）。写盘耗时随像素数平方级下降。"""
+    s = float(getattr(cfg, "DEBUG_DUMP_SCALE", 1.0) or 1.0)
+    if not (0.0 < s < 0.999):
+        return arr
+    h, w = arr.shape[:2]
+    return cv2.resize(arr, (max(8, int(round(w * s))), max(8, int(round(h * s)))),
+                      interpolation=cv2.INTER_AREA)
 
 
 def debug_dump(gray, cfg, lock_th, lvl=0):
@@ -1863,17 +2201,23 @@ def debug_dump(gray, cfg, lock_th, lvl=0):
     mask.png 与 mask_morph.png 的差别很关键：如果 mask.png 里胶带环是完整的、
     但 mask_morph.png 里环断了/消失了，那就是**形态学核太大把细环腐蚀掉了**
     （远距离的典型症状），该调 MORPH_OPEN_K / MORPH_CLOSE_K，而不是调阈值。
+
+    ⚠ 本函数是**秒级**开销（板上编 3 张 PNG + 写 flash），调用方必须限流：
+       main.py 用 DEBUG_DUMP_EVERY（间隔）+ DEBUG_DUMP_MAX（总量）双重限制。
+       早期版本和"打印诊断"共用 2 秒节流、每次失败都写，在"检测在成败之间
+       来回跳"的场景里会把帧率压到很低 —— 这是 0.1fps 的帮凶之一。
     """
     if not (cfg.DEBUG_DUMP and cfg.DEBUG_DIR):
         return
     try:
         os.makedirs(cfg.DEBUG_DIR, exist_ok=True)
-        _write_png(os.path.join(cfg.DEBUG_DIR, "frame_gray.png"), gray)
+        _write_png(os.path.join(cfg.DEBUG_DIR, "frame_gray.png"),
+                   _maybe_small(gray, cfg))
         th = lock_th if lock_th is not None else cfg.BLACK_THRESH
         th = int(th)
         if th > 0:
             _, bw = cv2.threshold(gray, th, 255, cv2.THRESH_BINARY_INV)
-            _write_png(os.path.join(cfg.DEBUG_DIR, "mask.png"), bw)
+            _write_png(os.path.join(cfg.DEBUG_DIR, "mask.png"), _maybe_small(bw, cfg))
             ok = int(getattr(cfg, "MORPH_OPEN_K_FINE", 1) if lvl else cfg.MORPH_OPEN_K)
             ck = int(getattr(cfg, "MORPH_CLOSE_K_FINE", 3) if lvl else cfg.MORPH_CLOSE_K)
             mw = bw
@@ -1885,9 +2229,10 @@ def debug_dump(gray, cfg, lock_th, lvl=0):
                 mw = cv2.morphologyEx(
                     mw, cv2.MORPH_CLOSE,
                     cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ck,) * 2))
-            _write_png(os.path.join(cfg.DEBUG_DIR, "mask_morph.png"), mw)
-        print("[dump] 已保存 %s/{frame_gray,mask,mask_morph}.png（阈值=%d 形态档=%d）"
-              % (cfg.DEBUG_DIR, th, int(lvl)))
+            _write_png(os.path.join(cfg.DEBUG_DIR, "mask_morph.png"),
+                       _maybe_small(mw, cfg))
+        print("[dump] 已保存 %s/{frame_gray,mask,mask_morph}.png（阈值=%d 形态档=%d 缩放=%.2f）"
+              % (cfg.DEBUG_DIR, th, int(lvl), float(getattr(cfg, "DEBUG_DUMP_SCALE", 1.0))))
     except Exception as e:
         print("[dump] 保存失败(不影响运行): %s" % e)
 
@@ -1921,7 +2266,8 @@ def diag_line(det, gray, cfg):
         print("[diag] 灰度 p1/p5/p50/p95/p99=%d/%d/%d/%d/%d  锁定阈值=%s(形态档%d)  "
               "黑占比=%.3f  本帧来自=%s"
               % (p[0], p[1], p[2], p[3], p[4], th,
-                 int(getattr(det, "_lvl_lock", 0)), float((bw > 0).mean()),
+                 int(getattr(det, "_lvl_lock", 0)),
+                 cv2.countNonZero(bw) / float(bw.size),
                  getattr(det, "_dbg_pass", "?")))
         rows = det.last_debug or []
         if not rows:
@@ -1985,6 +2331,9 @@ def main():
 
     fps, t_last, t_print = 0.0, time.time(), time.time()
     t_diag = 0.0
+    t_dump = 0.0                    # 落盘单独计时（落盘是秒级开销，不能跟打印共用节流）
+    n_dump = 0
+    ms_det = 0.0                    # 算法耗时的指数滑动平均（板上定位瓶颈用）
     first_frame = True
 
     while not app.need_exit():
@@ -2005,13 +2354,21 @@ def main():
         # 首帧打印一次真实形状，换板子/固件时用来确认走对了分支
         gray = to_gray(img, debug=first_frame and cfg.DEBUG_SHAPE)
         first_frame = False
+        _t_det = time.time()
         res = det.process(gray, timestamp=t_now)  # ①~⑦
+        if cfg.PROFILE_STAGES:
+            ms_det = 0.9 * ms_det + 0.1 * (time.time() - _t_det) * 1000.0
 
-        # 锁框失败：打印可定位问题的诊断，并把原始帧落盘（限流）
+        # 锁框失败：打印可定位问题的诊断（便宜），并把原始帧落盘（贵，单独限流+限量）
         if not res["valid"] and t_now - t_diag > cfg.DEBUG_DIAG_EVERY:
             t_diag = t_now
             diag_line(det, gray, cfg)
-            debug_dump(gray, cfg, det._th_lock, getattr(det, "_lvl_lock", 0))
+            dump_max = int(getattr(cfg, "DEBUG_DUMP_MAX", 3) or 0)
+            if (t_now - t_dump > float(getattr(cfg, "DEBUG_DUMP_EVERY", 20.0))
+                    and (dump_max <= 0 or n_dump < dump_max)):
+                t_dump = t_now
+                n_dump += 1
+                debug_dump(gray, cfg, det._th_lock, getattr(det, "_lvl_lock", 0))
 
         if disp is not None and cfg.SHOW:
             frame = ov.render(gray, res, fps=fps)
@@ -2031,12 +2388,21 @@ def main():
         if cfg.PRINT_FPS and t_now - t_print > cfg.PRINT_EVERY:
             t_print = t_now
             cand = res.get("cand") or {}
-            print("[fps] %.1f  valid=%s  u=%s v=%s  %.2f px/cm  阈值=%s/形态%s 候选=%s  %s"
+            # 分段耗时 / 掩膜数：板上据此直接看出"瓶颈消没消"。
+            # 掩膜数是最关键的一项 —— 稳态应该是个位数（锁定后是 1）；
+            # 如果它长期等于 12/24，说明帧帧都在全扫，那才是 0.1fps 的真凶。
+            extra = ""
+            if cfg.PROFILE_STAGES:
+                seg = res.get("ms") or {}
+                extra = "  算法=%.1fms 掩膜=%s  [%s]" % (
+                    ms_det, res.get("masks", "-"),
+                    " ".join("%s=%.1f" % (k, v) for k, v in seg.items()) or "-")
+            print("[fps] %.1f  valid=%s  u=%s v=%s  %.2f px/cm  阈值=%s/形态%s 候选=%s  %s%s"
                   % (fps, res["valid"],
                      "%.1f" % res["u"] if res["valid"] else "-",
                      "%.1f" % res["v"] if res["valid"] else "-",
                      res["scale"], res.get("th"), res.get("lvl", 0),
-                     cand.get("kind", "-"), res["stage"]))
+                     cand.get("kind", "-"), res["stage"], extra))
 
     try:
         cam.close()

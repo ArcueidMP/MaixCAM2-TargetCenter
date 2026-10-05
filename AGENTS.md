@@ -81,7 +81,7 @@
 
 ## 3. 轨道 A（DeepSeek）改完**必须**做的三件事
 
-1. **更新 `main.py` 顶部 `BUILD_ID`**（当前 `2026-10-05-r6`，格式 `YYYY-MM-DD-rN`）——
+1. **更新 `main.py` 顶部 `BUILD_ID`**（当前 `2026-10-05-r7`，格式 `YYYY-MM-DD-rN`）——
    用来确认板子跑的是新代码，**不更新就等于无法判断是否生效**。
 2. **重新生成单文件版**：`python tools/build_single.py`（生成 `dist/main_single.py`）。
    `smoke_main.py` 的"预检 0"会核对源码与单文件版 `BUILD_ID` 一致。
@@ -101,7 +101,15 @@ python tools/build_single.py --check     # 单文件版是否与源码同步（�
 python tools/smoke_main.py               # 主循环 + 形状矩阵预检（必要时加 --single 测单文件版）
 python tools/test_pc.py                  # 精度回归
 python tools/test_hardscene.py --ab      # 硬场景鲁棒性 + 误检反向验证（新旧策略对照）
+python tools/profile_hotspots.py         # 性能回归（改了 config 的性能组 / detector 帧循环时加跑）
 ```
+
+- **性能组参数别乱动**：`MAX_MASKS_FULL` / `FRAG_BOUNDARY_EST` / `MAX_SCAN_CONTOURS` /
+  `MAX_SCAN_COMPONENTS` / `ROI_TRACK*` 决定"最坏一帧有多慢"，`MIN_AREA_RATIO` /
+  `SCORE_*` / `MORPH_*` 决定"多准、多不容易误检"。**后者动了一定要跑
+  `test_hardscene.py --ab`**（18 个硬场景必须全检出、5 个"画面里没靶纸"必须全拒检）。
+- 帧率问题先看板端 `[fps]` 行里的 **`掩膜=N`**：稳态应为个位数（锁定后 = 1）；
+  长期 12/24 说明每帧都在全扫 —— 机理与排查见 [`README.md` §三′](README.md)。
 
 - **本机跑法**：`"D:/Python311/python.exe" tools/xxx.py`
   （WorkBuddy 托管 venv 装不上 numpy/cv2，别在那里浪费时间；系统 Python 已带 numpy 2.3.5 + cv2 5.0.0）。

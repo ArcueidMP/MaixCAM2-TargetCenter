@@ -123,7 +123,7 @@ from vision.overlay import Overlay                     # noqa: E402
 # 构建标识 —— 启动时打印，用来一眼确认板子跑的是不是最新代码。
 # （本项目出现过"本地 main.py 被旧内容覆盖，设备仍在跑旧逻辑"的情况，
 #   日志里对不上这个版本号就说明下发的是旧文件。）
-BUILD_ID = "2026-10-05-r6"
+BUILD_ID = "2026-10-05-r7"
 
 # 档位里的格式名 -> MaixPy 枚举
 _FMT = {
@@ -240,11 +240,25 @@ def pack_result(res):
 # 锁框失败时的诊断（真机调参全靠这个 —— 不然只能靠猜）
 # =============================================================================
 def _write_png(path, arr):
-    ok, buf = cv2.imencode(".png", np.ascontiguousarray(arr))
+    # 压缩级别默认 1（不是 OpenCV 默认的 3）：板上写盘是"秒级"操作，
+    # 低压缩级别显著更快、体积只大一点，对"看一眼二值图对不对"完全够用。
+    lvl = max(0, min(9, int(getattr(Config, "DEBUG_DUMP_COMPRESS", 1))))
+    ok, buf = cv2.imencode(".png", np.ascontiguousarray(arr),
+                           [int(cv2.IMWRITE_PNG_COMPRESSION), lvl])
     if ok:
         buf.tofile(path)
         return True
     return False
+
+
+def _maybe_small(arr, cfg):
+    """按 DEBUG_DUMP_SCALE 降采样（1.0 = 原样）。写盘耗时随像素数平方级下降。"""
+    s = float(getattr(cfg, "DEBUG_DUMP_SCALE", 1.0) or 1.0)
+    if not (0.0 < s < 0.999):
+        return arr
+    h, w = arr.shape[:2]
+    return cv2.resize(arr, (max(8, int(round(w * s))), max(8, int(round(h * s)))),
+                      interpolation=cv2.INTER_AREA)
 
 
 def debug_dump(gray, cfg, lock_th, lvl=0):
@@ -258,17 +272,23 @@ def debug_dump(gray, cfg, lock_th, lvl=0):
     mask.png 与 mask_morph.png 的差别很关键：如果 mask.png 里胶带环是完整的、
     但 mask_morph.png 里环断了/消失了，那就是**形态学核太大把细环腐蚀掉了**
     （远距离的典型症状），该调 MORPH_OPEN_K / MORPH_CLOSE_K，而不是调阈值。
+
+    ⚠ 本函数是**秒级**开销（板上编 3 张 PNG + 写 flash），调用方必须限流：
+       main.py 用 DEBUG_DUMP_EVERY（间隔）+ DEBUG_DUMP_MAX（总量）双重限制。
+       早期版本和"打印诊断"共用 2 秒节流、每次失败都写，在"检测在成败之间
+       来回跳"的场景里会把帧率压到很低 —— 这是 0.1fps 的帮凶之一。
     """
     if not (cfg.DEBUG_DUMP and cfg.DEBUG_DIR):
         return
     try:
         os.makedirs(cfg.DEBUG_DIR, exist_ok=True)
-        _write_png(os.path.join(cfg.DEBUG_DIR, "frame_gray.png"), gray)
+        _write_png(os.path.join(cfg.DEBUG_DIR, "frame_gray.png"),
+                   _maybe_small(gray, cfg))
         th = lock_th if lock_th is not None else cfg.BLACK_THRESH
         th = int(th)
         if th > 0:
             _, bw = cv2.threshold(gray, th, 255, cv2.THRESH_BINARY_INV)
-            _write_png(os.path.join(cfg.DEBUG_DIR, "mask.png"), bw)
+            _write_png(os.path.join(cfg.DEBUG_DIR, "mask.png"), _maybe_small(bw, cfg))
             ok = int(getattr(cfg, "MORPH_OPEN_K_FINE", 1) if lvl else cfg.MORPH_OPEN_K)
             ck = int(getattr(cfg, "MORPH_CLOSE_K_FINE", 3) if lvl else cfg.MORPH_CLOSE_K)
             mw = bw
@@ -280,9 +300,10 @@ def debug_dump(gray, cfg, lock_th, lvl=0):
                 mw = cv2.morphologyEx(
                     mw, cv2.MORPH_CLOSE,
                     cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ck,) * 2))
-            _write_png(os.path.join(cfg.DEBUG_DIR, "mask_morph.png"), mw)
-        print("[dump] 已保存 %s/{frame_gray,mask,mask_morph}.png（阈值=%d 形态档=%d）"
-              % (cfg.DEBUG_DIR, th, int(lvl)))
+            _write_png(os.path.join(cfg.DEBUG_DIR, "mask_morph.png"),
+                       _maybe_small(mw, cfg))
+        print("[dump] 已保存 %s/{frame_gray,mask,mask_morph}.png（阈值=%d 形态档=%d 缩放=%.2f）"
+              % (cfg.DEBUG_DIR, th, int(lvl), float(getattr(cfg, "DEBUG_DUMP_SCALE", 1.0))))
     except Exception as e:
         print("[dump] 保存失败(不影响运行): %s" % e)
 
@@ -316,7 +337,8 @@ def diag_line(det, gray, cfg):
         print("[diag] 灰度 p1/p5/p50/p95/p99=%d/%d/%d/%d/%d  锁定阈值=%s(形态档%d)  "
               "黑占比=%.3f  本帧来自=%s"
               % (p[0], p[1], p[2], p[3], p[4], th,
-                 int(getattr(det, "_lvl_lock", 0)), float((bw > 0).mean()),
+                 int(getattr(det, "_lvl_lock", 0)),
+                 cv2.countNonZero(bw) / float(bw.size),
                  getattr(det, "_dbg_pass", "?")))
         rows = det.last_debug or []
         if not rows:
@@ -380,6 +402,9 @@ def main():
 
     fps, t_last, t_print = 0.0, time.time(), time.time()
     t_diag = 0.0
+    t_dump = 0.0                    # 落盘单独计时（落盘是秒级开销，不能跟打印共用节流）
+    n_dump = 0
+    ms_det = 0.0                    # 算法耗时的指数滑动平均（板上定位瓶颈用）
     first_frame = True
 
     while not app.need_exit():
@@ -400,13 +425,21 @@ def main():
         # 首帧打印一次真实形状，换板子/固件时用来确认走对了分支
         gray = to_gray(img, debug=first_frame and cfg.DEBUG_SHAPE)
         first_frame = False
+        _t_det = time.time()
         res = det.process(gray, timestamp=t_now)  # ①~⑦
+        if cfg.PROFILE_STAGES:
+            ms_det = 0.9 * ms_det + 0.1 * (time.time() - _t_det) * 1000.0
 
-        # 锁框失败：打印可定位问题的诊断，并把原始帧落盘（限流）
+        # 锁框失败：打印可定位问题的诊断（便宜），并把原始帧落盘（贵，单独限流+限量）
         if not res["valid"] and t_now - t_diag > cfg.DEBUG_DIAG_EVERY:
             t_diag = t_now
             diag_line(det, gray, cfg)
-            debug_dump(gray, cfg, det._th_lock, getattr(det, "_lvl_lock", 0))
+            dump_max = int(getattr(cfg, "DEBUG_DUMP_MAX", 3) or 0)
+            if (t_now - t_dump > float(getattr(cfg, "DEBUG_DUMP_EVERY", 20.0))
+                    and (dump_max <= 0 or n_dump < dump_max)):
+                t_dump = t_now
+                n_dump += 1
+                debug_dump(gray, cfg, det._th_lock, getattr(det, "_lvl_lock", 0))
 
         if disp is not None and cfg.SHOW:
             frame = ov.render(gray, res, fps=fps)
@@ -426,12 +459,21 @@ def main():
         if cfg.PRINT_FPS and t_now - t_print > cfg.PRINT_EVERY:
             t_print = t_now
             cand = res.get("cand") or {}
-            print("[fps] %.1f  valid=%s  u=%s v=%s  %.2f px/cm  阈值=%s/形态%s 候选=%s  %s"
+            # 分段耗时 / 掩膜数：板上据此直接看出"瓶颈消没消"。
+            # 掩膜数是最关键的一项 —— 稳态应该是个位数（锁定后是 1）；
+            # 如果它长期等于 12/24，说明帧帧都在全扫，那才是 0.1fps 的真凶。
+            extra = ""
+            if cfg.PROFILE_STAGES:
+                seg = res.get("ms") or {}
+                extra = "  算法=%.1fms 掩膜=%s  [%s]" % (
+                    ms_det, res.get("masks", "-"),
+                    " ".join("%s=%.1f" % (k, v) for k, v in seg.items()) or "-")
+            print("[fps] %.1f  valid=%s  u=%s v=%s  %.2f px/cm  阈值=%s/形态%s 候选=%s  %s%s"
                   % (fps, res["valid"],
                      "%.1f" % res["u"] if res["valid"] else "-",
                      "%.1f" % res["v"] if res["valid"] else "-",
                      res["scale"], res.get("th"), res.get("lvl", 0),
-                     cand.get("kind", "-"), res["stage"]))
+                     cand.get("kind", "-"), res["stage"], extra))
 
     try:
         cam.close()
