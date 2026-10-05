@@ -51,11 +51,13 @@ import numpy as np
 import cv2
 
 from . import geometry as G
+from .tracker import TargetTracker
 
 
 def _empty():
     return dict(valid=False, u=None, v=None, scale=0.0, quad=None, corners=None,
                 stage="none", raw_u=None, raw_v=None, th=None, lvl=0, cand=None,
+                held=False, resid=None, nis=None, gate="", sharp=None,
                 ms={}, masks=0)
 
 
@@ -485,12 +487,18 @@ def largest_contour(bw):
     return c.reshape(-1, 2).astype(np.float64)
 
 
-def select_frame_contour(bw, gray, cfg, W, H):
+def select_frame_contour(bw, gray, cfg, W, H, prefer_kind=None):
     """
     ② 描边：从二值图里挑出"靶纸框"那条轮廓（两族候选取结构分最高者）。
 
     返回 (pts, info) 或 None。info 里带 kind（ring/paper）与全部结构特征，供诊断。
     SELECT_MODE="largest" 时退化成旧行为（取最大外轮廓），用于 A/B 对照。
+
+    prefer_kind：**候选族迟滞**。传上一帧锁定的族（ring/paper）时，若全局最优属于
+    另一族，但只要该族的最高分距离全局最优不超过 `KIND_BONUS`，就改用本族的那个。
+    为什么需要：真机日志里 `候选=ring` 与 `候选=paper` 逐帧来回切，而两族的中心与
+    尺度并不严格相同（外沿/内沿同心度受胶带贴得不均匀影响）——一换就是"中心和
+    px_per_cm 同时跳一下"。换族应该有代价，不能每帧随噪声决定。
     """
     if getattr(cfg, "SELECT_MODE", "score") == "largest":
         pts = largest_contour(bw)
@@ -503,6 +511,15 @@ def select_frame_contour(bw, gray, cfg, W, H):
     feats = contour_features(bw, gray, cfg, W, H)
     if feats:
         f = feats[0]
+        bonus = float(getattr(cfg, "KIND_BONUS", 0.0))
+        if prefer_kind and bonus > 0.0 and f.get("kind") != prefer_kind:
+            for cand in feats:
+                if (cand.get("kind") == prefer_kind
+                        and float(cand.get("score", 0.0)) >= float(f["score"]) - bonus):
+                    f = dict(cand)
+                    f["score"] = float(f["score"]) + bonus   # 统一口径，便于上层比较
+                    f["kind_keep"] = True
+                    break
         info = dict(f)
         info["mode"] = "score"
         info["n_cand"] = len(feats)
@@ -566,9 +583,10 @@ class TargetCenterDetector:
 
     def __init__(self, cfg):
         self.cfg = cfg
-        fp = cfg.FILTER_PARAMS[cfg.FILTER_MODE]
-        self.fu = G.OneEuroFilter(freq=30.0, **fp)
-        self.fv = G.OneEuroFilter(freq=30.0, **fp)
+        # ⑦ 抗抖跟踪：把"每帧独立解算"变成"抗抖、不跳变的锁定输出"（见 vision/tracker.py）
+        self.tracker = TargetTracker(cfg)
+        self._prefer_kind = None      # 上一帧锁定的候选族（族迟滞用）
+        self._sharp_small = None      # 复用的缩略图缓冲（算清晰度用）
         self._small = None            # 复用的缩小图缓冲（避免每帧分配）
         self._th_lock = None          # 锁定的二值化阈值（None = 需要扫描标定）
         self._lvl_lock = 0            # 与阈值一起锁定的形态学档位（0 常规 / 1 精细）
@@ -802,7 +820,8 @@ class TargetCenterDetector:
                 dbg.append(_dbg_rec(th, lvl, n=0, score=0.0, kind="-",
                                     fg=round(fg, 3), ok=False, skip="前景占比越界"))
                 continue
-            sel = select_frame_contour(bw, g, cfg, w, h)
+            sel = select_frame_contour(bw, g, cfg, w, h,
+                                       prefer_kind=self._prefer_kind)
             if sel is None:
                 dbg.append(_dbg_rec(th, lvl, n=0, score=0.0, kind="-",
                                     fg=round(fg, 3), ok=False))
@@ -917,6 +936,28 @@ class TargetCenterDetector:
             return r
         return self._solve(gray, timestamp)
 
+    def _sharpness(self, gray):
+        """
+        整幅清晰度（Laplacian 方差）—— 判断这一帧是不是"运动模糊帧"。
+
+        为什么用整幅而不是靶纸窗口：抖动是**相机整体在动**，全画面一起糊；
+        整幅的 Laplacian 方差正好反映"相机运动 × 曝光时间"造成的模糊量，
+        而且不用先知道靶纸在哪（检测失败那一帧也能算出来）。
+        在 1/4 缩略图上算，成本约 0.3ms。返回 None 表示算不出来（此时跟踪器忽略清晰度）。
+        """
+        try:
+            h, w = gray.shape[:2]
+            sw, sh = max(32, int(w) // 4), max(24, int(h) // 4)
+            if (self._sharp_small is None
+                    or self._sharp_small.shape[0] != sh
+                    or self._sharp_small.shape[1] != sw):
+                self._sharp_small = np.empty((sh, sw), np.uint8)
+            cv2.resize(gray, (sw, sh), interpolation=cv2.INTER_AREA,
+                       dst=self._sharp_small)
+            return float(cv2.Laplacian(self._sharp_small, cv2.CV_32F).var())
+        except Exception:
+            return None
+
     def _solve(self, gray, timestamp):
         cfg = self.cfg
         H, W = gray.shape[:2]
@@ -929,6 +970,10 @@ class TargetCenterDetector:
         # 分段耗时（板上靠这个判断瓶颈到底消没消；perf_counter 开销可忽略）
         ms = {}
         t0 = time.perf_counter()
+
+        # 本帧清晰度（判断是否运动模糊帧）。整幅一起糊，所以不看具体靶纸在哪。
+        need_track = (timestamp is not None) and bool(getattr(cfg, "TRACK_ENABLE", True))
+        sharp = self._sharpness(gray) if need_track else None
 
         # ---- 第 0 遍（可关）：帧间 ROI 跟踪 ----
         # 靶纸是静止的，帧间位移很小。直接用上一帧的四边形扩一圈当搜索区，
@@ -969,10 +1014,26 @@ class TargetCenterDetector:
                                 budget=int(getattr(cfg, "MAX_MASKS_FULL", 8)))
             ms["full"] = (time.perf_counter() - t0) * 1000.0
             if d is None:
+                # 本帧完全没检出：抗抖外推顶几帧，别让锁定在抖动中掉一帧
+                co = self.tracker.coast(timestamp) if need_track else None
+                if co is not None:
+                    self._book_keep(True)          # 视为"仍在跟踪"，不触发重新标定
+                    if co.get("quad") is not None:
+                        self._last_quad = np.asarray(co["quad"], dtype=np.float64)
+                    r = _empty()
+                    # raw_* 在这类帧上没有真实测量值（这一帧压根没检出），
+                    # 用外推值填充而不是 None —— 下游（叠加图/日志/测试脚本）不必到处判空
+                    r.update(valid=True, u=float(co["u"]), v=float(co["v"]),
+                             scale=float(co["scale"]), quad=co.get("quad"),
+                             corners=co.get("quad"), stage="coast",
+                             raw_u=float(co["u"]), raw_v=float(co["v"]),
+                             held=True, resid=0.0, nis=0.0, sharp=sharp,
+                             ms=ms, masks=self.last_masks)
+                    return r
                 self._book_keep(False)
                 self._last_quad = None
                 r = _empty()
-                r["ms"], r["masks"] = ms, self.last_masks
+                r["ms"], r["masks"], r["sharp"] = ms, self.last_masks, sharp
                 return r
             out, stage = d, "full"
 
@@ -994,22 +1055,41 @@ class TargetCenterDetector:
         info = out.get("info") or {}
         inner = (info.get("kind") == "paper")
         scale = G.estimate_scale(q, cfg, inner=inner)
+        raw_u, raw_v = float(c[0]), float(c[1])
 
-        # ⑦ 时序滤波
-        if timestamp is None:
-            u_f, v_f = float(c[0]), float(c[1])
+        # ⑦ 抗抖跟踪（见 vision/tracker.py）
+        #    只在**给了时间戳**（= 连续帧的实时运行）时启用；单帧/离线调用不跟踪，
+        #    于是 test_pc 里的"单帧精度""多姿态"等结论与改动前完全一致。
+        held, tk = False, None
+        if need_track:
+            tk = self.tracker.update(raw_u, raw_v, scale, q, timestamp,
+                                     sharp=sharp, quality=info.get("score", 1.0))
+            # 族迟滞：把本帧胜出的族记下来，下一帧选择时给它"留任加分"
+            self.tracker.note_meta(kind=info.get("kind"), th=out.get("th"))
+            self._prefer_kind = self.tracker.kind
+            u_f, v_f = float(tk["u"]), float(tk["v"])
+            if tk.get("scale"):
+                scale = float(tk["scale"])
+            q_out = tk["quad"] if tk.get("quad") is not None else q
+            held = bool(tk["held"])
         else:
-            u_f = self.fu(float(c[0]), timestamp)
-            v_f = self.fv(float(c[1]), timestamp)
+            u_f, v_f, q_out = raw_u, raw_v, q
 
         self._book_keep(True)
-        self._last_quad = np.asarray(q, dtype=np.float64)   # 给下一帧的 ROI 跟踪当种子
+        # 给下一帧的 ROI 跟踪当种子：用"原始解算的框"（它才是这一帧真实看到的位置；
+        # 跟踪器在保持时会输出旧框，拿它当种子会让 ROI 一起停在旧位置）
+        self._last_quad = np.asarray(q, dtype=np.float64)
         return dict(valid=True, u=float(u_f), v=float(v_f), scale=float(scale),
-                    quad=q, corners=q,
-                    stage="%s+%s%s" % (stage, out["method"],
-                                       "/paper" if inner else ""),
-                    raw_u=float(c[0]), raw_v=float(c[1]),
+                    quad=q_out, corners=q_out,
+                    stage="%s+%s%s%s" % (stage, out["method"],
+                                         "/paper" if inner else "",
+                                         "+保持" if held else ""),
+                    raw_u=raw_u, raw_v=raw_v,
                     th=out.get("th"), lvl=out.get("lvl", 0), cand=out.get("info"),
+                    held=held, resid=(tk or {}).get("resid"),
+                    nis=(tk or {}).get("nis"),
+                    gate=(self.tracker.gate_reason if held else ""),
+                    sharp=sharp,
                     ms=ms, masks=self.last_masks)
 
     def _try_track(self, gray):
@@ -1096,8 +1176,9 @@ class TargetCenterDetector:
                     info=d["info"], th=d["th"], lvl=d.get("lvl", 0))
 
     def reset(self):
-        self.fu.reset()
-        self.fv.reset()
+        self.tracker.reset()
+        self._prefer_kind = None
+        self._sharp_small = None
         self._small = None
         self._th_lock = None
         self._lvl_lock = 0

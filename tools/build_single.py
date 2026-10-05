@@ -43,6 +43,7 @@ OUT_PY = os.path.join(OUT_DIR, "main_single.py")
 # 需要打进单文件的模块：(模块名, 相对路径)  —— 顺序即执行顺序，被依赖的在前
 MODULES = (
     ("vision.geometry", "vision/geometry.py"),
+    ("vision.tracker", "vision/tracker.py"),
     ("vision.detector", "vision/detector.py"),
     ("vision.overlay", "vision/overlay.py"),
     ("config", "config.py"),

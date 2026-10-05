@@ -58,7 +58,7 @@
 ├── app.yaml                    轨道 A 应用描述（id=target_center_25e）
 ├── main.py                     轨道 A 入口（顶部有 BUILD_ID）
 ├── config.py                   轨道 A 现场唯一需要改的文件
-├── vision/{geometry,detector,overlay}.py   轨道 A 算法
+├── vision/{geometry,tracker,detector,overlay}.py   轨道 A 算法（tracker=抗抖跟踪）
 ├── assets/icon.png             轨道 A 图标
 ├── dist/main_single.py         轨道 A 单文件版（自动生成，"运行当前文件"用）
 ├── tools/                      轨道 A 离线验证 / 调参 / 打包（含 maix_stub/ 桩模块）
@@ -102,14 +102,22 @@ python tools/smoke_main.py               # 主循环 + 形状矩阵预检（必�
 python tools/test_pc.py                  # 精度回归
 python tools/test_hardscene.py --ab      # 硬场景鲁棒性 + 误检反向验证（新旧策略对照）
 python tools/profile_hotspots.py         # 性能回归（改了 config 的性能组 / detector 帧循环时加跑）
+python tools/test_jitter.py              # 抖动稳定性回归（改了 tracker / 滤波 / 角点提取时加跑）
 ```
 
 - **性能组参数别乱动**：`MAX_MASKS_FULL` / `FRAG_BOUNDARY_EST` / `MAX_SCAN_CONTOURS` /
   `MAX_SCAN_COMPONENTS` / `ROI_TRACK*` 决定"最坏一帧有多慢"，`MIN_AREA_RATIO` /
   `SCORE_*` / `MORPH_*` 决定"多准、多不容易误检"。**后者动了一定要跑
   `test_hardscene.py --ab`**（18 个硬场景必须全检出、5 个"画面里没靶纸"必须全拒检）。
+- **抗抖组参数（`TRACK_*` / `KIND_BONUS`）改完必须跑 `test_jitter.py`**（含 `--unit`），
+  看四项指标：**跟手（误差不能比原始测量大）、抑噪、静止平滑、拒离群**。
+  这几项互相拉扯，只看一项很容易把另一项调坏。
 - 帧率问题先看板端 `[fps]` 行里的 **`掩膜=N`**：稳态应为个位数（锁定后 = 1）；
   长期 12/24 说明每帧都在全扫 —— 机理与排查见 [`README.md` §三′](README.md)。
+- "车一晃中心就偏"先看 **`保持=Y/N`**：长期 `Y` 说明该查**检测**（阈值/曝光/干扰物），
+  不是滤波器 —— 机理与设计见 [`README.md` §三″](README.md)。
+  ⚠ 抖动引起的图像位移是**必须跟踪的真实运动**，不要试图用更重的低通去"滤掉"它
+  （这正是 0.1fps 之后暴露出来、且已实测证伪的旧做法）。
 
 - **本机跑法**：`"D:/Python311/python.exe" tools/xxx.py`
   （WorkBuddy 托管 venv 装不上 numpy/cv2，别在那里浪费时间；系统 Python 已带 numpy 2.3.5 + cv2 5.0.0）。

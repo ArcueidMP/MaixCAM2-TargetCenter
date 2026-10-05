@@ -4,6 +4,7 @@
 
 模块划分（都不 import maix，因此可在 PC 上用合成图直接验证，见 tools/test_pc.py）：
     geometry.py  纯 NumPy 几何：极值顶点 / 排序 / 对角线求交 / 尺度 / One Euro 滤波
+    tracker.py   抗抖跟踪：常数速度卡尔曼 + 新息门限 + 尺度/清晰度一致性（时序稳定化）
     detector.py  OpenCV 部分：二值化 / 描边找轮廓 / 角点亚像素精修 + 检测器主流程
     overlay.py   OpenCV 绘制：预分配画布复用，零逐帧分配
 

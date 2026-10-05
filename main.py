@@ -123,7 +123,7 @@ from vision.overlay import Overlay                     # noqa: E402
 # 构建标识 —— 启动时打印，用来一眼确认板子跑的是不是最新代码。
 # （本项目出现过"本地 main.py 被旧内容覆盖，设备仍在跑旧逻辑"的情况，
 #   日志里对不上这个版本号就说明下发的是旧文件。）
-BUILD_ID = "2026-10-05-r7"
+BUILD_ID = "2026-10-05-r8"
 
 # 档位里的格式名 -> MaixPy 枚举
 _FMT = {
@@ -468,12 +468,20 @@ def main():
                 extra = "  算法=%.1fms 掩膜=%s  [%s]" % (
                     ms_det, res.get("masks", "-"),
                     " ".join("%s=%.1f" % (k, v) for k, v in seg.items()) or "-")
-            print("[fps] %.1f  valid=%s  u=%s v=%s  %.2f px/cm  阈值=%s/形态%s 候选=%s  %s%s"
+            # 抗抖跟踪的状态：**保持=Y 表示这一帧的测量被判为可疑、输出的是预测值**
+            # （误锁/被遮挡/糊了）。稳态应该几乎全是 N；长期 Y 说明该查检测而不是滤波器。
+            tk = ""
+            if getattr(cfg, "TRACK_ENABLE", True) and res.get("valid"):
+                tk = "  保持=%s" % ("Y" if res.get("held") else "N")
+                if res.get("held"):
+                    tk += "(%s 残差=%s)" % (res.get("gate") or "-",
+                                           "%.0f" % (res.get("resid") or 0.0))
+            print("[fps] %.1f  valid=%s  u=%s v=%s  %.2f px/cm  阈值=%s/形态%s 候选=%s  %s%s%s"
                   % (fps, res["valid"],
                      "%.1f" % res["u"] if res["valid"] else "-",
                      "%.1f" % res["v"] if res["valid"] else "-",
                      res["scale"], res.get("th"), res.get("lvl", 0),
-                     cand.get("kind", "-"), res["stage"], extra))
+                     cand.get("kind", "-"), res["stage"], tk, extra))
 
     try:
         cam.close()
