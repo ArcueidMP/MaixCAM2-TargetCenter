@@ -45,8 +45,10 @@ APP_FALLBACK_EXCLUDE = [".vscode", ".workbuddy", "dist", "build", "tools", "refe
 #   · maixcam2_rect_center/ 是**另一个自带 app.yaml 的独立应用**，
 #     嵌套进来会被当成本应用的普通文件一起打包（实测混进 7 个文件）
 APP_ALWAYS_EXCLUDE_DIRS = {"reference", "maixcam2_rect_center"}
-# 应用包里不该出现文档（README、分析报告之类）
+# 应用包里不该出现文档（README、分析报告之类）与版本管理配置文件
 APP_ALWAYS_EXCLUDE_SUFFIX = (".md",)
+APP_ALWAYS_EXCLUDE_FILES = {".gitignore", ".gitattributes", ".gitmodules", ".gitkeep",
+                           ".editorconfig", "app.yaml.bak"}
 
 
 def read_yaml_list(path, key):
@@ -76,8 +78,14 @@ def read_yaml_list(path, key):
     return out
 
 
-def collect(exclude_dirs, exclude_files, extra_dirs=frozenset(), extra_suffix=()):
-    """返回 (abs_path, arcname) 列表，按路径排序，结果稳定可复现。"""
+def collect(exclude_dirs, exclude_files, extra_dirs=frozenset(), extra_suffix=(),
+            skip_dotfiles=False):
+    """返回 (abs_path, arcname) 列表，按路径排序，结果稳定可复现。
+
+    skip_dotfiles=True：跳过以 "." 开头的文件（版本管理/编辑器配置），
+    用于应用包 —— 板子上装的应用不需要 .gitignore / .gitattributes。
+    源码包要保留它们，所以默认 False。
+    """
     items = []
     for dirpath, dirnames, filenames in os.walk(ROOT):
         d = Path(dirpath)
@@ -94,11 +102,35 @@ def collect(exclude_dirs, exclude_files, extra_dirs=frozenset(), extra_suffix=()
         for fn in sorted(filenames):
             if fn in exclude_files or fn in ALWAYS_DIRS:
                 continue
+            if skip_dotfiles and fn.startswith("."):
+                continue
             if fn.startswith(ALWAYS_NAME_HITS) or fn.endswith(ALWAYS_SUFFIX + extra_suffix):
                 continue
             p = d / fn
             items.append((p, str(p.relative_to(ROOT)).replace(os.sep, "/")))
     return items
+
+
+def check_app_package(zip_path):
+    """
+    应用包自检 —— 这几条正是踩过的坑，打成硬校验免得再犯：
+      1. `app.yaml` 必须**有且只有一个、且在根目录**（嵌套应用目录没排除时会出现第二个）；
+      2. 不得含任何以 "." 开头的文件（.gitignore / .gitattributes 之类）；
+      3. 必须有 `main.py`。
+    返回 (ok, 问题列表)
+    """
+    bad = []
+    with zipfile.ZipFile(zip_path) as z:
+        names = z.namelist()
+    yamls = [n for n in names if n == "app.yaml" or n.endswith("/app.yaml")]
+    if yamls != ["app.yaml"]:
+        bad.append("app.yaml 应恰好一个且在根目录，实际 %s" % yamls)
+    if "main.py" not in names:
+        bad.append("缺少 main.py")
+    dots = [n for n in names if os.path.basename(n).startswith(".")]
+    if dots:
+        bad.append("含隐藏文件 %s" % dots)
+    return (not bad), bad
 
 
 def build(zip_path, items, arcprefix=""):
@@ -149,8 +181,9 @@ def main():
     if args.app:
         exc = read_yaml_list(app_yaml, "exclude") or APP_FALLBACK_EXCLUDE
         dirs = {e.strip("/") for e in exc} | APP_ALWAYS_EXCLUDE_DIRS
-        items = collect(dirs, {e.strip("/") for e in exc}, APP_ALWAYS_EXCLUDE_DIRS,
-                        APP_ALWAYS_EXCLUDE_SUFFIX)
+        files = {e.strip("/") for e in exc} | APP_ALWAYS_EXCLUDE_FILES
+        items = collect(dirs, files, APP_ALWAYS_EXCLUDE_DIRS,
+                        APP_ALWAYS_EXCLUDE_SUFFIX, skip_dotfiles=True)
         zp = out / ("%s_v%s.zip" % (app_id, app_ver))
         raw = build(zp, items, arcprefix="")
         results.append(("应用包", zp, len(items), raw))
@@ -166,6 +199,18 @@ def main():
         with zipfile.ZipFile(zp) as z:
             for i in sorted(z.namelist()):
                 print("      %s" % i)
+    # 应用包自检：把"核过一遍包内清单"变成自动动作（这三条都真踩过）
+    for name, zp, n, raw in results:
+        if name != "应用包":
+            continue
+        ok, bad = check_app_package(zp)
+        print("-" * 68)
+        if ok:
+            print("  [自检] 应用包 OK：只有一个根 app.yaml、无隐藏文件、有 main.py")
+        else:
+            print("  [自检] 应用包 **有问题**（别直接装到板子上）：")
+            for b in bad:
+                print("         - %s" % b)
     print("=" * 68)
     return 0
 

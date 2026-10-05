@@ -11,6 +11,8 @@ desc[zh]: 由 A4 靶纸四周黑胶带矩形反算靶心像素坐标，输出 (u
 exclude:
   - .vscode
   - .workbuddy
+  - .gitignore
+  - .gitattributes
   - dist
   - build
   - tools
