@@ -174,7 +174,8 @@ class RectangleCenterDetector:
         dark = np.median(samples[:, :, :3], axis=2)
         bright = np.median(samples[:, :, 3:], axis=2)
         delta = bright - dark
-        coverage = (delta >= self.cfg.MIN_EDGE_CONTRAST).mean(axis=1)
+        coverage = ((delta >= self.cfg.MIN_EDGE_CONTRAST) &
+                    (dark <= bright * self.cfg.MAX_DARK_BRIGHT_RATIO)).mean(axis=1)
         edge_contrast = np.median(delta, axis=1)
         # 至少三边的大部分采样成立，第四边也必须有证据，不接受凭亮中心猜框。
         if (np.count_nonzero(coverage >= self.cfg.MIN_EDGE_COVERAGE) < 3 or
@@ -325,7 +326,71 @@ class RectangleCenterDetector:
                     refined = self._refine(gray, q, kind, self.cfg.REFINE_RADIUS)
                     precise = self._verify(gray, refined, kind) if refined is not None else None
                     return precise or verified
-        return None
+        # 透明膜的反光可能把整条黑环切开，内孔也不再闭合。
+        # 仅失锁时从长线段拼四边，并通过相同暗带验证，绝不凭亮中心猜框。
+        return self._line_search(gray, edges, sx, sy, x, y)
+
+    def _line_search(self, gray, edges, sx, sy, x, y):
+        h, w = edges.shape
+        segments = cv2.HoughLinesP(edges, 1, np.pi / 180, 25,
+                                   minLineLength=max(25, int(min(w, h) * .16)), maxLineGap=12)
+        if segments is None:
+            return None
+        p = segments.reshape(-1, 2, 2).astype(np.float64)
+        delta = p[:, 1] - p[:, 0]
+        lengths = np.linalg.norm(delta, axis=1)
+        ids = np.argsort(lengths)[-32:]
+        p, delta, lengths = p[ids], delta[ids], lengths[ids]
+        angles = np.arctan2(delta[:, 1], delta[:, 0]) % np.pi
+        # 以长线段为种子，最多尝试三组主方向，兼容靶紙绕光轴旋转。
+        tried, best = [], None
+        for seed in np.argsort(lengths)[::-1]:
+            angle = angles[seed]
+            distance = lambda a, b: np.abs((a - b + np.pi / 2) % np.pi - np.pi / 2)
+            if any(distance(angle, old) < np.deg2rad(20) for old in tried):
+                continue
+            tried.append(angle)
+            groups = []
+            for direction in (angle, (angle + np.pi / 2) % np.pi):
+                mask = distance(angles, direction) < np.deg2rad(28)
+                normal = np.array([-np.sin(direction), np.cos(direction)])
+                positions = p.mean(axis=1) @ normal
+                group = []
+                for index in np.argsort(lengths)[::-1]:
+                    if not mask[index]:
+                        continue
+                    if any(abs(positions[index] - positions[old]) < 5 for old in group):
+                        continue
+                    group.append(index)
+                    if len(group) >= 8:
+                        break
+                pairs = []
+                for ii, a in enumerate(group):
+                    for b in group[ii + 1:]:
+                        if abs(positions[a] - positions[b]) >= min(w, h) * .24:
+                            pairs.append((lengths[a] + lengths[b], a, b))
+                groups.append(sorted(pairs, reverse=True)[:6])
+            for _, a, b in groups[0]:
+                for _, c, d in groups[1]:
+                    lines = np.cross(np.column_stack((p[:, 0], np.ones(len(p)))),
+                                     np.column_stack((p[:, 1], np.ones(len(p)))))
+                    intersections = np.cross(lines[[a, b, b, a]], lines[[c, c, d, d]])
+                    if np.any(np.abs(intersections[:, 2]) < 1e-8):
+                        continue
+                    q = _order_quad(intersections[:, :2] / intersections[:, 2:])
+                    q = q * [sx, sy] + [x, y]
+                    for kind in ("inner", "outer"):
+                        check = self._verify(gray, q, kind)
+                        if check is None:
+                            continue
+                        refined = self._refine(gray, q, kind, self.cfg.REFINE_RADIUS)
+                        precise = self._verify(gray, refined, kind) if refined is not None else None
+                        check = precise or check
+                        if best is None or check["score"] > best["score"]:
+                            best = check
+            if best is not None or len(tried) >= 3:
+                break
+        return best
 
     def process(self, gray, timestamp=None):
         started = time.perf_counter()
