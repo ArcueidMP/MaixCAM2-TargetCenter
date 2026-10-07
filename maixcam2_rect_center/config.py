@@ -20,12 +20,24 @@ class Config:
     # Canny and polygon gates. Tune only these values on a new lens.
     CANNY_LOW = 35
     CANNY_HIGH = 120
-    # Dark mask fallback. Otsu is always tried first, these values cover
-    # underexposed MaixCAM2 frames and bright-reflection scenes.
+    # 失锁时先试上次有效阈值，再试 Otsu 和备用阈值；成功即停止。
     DARK_THRESHOLDS = (25, 40, 55, 70, 85, 100, 120, 145)
-    DARK_CENTER_MIN = 90.0
     # 稳态只采样四边窄带；失锁时缩小图搜索，每档验证成功就立即停止。
     SEARCH_WIDTH = 320
+    # 合作式搜索：每帧至多做一次扫描或一次候选验证，时间预算是软预算。
+    SEARCH_BUDGET_MS = 25.0
+    SEARCH_MAX_PROPOSALS = 1
+    SEARCH_GEOMETRY_STEPS = 8
+    MAX_CONTOURS = 128
+    LINE_MAX_PROPOSALS = 36
+    ENABLE_LINE_RECOVERY = False
+    LINE_SEARCH_INTERVAL = 15
+    ACQUIRE_CONFIRM_FRAMES = 3
+    CONFIRM_CORNER_PX = 12.0
+    RECHECK_INTERVAL = 20
+    MAX_LINE_RESIDUAL_PX = 2.0
+    MIN_TRANSITION_COVERAGE = 0.50
+    MAX_BOUNDARY_WIDTH_ERROR = 0.30
     MAX_CANDIDATES = 8
     EDGE_SAMPLES = 24
     REFINE_RADIUS = 6
@@ -41,6 +53,7 @@ class Config:
     MIN_ANGLE_DEG = 55.0
     MIN_INNER_RATIO = 0.30
     MAX_INNER_RATIO = 0.94
+    DARK_CENTER_MIN = 90.0
     MIN_EDGE_CONTRAST = 20.0
     BLACK_FRAME_MM = 18.0
 
@@ -53,3 +66,31 @@ class Config:
 
     # Optional temporal smoothing. Zero disables it.
     CENTER_ALPHA = 0.70
+
+    # ---- 激光光斑读数（相机与激光固连 -> 光斑位置近似固定）------------------
+    # 只在标称位置周围 LASER_ROI_RADIUS 内找最亮点，输出亚像素质心，并给出它到
+    # 黑框中心的水平/垂直偏差，画在屏幕左上角。2026-10-07 现场标定：光斑约在
+    # (294, 202)，背景灰度 145 / 峰值 177。换镜头或重装激光笔后重新标定这两个值，
+    # 也能直接看板端日志 [perf] ... laser= 与屏幕读数反推真实位置。
+    ENABLE_LASER = True
+    LASER_U_NOMINAL = 294
+    LASER_V_NOMINAL = 202
+    LASER_ROI_RADIUS = 64
+    # 光斑位置从哪来：
+    #   "fixed"（默认） 不检测，直接用上面的标定常量 —— 光斑位置写死，每帧只算
+    #                  "黑框中心 − 该常量"的像素差，零检测开销；
+    #   "detect"        每 LASER_INTERVAL_S 实测一次光斑（自校准，吸收机构/温度漂移）。
+    # 需要重新标定 U/V 时：临时改成 "detect"，把屏幕左上角读到的 `LASER (u,v)` 填回上面两行。
+    LASER_MODE = "fixed"
+    # 判据：峰值 >= max(LASER_MIN_PEAK, 背景 + LASER_MIN_CONTRAST)，且亮点面积在
+    # [MIN_PIXELS, MAX_PIXELS] 内。面积上限用来挡白墙高光/灯罩反光（那些会很大）。
+    LASER_MIN_PEAK = 140.0
+    LASER_MIN_CONTRAST = 20.0
+    LASER_MIN_PIXELS = 2
+    LASER_MAX_PIXELS = 160
+    # 限频：默认 0.30s ≈ 每秒算 3 次，其余帧沿用上次结果（显示仍是每帧画）。
+    LASER_INTERVAL_S = 0.30
+    # 单次更新跳变上限（像素）：超过判为误检，保留上次位置。0 = 关闭该门限。
+    LASER_MAX_JUMP_PX = 40.0
+    # 位置平滑（0 = 不平滑，直接用最新质心）。
+    LASER_SMOOTH_ALPHA = 0.60

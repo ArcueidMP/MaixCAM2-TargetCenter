@@ -1,12 +1,29 @@
 id: maixcam2_rect_center
 name: MaixCAM2 Rectangle Center
 name[zh]: MaixCAM2 矩形黑框中心
-version: 1.0.0
+version: 1.3.0
 icon: assets/icon.png
 author: 25Efork
-desc: Detect a black rectangle on a white target and output its perspective-correct center.
-desc[zh]: 使用 Canny、多边形逼近和单应性解算识别白底黑框中心。
+desc: Detect a black rectangle and output its perspective-correct center; a laser-spot panel shows the spot-to-center pixel offset.
+desc[zh]: 识别白底黑框中心，并在屏幕左上角显示激光光斑到靶心的像素偏差（光斑位置默认写死）。
+# 默认"包含目录内全部文件"，下列为排除项（.git / __pycache__ 总是排除）。
+# ⚠ 应用包必须只有：app.yaml + .py 源码 + assets/icon.png。
+#    新增任何文档/调试图/测试脚本后，务必跑 tools/check_app.py --manifest 核一遍包内清单。
 exclude:
   - __pycache__
+  - tools
+  - dist
+  - build
+  - .vscode
+  - .workbuddy
+  - .gitignore
+  - .gitattributes
+  # 文档一律不进包：显式列出（打包器若不支持通配也能生效）+ *.md 兜底
   - README.md
-  - test_pc.py
+  - B轨代码技术解析与功能分析.md
+  - MaixCAM应用代码规范.md
+  - "*.md"
+  # 调试落盘图不进包（assets/icon.png 是图标，必须保留，故不能排 *.png）
+  - screenshot*.png
+  - frame*.png
+  - mask*.png

@@ -153,7 +153,7 @@ class RectangleCenterDetector:
             rect_to_image = _homography(physical_quad, q)
             t = self._t
             # 三个点覆盖黑带的中部，再在内边缘后采两个亮面点。
-            offsets = tape * np.array([0.25, 0.50, 0.75, 1.22, 1.45])
+            offsets = tape * np.array([0.20, 0.40, 0.60, 1.22, 1.45])
             p = np.empty((4, len(t), 5, 2), np.float64)
             p[0, :, :, 0] = (tape + t * (w - 2 * tape))[:, None]
             p[0, :, :, 1] = offsets
@@ -171,7 +171,7 @@ class RectangleCenterDetector:
                 mapped[..., 0].max() >= gw - 1 or mapped[..., 1].max() >= gh - 1):
             return None
         samples = _sample(gray, mapped).astype(np.float32)
-        dark = np.median(samples[:, :, :3], axis=2)
+        dark = np.max(samples[:, :, :3], axis=2)
         bright = np.median(samples[:, :, 3:], axis=2)
         delta = bright - dark
         coverage = ((delta >= self.cfg.MIN_EDGE_CONTRAST) &
@@ -328,6 +328,8 @@ class RectangleCenterDetector:
                     return precise or verified
         # 透明膜的反光可能把整条黑环切开，内孔也不再闭合。
         # 仅失锁时从长线段拼四边，并通过相同暗带验证，绝不凭亮中心猜框。
+        if not getattr(self.cfg, "ENABLE_LINE_RECOVERY", False):
+            return None
         line_edges = cv2.Canny(cv2.GaussianBlur(small, (5, 5), 0),
                                self.cfg.CANNY_LOW, self.cfg.CANNY_HIGH)
         return self._line_search(gray, line_edges, sx, sy, x, y)
@@ -453,15 +455,19 @@ class RectangleCenterDetector:
         return result
 
 
-def draw_result(gray, result, show_width=480):
-    """缩小后再转 BGR 和描边，输出坐标仍为相机原图坐标。"""
+def draw_result(gray, result, show_width=480, top_offset=0):
+    """缩小后再转 BGR 和描边，输出坐标仍为相机原图坐标。
+
+    top_offset：屏幕上方的文字整体下移量（像素）。激光读数面板占用左上角时由
+    main.py 传 vision.laser_spot.PANEL_H，避免两处文字叠在一起。
+    """
     g = np.asarray(gray).squeeze()
     scale = min(1.0, float(show_width) / g.shape[1])
     if scale < 1:
         g = cv2.resize(g, (int(round(g.shape[1] * scale)), int(round(g.shape[0] * scale))))
     canvas = cv2.cvtColor(g, cv2.COLOR_GRAY2BGR)
     if not result.get("valid"):
-        cv2.putText(canvas, "NO BLACK RECTANGLE", (8, 24), cv2.FONT_HERSHEY_SIMPLEX, .55, (0, 0, 255), 1)
+        cv2.putText(canvas, "NO BLACK RECTANGLE", (8, 24 + top_offset), cv2.FONT_HERSHEY_SIMPLEX, .55, (0, 0, 255), 1)
         return canvas
     q = np.rint(result["quad"] * scale).astype(np.int32)
     iq = np.rint(result["inner_quad"] * scale).astype(np.int32)
@@ -478,5 +484,5 @@ def draw_result(gray, result, show_width=480):
     c = tuple(np.rint(np.array([result["u"], result["v"]]) * scale).astype(int))
     cv2.drawMarker(canvas, c, (255, 0, 0), cv2.MARKER_CROSS, 14, 2)
     cv2.putText(canvas, "(%d,%d) %s %.1fms" % (round(result["u"]), round(result["v"]),
-                result["stage"], result["detector_ms"]), (8, 22), cv2.FONT_HERSHEY_SIMPLEX, .45, (255, 220, 0), 1)
+                result["stage"], result["detector_ms"]), (8, 22 + top_offset), cv2.FONT_HERSHEY_SIMPLEX, .45, (255, 220, 0), 1)
     return canvas
