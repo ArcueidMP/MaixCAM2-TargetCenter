@@ -66,11 +66,14 @@
 ├── 视觉项目代码分析报告.md       轨道 A 深度分析报告
 │
 └── maixcam2_rect_center/       ★ 轨道 B（GPT）—— 独立应用，自带 app.yaml
-    ├── app.yaml                轨道 B 应用描述（id=maixcam2_rect_center）
-    ├── main.py                 轨道 B 入口
-    ├── config.py               轨道 B 现场调参（CANNY_* / MIN_EDGE_CONTRAST / TARGET_*_MM）
+    ├── app.yaml                轨道 B 应用描述（id=maixcam2_rect_center，v1.4.0）
+    ├── main.py                 轨道 B 入口（顶部 BUILD_ID）
+    ├── config.py               轨道 B 现场调参（CANNY_* / MIN_EDGE_CONTRAST / TARGET_*_MM / 云台组）
+    ├── target_api.py           ★ 轨道 B 对外 API（跨小问复用）：detect_black_frame / CenterTracker / AimLoop
     ├── vision/rectangle_center.py   轨道 B 算法（Canny + 单应 + 72 点圆）
-    ├── tools/test_performance.py    轨道 B 测试
+    ├── vision/laser_spot.py         光斑读数（fixed/detect）+ deviation(dx,dy)
+    ├── vision/{stepper_link,gimbal_aim,gimbal_calibrate,gimbal_self_test}.py   双轴云台链路/控制/标定/自检
+    ├── tools/test_*.py / example_api_usage.py / check_app.py   轨道 B 测试与门禁
     └── assets/icon.png         轨道 B 图标
 ```
 
