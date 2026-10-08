@@ -82,7 +82,7 @@ import time
 import cv2
 import numpy as np
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
+_HERE = os.path.dirname(os.path.abspath(__file__)) if "__file__" in globals() else os.getcwd()
 if _HERE not in sys.path:
     sys.path.insert(0, _HERE)
 

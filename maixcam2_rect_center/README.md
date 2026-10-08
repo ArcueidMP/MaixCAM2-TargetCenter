@@ -4,6 +4,9 @@
 必须一起下发应用包内的 **12 个文件**（`app.yaml` / `main.py` / `config.py` / `target_api.py` /
 `assets/icon.png` / `vision/` 下 7 个 `.py`），不能只运行当前 `main.py`。
 
+> 只想临时试参数时，也可以先 `python tools/build_single.py` 生成 `dist/main_single.py`，
+> 再用「运行当前文件」—— 那是自包含的单文件版，语义与分模块完全一致。改了源码记得重新生成。
+
 ## 代码结构（应用包 12 文件 + 离线工具）
 
 ```text
@@ -22,7 +25,11 @@ maixcam2_rect_center/
     ├── gimbal_calibrate.py   开环标定：实测 PULSE_PER_PX / DIR_SIGN / 交叉项 / 回差
     └── gimbal_self_test.py   上电小幅自检 + IMU 探测
 
+dist/
+└── main_single.py            单文件自包含版（由 tools/build_single.py 生成，**不进应用包**）
+
 tools/                        离线验证 / 调参 / 打包（**不进应用包**）
+├── build_single.py           生成/校验/自检单文件版（--check / --smoke）
 ├── test_performance.py       视觉回归：30 场景 + 5 反例 + 运动/失锁/性能
 ├── test_laser.py             光斑与偏差回归
 ├── test_gimbal_aim.py        云台：协议帧 / 闭环收敛 / 符号反发散 / ACK·E2 / 标定器
@@ -70,7 +77,12 @@ ACK 硬超时做成**自动识别**：只有收到过确认帧（驱动器 `Resp
 **这是"上电即可准确追踪"的前提** —— `3.67` 只是占位值，不标定直接闭环有正反馈甩头风险。
 自检另加 `GIMBAL_GEAR_RATIO` 兜底：已知减速比时不必先做脉冲/度标定也能做上电自检。
 
-**⑥ 其余** —— `vision/__init__.py` 统一导出 9 个符号；`app.yaml` 版本 1.3.0 → **1.4.0**；
+**⑥ 补齐 B 轨的"改完三件事"配套** —— 新增 `tools/build_single.py`（与 A 轨同款）：
+把 `config.py + vision/*.py + target_api.py + main.py` 共 9 个源文件合成自包含的
+`dist/main_single.py`，支持 `--check`（是否过期）与 `--smoke`（PC 自检：8 个嵌入模块能否就位、
+`BUILD_ID` 是否与 `main.py` 一致）。`dist/` 在 `app.yaml` 的 `exclude` 里，**不进应用包**。
+
+**⑦ 其余** —— `vision/__init__.py` 统一导出 9 个符号；`app.yaml` 版本 1.3.0 → **1.4.0**；
 `BUILD_ID` → `2026-10-08-target-api-v3`（板端日志须逐字一致）；应用包 **7 → 12 文件**。
 
 ## 上一版改动（2026-10-07 · 激光光斑读数）
@@ -235,12 +247,16 @@ from target_api import AimLoop        # 会驱动 ZDT 电机，须先完成开�
 ## 可复现验证
 
 ```text
-python -B tools/test_performance.py          # 黑框检测：30 合成场景 + 5 反例 + 运动/失锁
+python -B tools/build_single.py               # 生成 dist/main_single.py（「运行当前文件」用）
+python -B tools/build_single.py --check       # 单文件版是否已过期（改了源码没重生成会报错）
+python -B tools/build_single.py --smoke       # PC 自检：嵌入模块是否全部就位、BUILD_ID 是否同步
+python -B tools/check_app.py --manifest       # 机检 C1..C10 + 打印应用包内清单
+python -B tools/test_performance.py           # 黑框检测：30 合成场景 + 5 反例 + 运动/失锁
 python -B tools/test_performance.py --legacy 改动前的rectangle_center.py路径
-python -B tools/test_laser.py                # 激光：默认 fixed 口径 + detect 精度/限频/反光拒绝/耗时
-python -B tools/test_gimbal_aim.py           # 云台：协议帧 / 闭环收敛 / 符号反发散 / ACK·E2 / 标定器
-python -B tools/test_target_api.py           # 对外 API：识别/追踪/偏差符号/参数覆盖
-python -B tools/example_api_usage.py         # 三种小问场景的可运行调用示例
+python -B tools/test_laser.py                 # 激光：默认 fixed 口径 + detect 精度/限频/反光拒绝/耗时
+python -B tools/test_gimbal_aim.py            # 云台：协议帧 / 闭环收敛 / 符号反发散 / ACK·E2 / 标定器
+python -B tools/test_target_api.py            # 对外 API：识别/追踪/偏差符号/参数覆盖
+python -B tools/example_api_usage.py          # 三种小问场景的可运行调用示例
 ```
 
 测试包含 30 个已知真值的合成场景（透视、42°/45°/90°/135°旋转、暗背景、低曝光、局部反光、噪声），5 个反例，连续移动、突然平移、目标消失及重新出现。真值由独立 OpenCV 投影生成；测试检查未经时间平滑的原始中心，不能用旧坐标混过测试。
