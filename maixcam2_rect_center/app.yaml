@@ -1,11 +1,11 @@
 id: maixcam2_rect_center
 name: MaixCAM2 Rectangle Center
 name[zh]: MaixCAM2 矩形黑框中心
-version: 1.3.0
+version: 1.4.0
 icon: assets/icon.png
 author: 25Efork
-desc: Detect a black rectangle and output its perspective-correct center; a laser-spot panel shows the spot-to-center pixel offset.
-desc[zh]: 识别白底黑框中心，并在屏幕左上角显示激光光斑到靶心的像素偏差（光斑位置默认写死）。
+desc: Detect a black rectangle and output its perspective-correct center; a laser-spot panel shows the spot-to-center pixel offset; optional two-axis ZDT gimbal aiming closed loop; reusable target_api for other tasks.
+desc[zh]: 识别白底黑框中心，屏幕左上角显示激光光斑到靶心的像素偏差（光斑位置默认写死），可选双轴 ZDT 云台自动瞄准；对外提供 target_api 供各小问直接调用。
 # 默认"包含目录内全部文件"，下列为排除项（.git / __pycache__ 总是排除）。
 # ⚠ 应用包必须只有：app.yaml + .py 源码 + assets/icon.png。
 #    新增任何文档/调试图/测试脚本后，务必跑 tools/check_app.py --manifest 核一遍包内清单。

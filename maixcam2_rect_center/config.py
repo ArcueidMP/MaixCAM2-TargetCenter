@@ -13,6 +13,95 @@ class Config:
     SHOW_FPS = 15
     OPENCV_THREADS = 1
     LOG_INTERVAL = 2.0
+    # ---- 双 ZDT 云台链路 -------------------------------------------------
+    # UART1 -> 1 号电机 yaw，UART2 -> 2 号电机 pitch。
+    # 首次上板请先把云台架空，并确认驱动器已设为 UART_FUN/115200/0x6B。
+    ENABLE_GIMBAL = True
+    U1_DEV, U1_BAUD = "/dev/ttyS1", 115200
+    U2_DEV, U2_BAUD = "/dev/ttyS2", 115200
+    U1_PINS = {"A30": "UART1_TX", "A31": "UART1_RX"}
+    U2_PINS = {"B0": "UART2_TX", "B1": "UART2_RX"}
+    ADDR_YAW, ADDR_PITCH = 1, 2
+    DIR_SIGN_YAW = 1       # 误差为正默认发 CCW；实测反向改为 -1
+    DIR_SIGN_PITCH = 1
+    PULSE_PER_PX_YAW = 3.67       # 必须用实机开环标定替换
+    PULSE_PER_PX_PITCH = 3.67     # 必须用实机开环标定替换
+    GAIN_YAW = 0.5
+    GAIN_PITCH = 0.5
+    DEADBAND_PX = 2.0
+    MAX_STEP_PULSES = 360
+    RPM_FINE = 300
+    ACC_DEFAULT = 0
+    COMMAND_INTERVAL_S = 0.08
+
+    # 上电自检：度数对应的脉冲数必须按实际减速机构标定。
+    # 0 表示未标定，程序跳过自动扫动，避免用错误比例撞限位。
+    GIMBAL_SELF_TEST = True
+    SELF_TEST_YAW_DEG = 15.0
+    SELF_TEST_PITCH_DEG = 30.0
+    # 计算参考：3200 pulses/rev * 减速比 / 360；减速比未知时不要猜。
+    YAW_PULSES_PER_DEG = 0.0
+    PITCH_PULSES_PER_DEG = 0.0
+    # 以“yaw 向左 / pitch 仰起”为正方向；按文档两轴正方向均为 CW。
+    YAW_POSITIVE_CCW = False
+    PITCH_POSITIVE_CCW = False
+    SELF_TEST_RPM = 900
+    SELF_TEST_SETTLE_S = 0.35
+    MOTOR_PULSES_PER_REV = 3200
+    # 减速比未知时留 0：自检角度换算优先用上面的实测 PULSES_PER_DEG，不猜齿轮比。
+    # 若已知 i = 大齿轮齿数/小齿轮齿数，填进来即可让自检在未做脉冲/度标定时也生效。
+    GIMBAL_GEAR_RATIO = 0.0
+
+    # ---- 闭环口径（需求文档 §5.2）-----------------------------------------
+    # True = 用未平滑的 raw_u/raw_v 算 dx/dy（推荐）：CENTER_ALPHA 只留给显示，
+    # 闭环用平滑值会附加 ≈28ms 滞后，底盘运动时直接变成瞄准误差。
+    # 切换坐标系后 PULSE_PER_PX_* 必须在同一套坐标下重新标定。
+    AIM_USE_RAW = True
+    # 离群拒收：|误差| 超过该值先当误检丢弃，连续 JUMP_CONFIRM_FRAMES 帧才采信。
+    # 防止单帧误检（反光/干扰）给出 dx=2000px 而甩头。
+    JUMP_REJECT_PX = 400.0
+    JUMP_CONFIRM_FRAMES = 3
+    # 粗/精两段增益：|e| > COARSE_PX 用 GAIN_COARSE（大步快速逼近），否则用 GAIN_YAW/PITCH。
+    # 必须保持 gain <= 1，否则增量闭环不收敛（需求文档 §7.4）。
+    COARSE_PX = 24.0
+    GAIN_COARSE = 0.9
+    RPM_COARSE = 1200
+
+    # ---- 链路健康（ACK / E2 看门狗，需求文档 §7.9）------------------------
+    ENABLE_ACK_WATCHDOG = True
+    E2_REENABLE = True          # 收到 E2（未使能/堵转）自动补发一次 0xF3
+    E2_WINDOW_S = 2.0
+    E2_FAULT_COUNT = 10         # 窗口内 E2 超过该次数 -> FAULT 停机
+    # ACK 硬超时（ms）：自动识别 —— 只有在收到过确认帧（驱动器 Response=Receive/Reached/Both）
+    # 之后才启用；Response=None 时收不到确认帧，该判据自动不生效，不会误判 FAULT。0 = 关闭。
+    RX_TIMEOUT_MS = 300
+    RX_TIMEOUT_LIMIT = 20
+
+    # ---- 失锁重捕获（可选，默认关）---------------------------------------
+    # 上电目标不在视野内时可开启自动慢扫；扫动为小步低转速、有累计脉冲上限，
+    # 避免大幅甩动。开启前先确认机械行程与限位。
+    ENABLE_SCAN = False
+    LOST_FRAMES = 15
+    SCAN_STEP_DEG = 1.5
+    SCAN_LIMIT_DEG = 15.0
+    SCAN_STEP_PULSES = 40       # 未标定脉冲/度时用的脉冲步长
+    SCAN_LIMIT_PULSES = 400
+    SCAN_RPM = 60
+    SCAN_STEP_INTERVAL_S = 0.15
+
+    # ---- 开环标定（一次性；标完把 CALIBRATE_AXIS 置回 ""）----------------
+    # "yaw"/"pitch"：开机只做该轴开环标定，实测并打印 PULSE_PER_PX/DIR_SIGN/交叉项/回差。
+    # 标定期不发闭环指令。跑一次拿到数值填进本文件后，务必置回 ""。
+    CALIBRATE_AXIS = ""
+    CALIBRATE_PULSES = 2000
+    CALIBRATE_RPM = 300
+    CALIBRATE_SAMPLES = 5
+    CALIBRATE_SETTLE_S = 1.0
+    CALIBRATE_TIMEOUT_S = 20.0
+
+    # 兼容旧版纯视觉 ASCII 输出；开启云台时默认关闭，避免同一串口混发两种协议。
+    # ⚠ 本组只在 ENABLE_GIMBAL=False 的降级路径使用；ENABLE_GIMBAL=True 时电机走
+    #    U1_DEV/U2_DEV 两条串口，本条的 /dev/ttyS0 是系统日志口，切勿改成实际接线。
     ENABLE_UART = False
     UART_PORT = "/dev/ttyS0"
     UART_BAUD = 115200

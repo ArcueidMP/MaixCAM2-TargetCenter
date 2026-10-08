@@ -22,8 +22,11 @@ if ROOT not in sys.path:
 from config import Config
 from vision.rectangle_center import RectangleCenterDetector, draw_result
 from vision.laser_spot import LaserSpotDetector, deviation, draw_laser_overlay, PANEL_H
+from vision.gimbal_aim import GimbalAim
+from vision.gimbal_self_test import GimbalSelfTest, probe_imu
+from vision.gimbal_calibrate import GimbalCalibrator
 
-BUILD_ID = "2026-10-07-laser-readout-v1"
+BUILD_ID = "2026-10-08-target-api-v3"
 
 
 def _to_gray(img, image_module):
@@ -72,16 +75,45 @@ def main():
             uart = maix_uart.UART(Config.UART_PORT, Config.UART_BAUD)
         except Exception as exc:
             print("[uart] open failed: %s" % exc)
+    link = None
+    aim = None
+    self_test = None
+    calibrator = None
+    if Config.ENABLE_GIMBAL:
+        try:
+            from vision.stepper_link import StepperLink
+            link = StepperLink(Config)
+            link.enable()
+            aim = GimbalAim(Config)
+            imu_info = probe_imu()
+            if imu_info["available"]:
+                print("[imu] sample via %s: %s (gyro cannot define absolute yaw zero)" %
+                      (imu_info["method"], str(imu_info["sample"])))
+            else:
+                print("[imu] unavailable: %s" % imu_info["error"])
+            calibrator = GimbalCalibrator(Config, link, time.perf_counter())
+            if calibrator.done:
+                # 未配置标定轴：正常进入自检 + 跟踪。
+                calibrator = None
+                self_test = GimbalSelfTest(Config, link, time.perf_counter())
+            else:
+                print("[gimbal] calibration mode axis=%s（本次只标定，不闭环）" % calibrator.axis)
+            print("[gimbal] enabled yaw=%s pitch=%s addr=%d/%d" %
+                  (Config.U1_DEV, Config.U2_DEV, Config.ADDR_YAW, Config.ADDR_PITCH))
+        except Exception as exc:
+            print("[gimbal] disabled after init failure: %s" % exc)
     detector = RectangleCenterDetector(Config)
     laser_det = LaserSpotDetector(Config) if Config.ENABLE_LASER else None
     # fixed 模式（光斑位置写死）：开机取一次常量，之后全程复用 —— 不做任何图像检测，
     # 每帧只剩"黑框中心 − 该常量"两次减法。detect 模式才需要每帧调用 process()。
     laser_static = (laser_det.mode == "fixed") if laser_det is not None else False
+    aim_use_raw = bool(getattr(Config, "AIM_USE_RAW", False))
     last = time.perf_counter()
     last_log = last
     last_show = -1e10
     lens_enabled = Config.LENS_CORR
-    totals = dict(read=0.0, lens=0.0, bridge=0.0, detect=0.0, laser=0.0, uart=0.0, show=0.0, loop=0.0)
+    totals = dict(read=0.0, lens=0.0, bridge=0.0, detect=0.0, laser=0.0,
+                  uart=0.0, rx=0.0, aim=0.0, show=0.0, loop=0.0)
     count, searches = 0, 0
     laser_state = laser_det.static_state() if laser_static else None
     laser_ms, laser_calls, laser_hits = 0.0, 0, 0
@@ -90,6 +122,9 @@ def main():
     print("[rect-center] %s search_width=%d display_width=%d display_fps=%d" %
           (BUILD_ID, Config.SEARCH_WIDTH, Config.SHOW_WIDTH, Config.SHOW_FPS))
     print("[rect-center] 四边窄带跟踪 / 失锁后低分辨率搜索 / 72 点逆投影")
+    print("[aim] 闭环口径=%s（raw_u/raw_v）离群拒收=%spx 死区=%.1fpx 限幅=%dp" %
+          ("raw" if aim_use_raw else "smoothed", Config.JUMP_REJECT_PX,
+           Config.DEADBAND_PX, Config.MAX_STEP_PULSES))
     if laser_det is not None:
         if laser_static:
             print("[laser] mode=fixed 光斑位置写死 (%d,%d) —— 不做图像检测，每帧只算黑框中心−该常量" %
@@ -125,28 +160,55 @@ def main():
                 laser_calls += 1
                 laser_ms += laser_state["ms"]
                 laser_hits += 1 if laser_state["found"] else 0
+        dv = None
         if laser_state is not None:
             # fixed 模式走的就是这里：每帧唯一的光斑相关运算 = 两次减法。
-            dv = deviation(laser_state, result)
+            dv = deviation(laser_state, result, use_raw=aim_use_raw)
             if dv is not None:
-                # 靶心-光斑偏差（正值含义见 vision.laser_spot.deviation 注释）；
-                # 串口协议本版不变，这两个字段留给后续控制端用。
+                # 靶心-光斑偏差；dx/dy 既是串口字段也是闭环输入（符号见 deviation 注释）。
                 result["laser_u"], result["laser_v"] = laser_state["u"], laser_state["v"]
                 result["dx"], result["dy"] = dv
         after_laser = time.perf_counter()
+        result["aim_valid"] = bool(dv is not None)
         _send_uart(uart, result)
         after_uart = time.perf_counter()
+        # 下行：非阻塞读两条串口，处理 E2 自动补使能 / ACK 超时 / E2 洪水。
+        rx_started = time.perf_counter()
+        fb = link.poll(after_uart) if link is not None else None
+        rx_elapsed = time.perf_counter() - rx_started
+        link_fault = (fb or {}).get("fault")
+        aim_started = time.perf_counter()
+        if link_fault is not None and aim is not None and aim.state != "FAULT":
+            print("[gimbal] link fault: %s -> 立即停止并进入 FAULT" % link_fault)
+            link.stop(now=after_uart)
+            aim.fault("link:%s" % link_fault)
+        if calibrator is not None:
+            if not calibrator.done:
+                calibrator.update(after_uart, result)
+        elif aim is not None and link is not None and aim.state != "FAULT":
+            if self_test is not None and not self_test.done:
+                self_test.update(after_uart)
+            elif self_test is None or self_test.state != "FAULT":
+                aim_result = aim.update(result, now=after_uart)
+                for axis, command in aim_result["cmds"].items():
+                    if command is not None:
+                        ccw, pulses, rpm = command
+                        link.move(axis, ccw, pulses, rpm, Config.ACC_DEFAULT, now=after_uart)
+        aim_elapsed = time.perf_counter() - aim_started
+        after_aim = time.perf_counter()
         if disp is not None and (after_uart - last_show >= 1.0 / max(1, Config.SHOW_FPS)):
             last_show = after_uart
             view = draw_result(gray, result, Config.SHOW_WIDTH,
                                top_offset=PANEL_H if laser_state is not None else 0)
             if laser_state is not None:
                 draw_laser_overlay(view, laser_state, result,
-                                   min(1.0, float(Config.SHOW_WIDTH) / gray.shape[1]))
+                                   min(1.0, float(Config.SHOW_WIDTH) / gray.shape[1]),
+                                   use_raw=aim_use_raw)
             cv2.putText(view, "FPS %.1f" % fps, (12, view.shape[0] - 12),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2)
             disp.show(image.cv2image(view, bgr=True, copy=True))
-        now = time.perf_counter()
+        after_show = time.perf_counter()
+        now = after_show
         dt = now - last
         last = now
         if dt > 1e-4:
@@ -155,7 +217,7 @@ def main():
         phases = (after_read - start, after_lens - after_read,
                   after_bridge - after_lens, after_detect - after_bridge,
                   after_laser - after_detect, after_uart - after_laser,
-                  now - after_uart, now - start)
+                  rx_elapsed, aim_elapsed, after_show - after_aim, now - start)
         for key, elapsed in zip(totals, phases):
             totals[key] += elapsed * 1000.0
         count += 1
@@ -166,14 +228,21 @@ def main():
             laser_avg = laser_ms / laser_calls if laser_calls else 0.0
             print("[perf] %s valid=%s FPS=%.1f stage=%s frames=%d searches=%d "
                   "read=%.1f lens=%.1f bridge=%.1f detect=%.1f laser=%.1f "
-                  "uart=%.1f show=%.1f loop=%.1f ms | laser_call=%.2fms n=%d hit=%d" %
+                  "uart=%.1f rx=%.1f aim=%.1f show=%.1f loop=%.1f ms | laser_call=%.2fms n=%d hit=%d" %
                   ((BUILD_ID, result["valid"], window_fps, result["stage"], count, searches) +
                    tuple(totals[k] / count for k in totals) +
                    (laser_avg, laser_calls, laser_hits)))
+            if aim is not None:
+                print(aim.status_line())
             count, searches = 0, 0
             laser_ms, laser_calls, laser_hits = 0.0, 0, 0
             for key in totals:
                 totals[key] = 0.0
+    if link is not None:
+        try:
+            link.stop()
+        except Exception as exc:
+            print("[gimbal] stop on exit failed: %s" % exc)
     try:
         cam.close()
     except Exception:

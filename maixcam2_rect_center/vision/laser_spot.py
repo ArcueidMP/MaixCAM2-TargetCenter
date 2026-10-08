@@ -141,23 +141,33 @@ class LaserSpotDetector:
         return res
 
 
-def deviation(laser, result):
+def deviation(laser, result, use_raw=False):
     """靶心相对光斑的偏差：dx>0 靶心在光斑右侧，dy>0 靶心在光斑下方。
 
     约定取自需求文档 §7.2（dx = u靶心 − u光斑），与后续串口直控云台同一套符号：
     两轴都是"误差为正发 CCW"，因此屏幕上这个符号可以直接进控制律。
+
+    use_raw：闭环必须用这一档（True）—— 取 result["raw_u"]/["raw_v"]（未平滑）。
+    result["u"]/["v"] 是经 CENTER_ALPHA 一阶低通的值，只适合显示；拿它闭环会附加
+    约 28ms 滞后（需求文档 §5.2），底盘运动时直接变成瞄准误差。
     激光丢失或黑框无效时返回 None。
     """
     if not laser or not laser.get("found"):
         return None
     if not result or not result.get("valid"):
         return None
-    return (float(result["u"]) - float(laser["u"]),
-            float(result["v"]) - float(laser["v"]))
+    if use_raw and result.get("raw_u") is not None and result.get("raw_v") is not None:
+        tx, ty = float(result["raw_u"]), float(result["raw_v"])
+    else:
+        tx, ty = float(result["u"]), float(result["v"])
+    return (tx - float(laser["u"]), ty - float(laser["v"]))
 
 
-def draw_laser_overlay(canvas, laser, result=None, scale=1.0):
+def draw_laser_overlay(canvas, laser, result=None, scale=1.0, use_raw=False):
     """在显示画布左上角画激光读数面板 + 光斑标记 + 到靶心的连线。
+
+    use_raw 与 deviation() 保持一致：True 时连线终点与 dx/dy 都用未平滑的 raw 中心，
+    屏幕上看到的就是控制律真正在用的那个点。
 
     返回面板占用的高度（像素，显示画布坐标），调用方据此把 draw_result 的文字
     整体下移，避免和本面板重叠。
@@ -173,7 +183,7 @@ def draw_laser_overlay(canvas, laser, result=None, scale=1.0):
     else:
         line1 = "LASER -- [%s] peak=%d bg=%d" % (
             laser.get("reason", "?"), round(laser.get("peak", 0.0)), round(laser.get("bg", 0.0)))
-    dv = deviation(laser, result)
+    dv = deviation(laser, result, use_raw=use_raw)
     if dv is not None:
         line2 = "D-CENTER dx=%+.1f dy=%+.1f px" % (dv[0], dv[1])
         line2_color = _TEXT_C2
@@ -191,7 +201,10 @@ def draw_laser_overlay(canvas, laser, result=None, scale=1.0):
         return PANEL_H
     p = (int(round(laser["u"] * scale)), int(round(laser["v"] * scale)))
     if result is not None and result.get("valid"):
-        c = (int(round(float(result["u"]) * scale)), int(round(float(result["v"]) * scale)))
+        if use_raw and result.get("raw_u") is not None and result.get("raw_v") is not None:
+            c = (int(round(float(result["raw_u"]) * scale)), int(round(float(result["raw_v"]) * scale)))
+        else:
+            c = (int(round(float(result["u"]) * scale)), int(round(float(result["v"]) * scale)))
         cv2.line(canvas, p, c, _LINK, 1, cv2.LINE_AA)
     cv2.circle(canvas, p, 7, _MARK, 1, cv2.LINE_AA)
     cv2.drawMarker(canvas, p, _MARK, cv2.MARKER_CROSS, 5, 1, cv2.LINE_AA)
