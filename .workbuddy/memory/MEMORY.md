@@ -49,10 +49,12 @@
 2025 电赛 E 题视觉模块：靶心 = A4 靶纸四周 1.8cm 黑胶带矩形的**对角线交点**（射影不变量，
 不需要解单应）；输出 `(u,v)`（A 轨另给 `px_per_cm`）。详见 `AGENTS.md §0`。
 
-## 2 · A 轨改动纪律（AGENTS §3/§4 之外容易忘的两条）
+## 2 · 改动纪律（AGENTS §3/§3′/§4 之外容易忘的两条）
 
 - 改 `vision/*` / `config.py` / `main.py` 后：改 `BUILD_ID` → `tools/build_single.py` 重生成
-  `dist/main_single.py` → 跑门禁，顺序不能反。
+  `dist/main_single.py` → 跑门禁，顺序不能反。**A/B 两轨同构**（B 的对应契约在 AGENTS §3′，
+  B 版 `build_single.py` 已入库，多一个 `--smoke` 做 PC 自检）。**B 轨新增/改名根级或
+  `vision/` 模块后必须同步 `build_single.py` 的 `MODULES` 清单**，否则单文件版漏模块。
 - `tools/*.jpg`、`screenshot_*.png` 是脚本/调试产物：别当源文件改，别进包。
 
 ## 3 · 双轨并发
@@ -89,6 +91,8 @@
 三条硬规则：① `app.yaml` 的 `exclude` 是黑名单，**打完必须核包内清单**（曾漏 `screen_check.png`）；
 ② `image2cv` 按实际 `shape` 判通道（MaixCAM2 灰度是 `(H,W,1)`，不能靠 `ndim==2`）；
 ③ 改源码必须更新 `BUILD_ID`，板端日志与本地逐字一致才算新代码。
+补充：B 轨包内 **12 文件**（含 `target_api.py` 与 `vision/`×7），`dist/` 已排除；
+B 轨机检 `check_app.py --manifest` 会顺带核对 `dist/main_single.py` 的 `BUILD_ID`（C8）。
 
 ## 7 · B 轨要点（详细见 `B轨代码技术解析与功能分析.md`）
 
