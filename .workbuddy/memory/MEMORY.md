@@ -9,7 +9,7 @@
 | 轨 | 目录 | BUILD_ID | 状态 |
 |---|---|---|---|
 | A（DeepSeek） | 根 | `2026-10-05-r7` | 性能治理 + 抗抖跟踪已完成 |
-| B（名义 GPT） | `maixcam2_rect_center/` | `2026-10-07-laser-readout-v1` | 黑框检测 + **新增激光光斑读数面板** |
+| B（名义 GPT） | `maixcam2_rect_center/` | `2026-10-08-target-api-v3` | 黑框检测 + 光斑面板 + 双轴云台闭环 + **对外统一 API** |
 
 - 10-07 21:15 曾把 B 轨整套「激光瞄准」摘掉（`vision/aiming.py`、`tools/test_aiming.py`、
   `config.UART_PROTOCOL` 与旧 `LASER_*`、main 的 `[aim]` 接线）。**整体备份在
@@ -19,10 +19,30 @@
   每帧唯一运算 = `deviation()` 两次减法（黑框中心 − 固定光斑），屏幕左上角显示
   `LASER (294,202) [fixed/calib]` 与 `D-CENTER dx dy px`。标定/校验时才临时切 `"detect"`
   （标称位 ROI±64 实测、`LASER_INTERVAL_S=0.30` 限频、跳变门限、面积上下限挡反光）。
-  **现场实测光斑 ≈ (294, 202)**（640×480，背景 145 / 峰值 177）。回归 `tools/test_laser.py`
-  19 项全过（含 T0：出厂默认必须是 fixed）；`check_app.py --manifest` 52 OK/0 FAIL；
-  **应用包 = 7 文件**。串口协议仍是 `@[u,v]%\r\n`；`result` 额外带
-  `laser_u/laser_v/dx/dy`（黑框无效时不写；`found=False` 时 dict 里的 u/v 是标称占位，别当测量用）。
+  **现场实测光斑 ≈ (294, 202)**（640×480，背景 145 / 峰值 177）。
+- **10-08 B 轨云台闭环落地**（`stepper_link.py` + `gimbal_aim.py` + `gimbal_self_test.py`
+  + `gimbal_calibrate.py`，均未提交）：
+  ① 闭环口径 = **`raw_u/raw_v`**（`AIM_USE_RAW=True`），`CENTER_ALPHA` 只给显示；
+  ② `GimbalAim` 状态机 `BOOT/COARSE/FINE/SETTLE/HOLD/SCAN/FAULT` + `JUMP_REJECT_PX`(400,
+     连续 3 帧才采信) + 两段增益 + 死区/限频/单帧限幅；
+  ③ `StepperLink.poll()` 解析返回帧：`0x02` 计 ok、`0xE2` 自动补发 `0xF3`、窗口内 E2
+     超 10 次 → FAULT 停机；ACK 硬超时 **自动识别**（从未收到确认帧则不生效，不会误判）；
+  ④ **`vision/gimbal_calibrate.py`**：`CALIBRATE_AXIS="yaw"` 开机一键实测
+     `PULSE_PER_PX_*`/`DIR_SIGN_*`/交叉项/回差（非阻塞，标定期不发闭环指令）；
+  ⑤ 自检角度换算支持 `GIMBAL_GEAR_RATIO` 兜底，仍默认 SKIPPED（未标不定比例）。
+  回归 `tools/test_gimbal_aim.py` **10 用例全过**（含闭环收敛、
+  **DIR_SIGN 反了必发散**、离群拒收、E2 洪水、ACK 超时门控、标定器）；
+  `test_laser` 全过、`test_performance` 无回归（29/30、0.803px、0 误检）。
+- **10-08 对外 API（`target_api.py`，应用根目录）**：跨小问复用入口，顶层不 import maix。
+  两个核心 API：`detect_black_frame(frame)`（无状态识别，每帧全图搜索）与
+  `CenterTracker().track(frame)`（有状态追踪，窄带跟踪 + 失锁重捕获），另有
+  `track_center()/reset()` 函数式写法、`load_config(**overrides)`（不改磁盘 config）、
+  可选 `CenterTracker(with_laser=True)` 给 `dx/dy`、`AimLoop` 给完整云台闭环。
+  返回值 `Result` 是 dict 子类：`res["u"]`≡`res.u`，`bool(res)`≡`res.valid`。
+  `tools/test_target_api.py` 全过、`tools/example_api_usage.py` 可跑；
+  `check_app.py --manifest` **72 OK/0 FAIL，应用包 = 12 文件**。
+- **上板前必做**：先 `CALIBRATE_AXIS="yaw"`/"pitch" 各跑一次把 `PULSE_PER_PX_*` /
+  `DIR_SIGN_*` 填回 config，再置回 `""` 正常跟踪 —— 否则 3.67 是占位值，可能正反馈。
 
 ## 1 · 项目一句话
 
@@ -90,7 +110,8 @@ ZDT Emm_V5.0 闭环步进；与 MSPM0G3507 走 **SPI**（所以两条 UART 全�
 
 - 引脚：`ttyS1`=UART1(A30 TX/A31 RX，需 pinmap)、`ttyS2`=UART2(B0 TX/B1 RX，免 pinmap)、
   `ttyS0` 是系统口**禁用**；SPI 只能用 SPI2(B18/19/20/21)；115200 8N1。
-  ⚠ B 轨 `config.UART_PORT` 现在仍是错的 `/dev/ttyS0`。
+  ⚠ B 轨 `config.UART_PORT` 仍是 `/dev/ttyS0`（只在 `ENABLE_GIMBAL=False` 降级路径用到，
+  已加注释；云台路径走 `U1_DEV/U2_DEV`，功能无影响）。
 - ZDT：`Checksum=0x6B` 时校验字节就是固定 0x6B；多字节**大端**；`F3` 使能 / `F6` 速度 /
   `FD` 位置(mode 0 相对 1 绝对) / `FE` 停止；`dir` 0x00=CW、0x01=CCW；**增量闭环必须 acc=0**；
   16 细分下 3200 脉冲 = 电机 1 圈；返回 `02` 成功 / `E2` 未使能或堵转。
@@ -101,5 +122,10 @@ ZDT Emm_V5.0 闭环步进；与 MSPM0G3507 走 **SPI**（所以两条 UART 全�
   （`CENTER_ALPHA=0.70` 滞后≈28ms，底盘 90°/s 时 ≈6.6cm@1.5m）。
 - 符号：`dx = u靶心 − u光斑`、`dy = v靶心 − v光斑` → 两轴统一"**误差为正发 CCW(0x01)**"；
   实测反了只改 `DIR_SIGN_*`，别改接线、别再加负号。
-- 未决前置：① **光斑极性**（405nm 打紫外感光纸可能是暗斑，现实现只认亮斑）；② 大偏差先粗瞄
-  再切检测；③ 接串口云台前需把 `aiming` 从备份取回或按文档重写。
+- **10-08 代码侧已落地**（见 §0）：`stepper_link` 帧构造与官方 5 例逐字节一致；`gimbal_aim`
+  状态机 + 离群拒收；`poll()` 已接 ACK/E2 看门狗；`gimbal_calibrate` 一键实测标定。
+- 仍未决：① **光斑极性**（405nm 打紫外感光纸可能是暗斑，detect 模式只认亮斑 —— 但
+  默认 fixed 模式绕过了它）；② **FAULT 需手动重启恢复**（未做自动复位，有意保守）；
+  ③ `ENABLE_SCAN` 默认关（失锁不自动扫，避免上电甩头）。
+- **下一步（板端）**：P0 pinmap/回环 → `CALIBRATE_AXIS` 逐轴标定并回填 config → 正常跟踪；
+  P4 依实测回差调 `DEADBAND_PX`；P7 移动中瞄准需 3507 经 SPI 给角速度前馈（接口预留）。
