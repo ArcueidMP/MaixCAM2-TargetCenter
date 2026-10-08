@@ -93,7 +93,39 @@
 > `config.py` 是**唯一**需要现场改的文件。改算法参数前先想清楚是否真该动 `SCORE_*` 类阈值
 > （它们承担抗误检职责）；优先调阈值/曝光/形态学，别一上来就放宽打分。
 
-轨道 B 同理（`main.py` 里的日志串是版本核对依据），按 B 自己 `README.md` 的口径走。
+---
+
+## 3′. 轨道 B（GPT）改完**必须**做的三件事
+
+与轨道 A 同构。B 轨构建号格式 `YYYY-MM-DD-<slug>-vN`（当前 `2026-10-08-target-api-v3`），
+版本核对依据是 `main.py` 的 `BUILD_ID` 启动日志串。**以下命令一律在 `maixcam2_rect_center/`
+目录下执行**（脚本按自身位置定位工程根），本机 Python 用 `"D:/Python311/python.exe"`。
+
+1. **更新 `main.py` 顶部 `BUILD_ID`** —— 板端会打印 `[rect-center] <BUILD_ID> ...`，
+   **与本地逐字一致才算跑的是新代码**；不更新则无法判断是否生效。
+2. **重新生成单文件版**：
+   ```bash
+   "D:/Python311/python.exe" -B tools/build_single.py           # 生成 dist/main_single.py
+   "D:/Python311/python.exe" -B tools/build_single.py --check   # 单文件是否已过期
+   "D:/Python311/python.exe" -B tools/build_single.py --smoke   # PC 自检：嵌入模块是否全部就位
+   ```
+   `smoke_main.py` 的"预检 0"（A 轨）在这里由 `--smoke` 承担：它核对单文件与源码的
+   `BUILD_ID` 是否一致、8 个嵌入模块能否就位。**新增/改名 `vision/*.py` 或根级模块后，
+   必须同步 `tools/build_single.py` 里的 `MODULES` 清单**，否则「运行当前文件」会漏模块。
+3. **跑门禁**（改了 `main.py` / `config.py` / `vision/*` / `target_api.py` 任一都要做）：
+   ```bash
+   "D:/Python311/python.exe" -B tools/check_app.py --manifest   # C1..C10 机检 + 打印包内清单
+   "D:/Python311/python.exe" -B tools/test_performance.py       # 视觉回归（29/30、0.803px、0 误检）
+   "D:/Python311/python.exe" -B tools/test_target_api.py        # 对外 API 回归
+   "D:/Python311/python.exe" -B tools/test_gimbal_aim.py        # 云台协议/闭环/看门狗/标定
+   ```
+   改了光斑相关（`laser_spot.py` / `config.LASER_*`）还要跑 `tools/test_laser.py`；
+   改了视觉算法阈值（`MIN_*` / `MAX_*` / `SCORE_*` 类）必须对着 `test_performance` 确认无回归。
+
+> B 轨同样只有 `config.py` 需要现场改。`dist/` 在 `app.yaml` 的 `exclude` 里，**不进应用包**；
+> 应用包 = **12 文件**（`app.yaml` / `main.py` / `config.py` / `target_api.py` / `assets/icon.png` /
+> `vision/` 下 7 个 `.py`）—— 新增文件后**必须核 `--manifest` 打印的包内清单**。
+
 
 ---
 
@@ -164,7 +196,10 @@ python tools/test_jitter.py              # 抖动稳定性回归（改了 tracke
 - **打完必须核一遍包内清单**：应用包 = **8 个文件**
   （`app.yaml` / `main.py` / `config.py` / `vision/`×4 / `assets/icon.png`）。
   本项目就是靠核清单才发现 `reference/`、`maixcam2_rect_center/`、文档曾混进应用包。
-- 轨道 B 自带 `app.yaml`，打包口径同理（排除 `__pycache__` / `README.md` / 测试脚本）。
+- 轨道 B 自带 `app.yaml`（`exclude` 黑名单里已含 `tools` / `dist` / `__pycache__` / `*.md` /
+  调试截图），打包口径同理；**应用包 = 12 文件**（`app.yaml` / `main.py` / `config.py` /
+  `target_api.py` / `assets/icon.png` / `vision/`×7）。核对方式：在 `maixcam2_rect_center/` 下跑
+  `"D:/Python311/python.exe" -B tools/check_app.py --manifest`，它直接打印包内清单。
 
 ---
 
