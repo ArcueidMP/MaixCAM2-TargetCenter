@@ -66,6 +66,7 @@
 ├── 视觉项目代码分析报告.md       轨道 A 深度分析报告
 │
 └── maixcam2_rect_center/       ★ 轨道 B（GPT）—— 独立应用，自带 app.yaml
+    ├── AGENTS.md             ★ 轨道 B 工作契约（工作边界 / 实测电机轴映射 / 调参 / **每轮交 git**）
     ├── app.yaml                轨道 B 应用描述（id=maixcam2_rect_center，v1.4.0）
     ├── main.py                 轨道 B 入口（顶部 BUILD_ID）
     ├── config.py               轨道 B 现场调参（CANNY_* / MIN_EDGE_CONTRAST / TARGET_*_MM / 云台组）
@@ -118,9 +119,11 @@
    "D:/Python311/python.exe" -B tools/test_performance.py       # 视觉回归（29/30、0.803px、0 误检）
    "D:/Python311/python.exe" -B tools/test_target_api.py        # 对外 API 回归
    "D:/Python311/python.exe" -B tools/test_gimbal_aim.py        # 云台协议/闭环/看门狗/标定
+   "D:/Python311/python.exe" -B tools/test_main_self_test.py    # 端到端跑 main()：上电自检优先/故障阻断
    ```
    改了光斑相关（`laser_spot.py` / `config.LASER_*`）还要跑 `tools/test_laser.py`；
    改了视觉算法阈值（`MIN_*` / `MAX_*` / `SCORE_*` 类）必须对着 `test_performance` 确认无回归。
+   改了主循环控制流（上电自检 / 标定 / 追踪的顺序）必须跑 `tools/test_main_self_test.py`。
 
 > B 轨同样只有 `config.py` 需要现场改。`dist/` 在 `app.yaml` 的 `exclude` 里，**不进应用包**；
 > 应用包 = **12 文件**（`app.yaml` / `main.py` / `config.py` / `target_api.py` / `assets/icon.png` /
@@ -186,6 +189,10 @@ python tools/test_jitter.py              # 抖动稳定性回归（改了 tracke
   `.workbuddy/` 除 `memory/` 外的一切。
 - **提交身份**：`CloudyRain <cloudyrain@example.com>`（**占位邮箱**，推远程前先改）。
 - **尚无远程仓库**；要推时 `git remote add origin <url> && git push -u origin main`。
+- ★ **轨道 B 额外要求「每轮交 git」**：`maixcam2_rect_center/main.py` 被外部进程
+  （MaixVision 烧录 / 并行会话）**整份覆写**过多次，`git` 是唯一可靠的回滚点。
+  B 轨每完成一轮（改码 → 提升 `BUILD_ID` → `build_single` → 门禁 → **立即提交**）即提交一次；
+  细则与一条命令的助手脚本（`tools/git_round.py`）见 [`maixcam2_rect_center/AGENTS.md §5`](maixcam2_rect_center/AGENTS.md)。
 
 ---
 
