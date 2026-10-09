@@ -144,12 +144,11 @@ def do_commit(message, with_memory):
 
 
 def do_rollback(relpath, apply_sha=None):
+    # git 命令以**仓库根**为 cwd，故路径必须是仓库相对的：统一补上 "maixcam2_rect_center/"。
+    relpath = relpath.replace("\\", "/").lstrip("./")
+    if not relpath.startswith(SELF_DIR + "/") and relpath != SELF_DIR:
+        relpath = SELF_DIR + "/" + relpath
     target = relpath
-    if not os.path.exists(os.path.join(ROOT, relpath)):
-        # 允许传 maixcam2_rect_center/ 前缀或纯文件名
-        alt = os.path.join(SELF_DIR, relpath)
-        if os.path.exists(os.path.join(REPO, alt)):
-            target = alt
     print("=== %s 的提交历史（最近 15 条）===" % target)
     rc, out = run(["git", "log", "--oneline", "-15", "--", target])
     print(out.strip() or "  (无历史)")
