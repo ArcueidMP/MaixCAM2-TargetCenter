@@ -52,8 +52,16 @@
   实测退回过 **v6**（10-09）与 **v9**（10-10，距 build 仅 35s）。改完入口**立刻**
   `build_single.py` + `check_app.py --manifest`；**C8（dist 与 main.py 的 BUILD_ID 一致）
   是覆盖探针**；`tools/apply_gimbal_track_patch.py` 的补丁锚点已升级为**多形态**
-  （每项 `old` 可为 v6/v9 等若干形态的 tuple，命中任一即替换为当前 v11 形态），
-  故**一条 `--check` 即可核对、一条无参调用即可从 v6 或 v9 恢复**。
+  （每项 `old` 可为 v6/v9 等若干形态的 tuple，命中任一即替换为当前形态），
+  故**一条 `--check` 即可核对、一条无参调用即可从旧形态恢复**。
+- ★ **B 轨每轮交 git（10-10 定案）**：覆写是持续的，**git 是唯一可靠回滚点** →
+  B 轨每完成一轮（改码→BUILD_ID→build_single→门禁→**立即提交**）即 commit 一次。
+  一条命令：`"D:/Python311/python.exe" -B tools/git_round.py -m "gpt: 摘要"`
+  （`--check` 只核对；`--rollback <文件>` 看历史+回滚命令）。**只 add `maixcam2_rect_center/`，绝不 `-A`**。
+- **B 轨有自己的 `AGENTS.md`**（`maixcam2_rect_center/AGENTS.md`，10-10 新增）= B 轨工作契约：
+  工作边界 / **电机轴映射定案表** / 调参方式 / 改完三件事 / 每轮交 git / 常见坑。
+  根 `AGENTS.md` 是跨轨契约；**改 B 轨先读 B 轨 AGENTS.md**。B 轨另有 `.gitignore`（子树专属，
+  已被 app.yaml exclude）：忽略 `tools/e2e_report/`，**保留 `tools/negative_e*.png`（测试固件）**。
 
 ## 4 · A 轨性能（README §三′）
 
