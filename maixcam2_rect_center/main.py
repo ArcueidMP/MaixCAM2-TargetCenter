@@ -24,9 +24,9 @@ from vision.rectangle_center import RectangleCenterDetector, draw_result
 from vision.laser_spot import LaserSpotDetector, deviation, draw_laser_overlay, PANEL_H
 from vision.gimbal_aim import GimbalAim
 from vision.gimbal_self_test import GimbalSelfTest, probe_imu
-from vision.gimbal_calibrate import GimbalCalibrator
+from vision.gimbal_calibrate import GimbalCalibrator, AutoCalibrate
 
-BUILD_ID = "2026-10-08-target-api-v3"
+BUILD_ID = "2026-10-10-no-block-v14"
 
 
 def _to_gray(img, image_module):
@@ -79,11 +79,23 @@ def main():
     aim = None
     self_test = None
     calibrator = None
+    auto_cal = None
+    auto_cal_done = False
     if Config.ENABLE_GIMBAL:
         try:
-            from vision.stepper_link import StepperLink
+            from vision.stepper_link import StepperLink, axis_cfg, fault_reason
             link = StepperLink(Config)
-            link.enable()
+            # 先亮出两条串口的真实状态：设备路径 / 引脚 / pinmap 结果 / 是否打开。
+            for line in link.health_lines():
+                print(line)
+            axes = link.available_axes()
+            if not axes:
+                print("[gimbal] 两条串口都打不开 -> 云台停用（视觉照常运行）；"
+                      "请核对接线：yaw=U0(U0T/U0R,A28/A29)、pitch=U2(U2T/U2R,B0/B1)，"
+                      "TX↔RX 交叉、三路 GND 共地")
+            enabled = link.enable()
+            print("[gimbal] 使能帧 0xF3 已发: %s（True=两轴 write 未报错；驱动器 Response≠None 才会有回执帧）"
+                  % enabled)
             aim = GimbalAim(Config)
             imu_info = probe_imu()
             if imu_info["available"]:
@@ -91,15 +103,35 @@ def main():
                       (imu_info["method"], str(imu_info["sample"])))
             else:
                 print("[imu] unavailable: %s" % imu_info["error"])
+            axis_sel = str(getattr(Config, "CALIBRATE_AXIS", "")).strip().lower()
             calibrator = GimbalCalibrator(Config, link, time.perf_counter())
             if calibrator.done:
-                # 未配置标定轴：正常进入自检 + 跟踪。
                 calibrator = None
+                # ★ 上电自检与视觉/标定**完全解耦**：只要本次不是"人工标定"模式，
+                #   上电后立刻按固定脉冲走一遍（**pitch 上→下、yaw 左→右**，各回到起始位姿）。
+                #   自检只用链路 + 时间，**不需要靶纸、不等黑框识别**；4 步跑完才轮到
+                #   自动标定 / 追踪（见主循环：自检分支优先）。
                 self_test = GimbalSelfTest(Config, link, time.perf_counter())
+                if self_test.state == "RUNNING":
+                    axes_txt = "+".join(sorted({s[0] for s in self_test.sequence}))
+                    print("[gimbal] 上电自检 %d 步，参与轴=%s（固定脉冲，不等黑框/靶纸）"
+                          % (self_test.total, axes_txt))
+                elif self_test.state == "SKIPPED":
+                    print("[gimbal] 自检已跳过(%s) -> 上电不会看到电机动作。"
+                          "要么填 YAW/PITCH_PULSES_PER_DEG、要么给 GIMBAL_GEAR_RATIO，"
+                          "要么设 SELF_TEST_PULSES>0 用固定脉冲验证链路"
+                          % self_test.reason)
+                if axis_sel == "auto":
+                    print("[gimbal] 自检完成后自动标定 %s（标定期才需要画面里有靶心，"
+                          "否则按 AUTO_CALIBRATE_TIMEOUT_S 超时失败）"
+                          % "+".join(getattr(Config, "AUTO_CALIBRATE_AXES", ("yaw", "pitch"))))
             else:
-                print("[gimbal] calibration mode axis=%s（本次只标定，不闭环）" % calibrator.axis)
-            print("[gimbal] enabled yaw=%s pitch=%s addr=%d/%d" %
-                  (Config.U1_DEV, Config.U2_DEV, Config.ADDR_YAW, Config.ADDR_PITCH))
+                print("[gimbal] calibration mode axis=%s（本次只人工标定：不自检、不闭环）"
+                      % calibrator.axis)
+            print("[gimbal] axes yaw=%s@%s pitch=%s@%s addr=%d/%d" %
+                  (axis_cfg(Config, "yaw")[0], axis_cfg(Config, "yaw")[2] or "默认复用",
+                   axis_cfg(Config, "pitch")[0], axis_cfg(Config, "pitch")[2] or "默认复用",
+                   Config.ADDR_YAW, Config.ADDR_PITCH))
         except Exception as exc:
             print("[gimbal] disabled after init failure: %s" % exc)
     detector = RectangleCenterDetector(Config)
@@ -176,24 +208,49 @@ def main():
         rx_started = time.perf_counter()
         fb = link.poll(after_uart) if link is not None else None
         rx_elapsed = time.perf_counter() - rx_started
-        link_fault = (fb or {}).get("fault")
+        link_fault = fault_reason(fb) if link is not None else None
         aim_started = time.perf_counter()
         if link_fault is not None and aim is not None and aim.state != "FAULT":
             print("[gimbal] link fault: %s -> 立即停止并进入 FAULT" % link_fault)
             link.stop(now=after_uart)
             aim.fault("link:%s" % link_fault)
         if calibrator is not None:
-            if not calibrator.done:
+            if not calibrator.done and aim is not None and aim.state != "FAULT":
                 calibrator.update(after_uart, result)
-        elif aim is not None and link is not None and aim.state != "FAULT":
-            if self_test is not None and not self_test.done:
+        elif self_test is not None and not self_test.done:
+            # ★ 上电自检优先：固定脉冲 4 步（pitch 上→下、yaw 左→右）先走完，
+            #   期间不发任何标定/闭环指令；**不依赖视觉结果**（无黑框也照走）。
+            #   唯一例外：链路已被判 FAULT 时不再下发任何指令。
+            if aim is not None and aim.state != "FAULT":
                 self_test.update(after_uart)
-            elif self_test is None or self_test.state != "FAULT":
-                aim_result = aim.update(result, now=after_uart)
-                for axis, command in aim_result["cmds"].items():
-                    if command is not None:
-                        ccw, pulses, rpm = command
-                        link.move(axis, ccw, pulses, rpm, Config.ACC_DEFAULT, now=after_uart)
+        elif self_test is not None and self_test.state == "FAULT":
+            # 自检判定链路故障（所有参与轴都写不出去）-> 保持静默：不标定、不追踪。
+            pass
+        elif (auto_cal is None and aim is not None and aim.state != "FAULT"
+              and str(getattr(Config, "CALIBRATE_AXIS", "")).strip().lower() == "auto"):
+            # 自检结束后才真正开始自动标定：时间窗口从"这一刻"算起，
+            # 不被上电自检的机械动作耗时挤占（否则自检慢时会吞掉标定预算）。
+            auto_cal = AutoCalibrate(Config, link, after_uart)
+            print("[gimbal] 上电自检完成 -> 开始自动标定 %s（标定期不闭环，需画面里有靶心）"
+                  % "+".join(auto_cal.axes))
+        elif auto_cal is not None and not auto_cal.done:
+            # 自动标定期间只标定、不闭环（与人工标定同一口径）。
+            if aim is not None and aim.state != "FAULT":
+                auto_cal.update(after_uart, result)
+        elif aim is not None and link is not None and aim.state != "FAULT":
+            if auto_cal is not None and not auto_cal_done:
+                # 自动标定刚结束：只有两轴全部标定成功才解锁闭环（否则保持锁定）。
+                auto_cal_done = True
+                if auto_cal.applied and aim.unlock("auto-calibrate"):
+                    print("[gimbal] 自动标定完成 -> 闭环已解锁，开始跟踪")
+                else:
+                    print("[gimbal] 自动标定未全部成功(%s) -> 闭环保持锁定，不会发电机指令"
+                          % (auto_cal.reason or auto_cal.state))
+            aim_result = aim.update(result, now=after_uart)
+            for axis, command in aim_result["cmds"].items():
+                if command is not None:
+                    ccw, pulses, rpm = command
+                    link.move(axis, ccw, pulses, rpm, Config.ACC_TRACK, now=after_uart)
         aim_elapsed = time.perf_counter() - aim_started
         after_aim = time.perf_counter()
         if disp is not None and (after_uart - last_show >= 1.0 / max(1, Config.SHOW_FPS)):
@@ -234,6 +291,8 @@ def main():
                    (laser_avg, laser_calls, laser_hits)))
             if aim is not None:
                 print(aim.status_line())
+            if link is not None:
+                print(link.status_line())
             count, searches = 0, 0
             laser_ms, laser_calls, laser_hits = 0.0, 0, 0
             for key in totals:

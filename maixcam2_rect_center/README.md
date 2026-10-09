@@ -1,6 +1,6 @@
 # MaixCAM2 黑框中心：四边精修、快速跟踪与双轴云台瞄准
 
-构建号 `2026-10-08-target-api-v3`，应用版本 `1.4.0`。在 MaixVision 中打开本文件夹，选择“运行项目”。
+构建号 `2026-10-09-self-test-loop-v4`，应用版本 `1.4.0`。在 MaixVision 中打开本文件夹，选择“运行项目”。
 必须一起下发应用包内的 **12 个文件**（`app.yaml` / `main.py` / `config.py` / `target_api.py` /
 `assets/icon.png` / `vision/` 下 7 个 `.py`），不能只运行当前 `main.py`。
 
@@ -50,6 +50,265 @@ tools/                        离线验证 / 调参 / 打包（**不进应用包
 
 `Result` 是 dict 子类：`res["u"]` 与 `res.u` 等价，`bool(res)` 等价于 `res.valid`。
 详细字段与用法见下文「对外 API」一节、`target_api.py` 模块 docstring 及 `tools/example_api_usage.py`。
+
+## 2026-10-10 改动⑧：修「自检/标定卡住」——标定视觉无效快速失败 + 默认免标定直接追踪
+
+**现场现象**：上电后自检/校准会**卡住不动**。用户定位准确：**标定环节依赖视觉** ——
+"没识别到黑框就不校准；而校准一抬头黑框跑出视野，又卡在等 dv 上"。
+
+### 一、根因
+
+`GimbalCalibrator.update()` 每一步都要 `result["aim_valid"]` 且 `dx/dy` 有效才推进
+（`if dv is None: return self.state`）。于是：
+- 画面里没有靶纸 → 卡在 `BASELINE`；
+- 标定要驱动云台走 N 脉冲，**抬头后黑框出视野** → 卡在 `MEASURE_OUT`。
+
+两条路都只能等 `CALIBRATE_TIMEOUT_S = 20s` 超时才失败 —— 表现就是"卡住"。
+
+### 二、改法（解决"阻塞"本身，而不是压缩时间）
+
+| 项 | 旧 | 新 |
+|---|---|---|
+| **标定视觉无效快速失败** | （无，只能干等 20s） | **`CALIBRATE_VISUAL_TIMEOUT_S = 3.0`**：连续 3s 无有效 `dx/dy` → 判 `no_vision` 失败，**立刻交还主流程** |
+| 自动标定 | `CALIBRATE_AXIS = "auto"` | **`""`**（默认不标定，直接用手动宏换算） |
+| 闭环解锁 | `GIMBAL_CALIBRATED = False` | **`True`**（参数由手动宏给出，自检完直接追） |
+| 自检防死锁超时 | （无） | **`SELF_TEST_TIMEOUT_S = 10.0`**：只兜底"某步迟迟不返回"，**不是性能目标** |
+| 闭环方向 | `DIR_SIGN_* = +1` | **`-1`**（几何推断：云台转过去时靶心在画面里反向移动） |
+| 发散保护 | （无） | **`DIVERGE_GUARD`**：持续发指令却不收敛 → 自动 FAULT 停机 |
+
+时序：**上电 → 自检 4 步（慢 + 曲线，约 3~4s）→ 直接进入追踪**，全程不等黑框。
+自检参数保持"慢 + 曲线"手感，没有为抢时间而压紧。
+
+> 自检超时的判据是"**还有步没发完**才算卡住" —— 4 步都发出后正常等最后一步走完，
+> 否则会截断机械动作、并与紧随其后的追踪指令堆叠。
+>
+> 即使把 `CALIBRATE_AXIS` 改回 `"auto"`（想重新标定），画面里没靶心也只会在 3s 内失败并
+> **把控制权交还主流程** —— 不会再出现"卡住不动"。
+
+- `test_gimbal_aim` **PASS(24)**（新增 `test_diverge_guard`、`test_calibrator_fails_fast_without_vision`）；
+  `test_main_self_test` 2 条 PASS（其模拟时钟步长同步改为真实量级，否则超时兜底会被瞬间触发）。
+- `BUILD_ID = 2026-10-10-no-block-v14`；门禁 **74 OK/0 FAIL**；性能无回归。
+
+> ⚠ 因跳过标定，`DIR_SIGN_*` 是**按几何推断**的。上电后若"越追越偏"，把对应项改成 `+1`；
+> `DIVERGE_GUARD` 会在这种情况下自动 FAULT 停机保护。需要重新标定时把 `CALIBRATE_AXIS`
+> 临时改回 `"auto"`（或 `"yaw"`/`"pitch"` 单轴）。
+
+## 2026-10-09 改动⑦：追踪回归（按实测轴映射）+ 闭环速度曲线（防急停晃开激光）
+
+### 一、追踪已恢复
+
+`CALIBRATE_AXIS` 改回 `"auto"`：上电自动标定两轴 → 写回运行时 config → 解锁闭环进入追踪。
+标定按**实测轴映射**进行（`pitch` 在 `U0`/`ttyS0`/ID=1，`yaw` 在 `U2`/`ttyS2`/ID=2 —— 见上方接线表），
+所以实测出的 `PULSE_PER_PX_*` / `DIR_SIGN_*` 会落在**正确的轴**上，不会再出现"yaw 的系数用在 pitch 上"。
+
+### 二、闭环加"速度曲线"：防止急停把激光晃开
+
+闭环每 `COMMAND_INTERVAL_S`（80ms）发一条位置命令。此前用的是 `ACC_DEFAULT = 0`，而位置模式
+`acc = 0` 的含义是**不使用曲线加减速、直接以设定速度启停** —— 每条命令都是一次硬启硬停，
+机械冲击让激光在停下的瞬间偏离（现场反馈的"急停对不准"）。
+
+现在闭环改用新的 **`ACC_TRACK`** 并整体降速：
+
+| 参数 | 旧 | 新 | 作用 |
+|---|---|---|---|
+| `RPM_FINE` | 300 | **120** | 精调段转速，更慢更稳 |
+| `RPM_COARSE` | 1200 | **400** | 粗调段转速 |
+| `ACC_TRACK` | （借用 `ACC_DEFAULT = 0`） | **200** | 闭环曲线加减速档位 |
+
+`acc ≠ 0` 时，**短行程会自动退化为三角速度曲线**：以 18 脉冲的小步为例，从 acc=0 的约 2.8ms
+硬走，变为 acc=200 的约 62ms 平滑起停（峰值仅约 11 RPM）。这个时长恰好与 80ms 的命令间隔衔接 ——
+既柔和不冲、又不拖慢跟踪；误差大时行程更长、峰值更高，自然连成平滑跟随。
+
+- `test_gimbal_aim` **PASS(21)**：新增 `test_track_uses_curve_config`，它同时是 **`main.py`
+  被并发覆盖的探针**（旧版用 `ACC_DEFAULT`，一被覆盖测试即红）。
+- `BUILD_ID = 2026-10-09-track-curve-v9`；门禁 **74 OK/0 FAIL**；性能无回归（29/30、0.803px、0 误检）。
+- `tools/apply_gimbal_track_patch.py` 的补丁清单同步扩到 **5 项**（含 `ACC_TRACK` 这一处）。
+
+## 2026-10-09 改动⑥：暂关追踪；自检改为「固定脉冲、不需要靶子」的 pitch 上下 / yaw 左右
+
+按现场要求调整两处。追踪的代码与能力**全部保留**，只是配置关掉。
+
+### 一、关掉追踪
+
+`CALIBRATE_AXIS` 由 `"auto"` 改回 `""`。上电不再自动标定，闭环保持 `UNCALIBRATED` 锁定
+（`AIM_REQUIRE_CALIBRATION=True` + `GIMBAL_CALIBRATED=False`）—— **只输出视觉结果、不发任何电机指令**。
+要恢复追踪：把 `CALIBRATE_AXIS` 改回 `"auto"` 即可，其余不用动。
+
+### 二、自检改为固定脉冲，且与视觉/标定完全解耦
+
+自检本来就是纯开环动作、与视觉无关；这次把它变成**唯一默认**路径：
+
+| 项 | 旧 | 新 |
+|---|---|---|
+| 判定依据 | 先看 `PULSES_PER_DEG`，未标定才用固定脉冲兜底 | **直接用固定脉冲**，完全不看标定 |
+| 参数名 | `SELF_TEST_FALLBACK_PULSES` | **`SELF_TEST_PULSES`**（旧名仍兼容读取） |
+| 动作顺序 | yaw ×3 → pitch ×3（+F / −2F / +F） | **pitch 上转 → 下转；yaw 左转 → 右转**（每轴两段等长，回到起始位姿） |
+| 步数 | 6 | **4** |
+
+上电日志：`[self-test] 固定脉冲自检（无需靶子 / 无需标定）：pitch 上转 400 → 下转 400，yaw 左转 400 → 右转 400`。
+只有 `SELF_TEST_PULSES = 0` 时才回退到"按 `YAW/PITCH_PULSES_PER_DEG` 换算角度"的 6 步老路径。
+
+**顺带修掉一个逻辑缺陷**：原判据是"序列走空即 FAULT"，在新顺序下会误伤 —— pitch 已走完、
+yaw 写失败（此时序列恰好为空）会被判成整机故障。现改为 **"所有参与轴都失败才算 FAULT"**
+（`self._failed >= self._planned`），某轴不通不再抹掉另一轴的结果。
+
+- `BUILD_ID = 2026-10-09-self-test-pulse-v7`；`test_gimbal_aim` **PASS(20)**；
+  性能无回归（29/30、0.803px、0 误检）；门禁 **74 OK/0 FAIL**。
+
+## 2026-10-09 改动⑤：加追踪 —— `CALIBRATE_AXIS="auto"` 自动标定并自动解锁闭环
+
+两轴能动之后，剩下的一步是**让闭环真正工作**。此前卡在两点：① 人工标定需要看屏幕读数、
+回填 config 再重启；② `AIM_REQUIRE_CALIBRATION=True` + `GIMBAL_CALIBRATED=False` 把闭环锁成
+`UNCALIBRATED`（只出视觉、不发指令）。
+
+现在设一行即可从"上电"直接走到"跟踪"：
+
+```python
+CALIBRATE_AXIS = "auto"
+```
+
+流程：`AutoCalibrate` 依次标定 yaw → pitch（每轴仍是"静置取基线 → 正走 N 脉冲 → 回位 → 再测"），
+两轴**全部成功**后把实测 `PULSE_PER_PX_*` / `DIR_SIGN_*` 写回**运行时** cfg，并调用
+`GimbalAim.unlock()` —— 无需回填、无需重启，本帧起进入 `aim.update()` 跟踪。
+
+**安全口径（重要）**：**任一轴失败就整体不解锁**，闭环保持 `UNCALIBRATED`、一条指令也不发。
+所以"画面里没有靶心"时不会盲目闭环；日志会明确给出
+`自动标定未全部成功 -> 闭环保持锁定，不会发电机指令`。
+
+| 参数 | 旧 | 新 | 说明 |
+|---|---|---|---|
+| `CALIBRATE_AXIS` | `""` / `"yaw"` / `"pitch"` | 增加 **`"auto"`** | 自动逐轴标定 + 自动解锁 |
+| `CALIBRATE_PULSES` | 2000 | **400** | 行程宁小勿大：太多会把靶心推出视野 → 标定失败 |
+| `CALIBRATE_RPM` | 300 | **60** | 标定动作也要慢 |
+| `CALIBRATE_ACC` | （无） | **60** | 新增：标定也走曲线加减速 |
+| `AUTO_CALIBRATE_AXES` / `AUTO_CALIBRATE_TIMEOUT_S` | — | `("yaw","pitch")` / 150s | auto 范围与总超时 |
+
+- `GimbalAim.unlock(reason)`：解除未标定锁，幂等（已解锁再调返回 False）。
+- `target_api.AimLoop(calibrated=True)` / `AimLoop.unlock()`：API 侧同样可解锁。
+- `test_gimbal_aim` **PASS(20)**（新增 `test_auto_calibrate_success`、
+  `test_auto_calibrate_failure_keeps_locked`、`test_unlock_after_calibration`）。
+- `BUILD_ID = 2026-10-09-auto-calib-track-v6`；门禁 **74 OK/0 FAIL**；性能无回归（29/30、0.803px）。
+- ★ **`tools/apply_gimbal_track_patch.py`**：本接线的 4 处 main.py 改动做成**幂等补丁**。
+  两轨共用一个工作树时，`main.py` 曾被并发写入**整份覆盖**（`vision/*`、`config.py` 不受影响），
+  现象是"自动标定代码明明在，上电却不追踪"。怀疑被覆盖时先跑
+  `python tools/apply_gimbal_track_patch.py --check`，需要时去掉 `--check` 一键补上，
+  再按契约跑 `build_single.py` + `check_app.py --manifest`（C8 会核对 BUILD_ID 一致性）。
+
+> **想固定标定结果**（免得每次上电都标一遍）：把日志 `[calib-auto]` 打印的两组数值复制进
+> `config.py`，再把 `CALIBRATE_AXIS` 置回 `""`、`GIMBAL_CALIBRATED = True`。
+
+## 2026-10-09 改动④：自检改「慢速 + 曲线加减速」；yaw 显式 pinmap + 引脚实测回读
+
+**现场反馈两件事**：① pitch 已能动作、**yaw 仍不动**；② 上电自检把电机**抖得卡顿**。
+两件事各自定位到明确原因。
+
+### 一、自检卡顿：位置模式 `acc=0` 就是"硬启硬停"
+
+ZDT 位置模式（`FD`）第 5 字节是**加速度档位 0–255**。官方说明书原文：
+
+> 加速度为 0 表示**不使用曲线加减速，直接按照设定的速度启动和运行**；不为 0 则曲线加减速
+> 时间 `t2 - t1 = (256 - acc) * 50(us)`，`Vt2 = Vt1 + 1(RPM)` —— **acc 越大加速越快**（越生硬）。
+
+旧值 `SELF_TEST_RPM=900` 且沿用 `ACC_DEFAULT=0` → 400 脉冲在约 8ms 内"弹"完，必然抖。现改为：
+
+| 参数 | 旧 | 新 | 说明 |
+|---|---|---|---|
+| `SELF_TEST_RPM` | 900 | **60** | 自检专用慢速（不影响闭环 `RPM_FINE=300`） |
+| `SELF_TEST_ACC` | （无，走 `ACC_DEFAULT=0`） | **60** | 非 0 = 启用曲线加减速；越小越柔和（3D 打印常用 20–80） |
+| `SELF_TEST_SETTLE_S` | 0.35 | **0.8** | 动完多停一会儿再发下一步 |
+
+新增纯函数 `gimbal_self_test.estimate_move_seconds()`：按官方公式建模，**行程不足时自动
+退化为三角速度曲线**（实际峰值低于设定速度），用于排程、避免早发指令造成堆叠。
+400 脉冲 @60RPM/acc=60 由 0.13s 变为 **≈0.54s**，观感即"缓缓移动"。
+
+### 二、yaw 仍不动：去掉「默认已复用」这个未经证实的假设
+
+pitch（`U2`/B0-B1，**显式 pinmap**）能动作，而 yaw（`U0`/A28-A29，**空 pins 跳过 pinmap**）
+不能 —— 同一套代码下只剩一种解释：**A28/A29 当前功能不是 UART0**。改法：
+
+- `YAW_PINS` 由 `{}` 改为 **`{"A28": "UART0_TX", "A29": "UART0_RX"}`**，不再依赖默认复用。
+- 新增 `PINMAP_STRICT = False`：**pinmap 失败只警告、仍打开 UART**。避免功能名不匹配时
+  把该轴变成"打不开"，把真正的故障点藏起来。
+- **回读实测引脚功能**：打开后用 `pinmap.get_pin_function()` 读硬件真值（MaixCAM2 支持），
+  启动日志新增一行：
+
+  ```
+  [gimbal] yaw   OK   dev=/dev/ttyS0 baud=115200 pins=A28=UART0_TX,A29=UART0_RX pinmap=True -> opened
+  [gimbal]   └ 引脚实测: A28=UART0_TX  A29=UART0_RX
+  ```
+
+  **期望 ≠ 实测** = 该脚没切到串口功能 → 这是"某轴打开了却不通"的直接证据。
+- `tools/uart_probe.py` 同步：pins 为空时也按标称引脚回读，并标出 `<-- 不一致!`。
+
+- `BUILD_ID = 2026-10-09-self-test-curve-v5`；`test_gimbal_aim` **PASS(17)**
+  （新增 `test_estimate_move_seconds`、`test_self_test_uses_curve`）；
+  性能无回归（29/30、0.803px、0 误检）；门禁 **74 OK/0 FAIL**。
+
+> yaw 若仍不通，按序排查：① 启动日志 `└ 引脚实测` 是否为 `A28=UART0_TX`；② `uart_probe --listen 5`
+> 有无回帧；③ `uart_probe --loop yaw`（先把 A28-A29 短接）验证 MaixCAM 侧 UART。
+> 仍不行就换 **UART3(B2/B3)**：`YAW_DEV="/dev/ttyS3"`、`YAW_PINS={"B2":"UART3_TX","B3":"UART3_RX"}`。
+
+## 2026-10-09 改动③：★ 修「开机第 1 帧就误判 FAULT → 云台永不自检/永不追踪」
+
+**这是"模式对、接线对、电机有劲，却完全不动"的真正根因**（与硬件无关，所以怎么改硬件都没用）。
+
+`main.py` 判断链路故障时写的是 ``link_fault is not None``，而 `StepperLink._ingest()` 的约定是
+**"无故障返回 `fault=False`"**。`False is not None` 恒为 `True` → **开机第 1 帧**就执行
+
+```
+link.stop()  +  aim.fault("link:False")   ->  云台进入 FAULT
+```
+
+而 FAULT 之后，主循环里 `self_test.update()` / `aim.update()` 的分支整块被跳过 →
+**自检一帧指令都没发出去、闭环也永远不工作**。现场表现 =「上电电机使能有劲，但完全不动」。
+
+- 新增 `stepper_link.fault_reason(fb)`：**无故障返回 `None`**，故障返回原因字符串，
+  `main.py` 与 `target_api.py` 统一走它（杜绝再次写成 `is not None`）。
+- `main.py`：故障判断改为 `fault_reason(fb) is not None` 且打印具体原因。
+- 新增 `StepperLink.status_line()`，把**链路心跳**打进周期日志：
+  `[gimbal] 链路 tx=N rx=N ok=N e2=N to=N drop=N | yaw:open,0x02 pitch:open`
+  —— `tx=0` = 一条指令都没发出；`tx>0 rx=0` = 发出去了但驱动器一字不回。
+- 回归 `test_gimbal_aim` **PASS(15)**：新增 `test_fault_reason_contract` 把这条口径锁死。
+- `BUILD_ID = 2026-10-09-gimbal-fault-fix-v3`；门禁 **74 OK/0 FAIL**（包内 12 文件）。
+
+> 判读：若启动日志出现 `[aim] 未标定：闭环已锁定` —— 那是**有意为之的安全闸**（防占位
+> `PULSE_PER_PX` 正反馈甩头），不是故障。自检应先动 6 步，再进入"只出视觉、不发指令"。
+
+## 2026-10-09 改动②：yaw 改走 UART0 + 修「一轴不通拖死另一轴」
+
+**背景**：MaixCAM2 外接排针上能用的串口只有 `U0`(U0T/U0R) 与 `U2`(U2T/U2R) 两组 ——
+官方《UART》串口表里 MaixCAM2 的 `UART1` TX/RX 两列是 `—`（无引脚）。
+旧配置把 yaw 指到 `UART1(A30/A31, ttyS1)`，在这块板上等于**没接**。
+
+- **配置改名 + 重新映射**（旧名 `U1_*`/`U2_*` 仍兼容，`axis_cfg()` 统一读）：
+  轴 1 **yaw → `UART0` `/dev/ttyS0`**，`YAW_PINS = {}`（**空表 = 跳过 pinmap**，UART0 默认已复用）；
+  轴 2 **pitch → `UART2` `/dev/ttyS2`**，`PITCH_PINS = {"B0":"UART2_TX","B1":"UART2_RX"}`。
+- **修掉真正让 U2 电机"只使能、不自校"的缺陷**：自检序列第一步是 yaw，旧实现一旦 yaw 指令
+  写失败就**整机 `FAULT`**，pitch 一步指令都发不出去。现改为：① 只对链路**已打开**的轴做自检；
+  ② 单轴写失败只**跳过该轴剩余步骤**，另一轴照常走完。
+- `stepper_link`：新增 `axis_cfg()`（设备/波特率/引脚，空 pins 跳过 pinmap）与 `flush()`
+  （开机清空 UART0 上的内核日志/终端回显，开关 `FLUSH_RX_ON_START`）。
+- `gimbal_self_test`：新增 `SELF_TEST_START_DELAY_S`（默认 0.5s，等驱动器处理完使能帧再动）。
+- `tools/uart_probe.py` 重写：直接读 `config.py`、复用 `StepperLink` 同一套打开逻辑，
+  支持 `--listen N`（盯原始 RX）/ `--move [yaw|pitch]` / `--loop <axis>`。
+- 回归 `test_gimbal_aim` **PASS(14)**：新增「单轴写失败另一轴仍走完」「链路未打开的轴被跳过」
+  「两轴都写失败→FAULT」「两轴都打不开→SKIPPED」「`axis_cfg` 新旧命名兼容」5 条。
+- `BUILD_ID = 2026-10-09-uart-u0-yaw-v2`；门禁 `check_app --manifest` **74 OK/0 FAIL**。
+
+> ⚠ **UART0 是系统终端/日志口**（官方不推荐外接，内核日志会串进电机 RX）。选它是因为现场
+> 排针上只有 U0/U2。若出现偶发乱动/丢帧，改用 `UART1(A30/A31)` 或 `UART3(B2/B3)`
+> （官方引脚图 v1.0 标这两个有 UART 复用，与 SPI2 冲突需先释放）—— **只改 `YAW_DEV`/`YAW_PINS`
+> 两行**，其余代码不用动。
+
+## 2026-10-09 改动①：串口诊断与上电自检
+
+- **定位「电机使能但不自校」第二重原因**：未标定 `PULSES_PER_DEG`/`GEAR_RATIO` 时自检被
+  **主动跳过**（已加固定脉冲兜底）。~~① 接在 U0 上收不到帧~~ —— 结论已在改动②修正。
+- `vision/stepper_link.py`：pinmap 改严格判定（`err.check_raise`，不再静默吞失败）；新增
+  `health_lines()` 启动打印两轴设备/引脚/pinmap/打开状态。
+- `vision/gimbal_self_test.py`：未标定时用 `SELF_TEST_FALLBACK_PULSES`（默认 400）做上电自检。
+- `vision/gimbal_aim.py`：新增未标定锁（`AIM_REQUIRE_CALIBRATION` → `UNCALIBRATED`），未标定不发指令。
+- 新增 `tools/uart_probe.py`（板端双串口诊断）；`BUILD_ID = 2026-10-09-uart-diag-v1`；回归与门禁全绿。
 
 ## 2026-10-08 改动
 
@@ -132,11 +391,17 @@ ACK 硬超时做成**自动识别**：只有收到过确认帧（驱动器 `Resp
 先关闭旧工程再重新打开本文件夹并“运行项目”，核对开机日志构建号。每 2 秒输出：
 
 ```text
-[rect-center] 2026-10-08-target-api-v3 search_width=... display_width=... display_fps=...
+[rect-center] 2026-10-09-gimbal-fault-fix-v3 search_width=... display_width=... display_fps=...
 [aim] 闭环口径=raw（raw_u/raw_v）离群拒收=400.0px 死区=2.0px 限幅=360p
-[perf] 2026-10-08-target-api-v3 valid=True FPS=... stage=track frames=... searches=0 read=... lens=... bridge=... detect=... laser=... uart=... rx=... aim=... show=... loop=... ms | laser_call=...ms n=... hit=...
+[perf] 2026-10-09-gimbal-fault-fix-v3 valid=True FPS=... stage=track frames=... searches=0 read=... lens=... bridge=... detect=... laser=... uart=... rx=... aim=... show=... loop=... ms | laser_call=...ms n=... hit=...
 [aim] state=FINE dx=+3.2 dy=-1.1 yaw=CCW/12p pit=CW/4p lost=0
+[gimbal] 链路 tx=18 rx=6 ok=6 e2=0 to=0 drop=0 | yaw:open,0x02 pitch:open,0x02
 ```
+
+> **云台不动时的第一判据是 `[gimbal] 链路` 那行**：`tx=0` = 一条指令都没发出去（链路没打开或被
+> 上层拦住）；`tx>0` 而 `rx=0` = 帧发出去了但驱动器一个字节都没回（查 `P_Serial=UART_FUN`、
+> `ID_Addr`、`Checksum=0x6B`、波特率、TX/RX 交叉与共地）；`ok>0` = 驱动器在应答，链路肯定通。
+> 启动时还会逐轴打印 `health_lines()`（设备/引脚/pinmap/是否打开）。
 
 | 字段 | 意义/处理方法 |
 |---|---|
@@ -174,9 +439,89 @@ FPS 根据完整循环计算，包含显示开销；显示限频不会跳过检�
 | `GAIN_YAW/PITCH`、`GAIN_COARSE` | 0.5 / 0.9 | 精/粗两段增益，必须 ≤1 才收敛 |
 | `DEADBAND_PX` | 2.0 | 应 ≥ 1.5 × 实测回差，否则在齿隙里极限环 |
 | `MAX_STEP_PULSES` | 360 | 单帧脉冲限幅（≈10° 云台角），防误检猛甩 |
+| `RPM_FINE` / `RPM_COARSE` / `ACC_TRACK` | 120 / 400 / 200 | 追踪转速与**曲线加减速档位**；`acc=0` 会让闭环急停、激光晃开 |
 | `JUMP_REJECT_PX` | 400 | 单帧离群拒收门限（连续 3 帧才采信） |
-| `CALIBRATE_AXIS` | "" | 置 `"yaw"`/`"pitch"` 开机做一次开环标定；**标完置回 `""`** |
+| `CALIBRATE_AXIS` | `""`（当前值） | `""` = 不标定、**不追踪**；`"yaw"`/`"pitch"` 只标该轴；`"auto"` = 自动标定两轴并自动解锁闭环进入跟踪 |
+| `AUTO_CALIBRATE_AXES` / `_TIMEOUT_S` | ("yaw","pitch") / 150 | auto 模式的标定范围与总超时 |
+| `CALIBRATE_PULSES` / `_RPM` / `_ACC` | 400 / 60 / 60 | 标定行程与动作（宁小勿大；与自检同样走曲线加减速） |
 | `ENABLE_SCAN` | False | 失锁自动慢扫重捕获；确认机械行程后再开 |
+| `SELF_TEST_RPM` / `SELF_TEST_ACC` | 60 / 60 | 自检转速与**曲线加减速档位**；`acc=0` 是"硬启硬停"会卡顿，**越小越柔和** |
+| `PINMAP_STRICT` | False | pinmap 失败是否致命；False=警告后仍打开 UART（避免整轴"打不开"掩盖真故障） |
+| `SELF_TEST_PULSES` | 400 | **上电自检幅度（固定脉冲）**：pitch 上转→下转、yaw 左转→右转，**不需要靶子、不看标定**；置 0 才回退角度模式 |
+| `AIM_REQUIRE_CALIBRATION` | True | 未标定禁止发电机指令，闭环锁定（防正反馈甩头） |
+| `GIMBAL_CALIBRATED` | False | 标定完置 True 解锁闭环 |
+
+### 串口接线（MaixCAM2 丝印 ↔ 引脚，2026-10-09 复核官方 UART 表 + 引脚图 v1.0）
+
+| 串口 | 丝印 | 引脚 | 设备 | 本工程用途 / 备注 |
+|---|---|---|---|---|
+| UART0 | `U0T` / `U0R` | A28 / A29 | `/dev/ttyS0` | **pitch**（★ 实测挂此口，驱动器 ID=1）。系统终端/日志口；**显式 pinmap** |
+| UART1 | `U1T` / `U1R` | A30 / A31 | `/dev/ttyS1` | 官方 UART 表标「无引脚」，引脚图标可作 UART1（与 SPI2_CS3/PWM7 复用），需 pinmap |
+| UART2 | `U2T` / `U2R` | B0 / B1 | `/dev/ttyS2` | **yaw**（★ 实测挂此口，驱动器 ID=2）。需 pinmap 到 UART2 功能 |
+| UART3 | `U3T` / `U3R` | B2 / B3 | `/dev/ttyS3` | 备用（与 SPI2_MOSI/MISO 复用） |
+| UART4 | `U4T` / `U4R` | A21 / A22 | `/dev/ttyS4` | 底部 6P 1.25mm 扩展座默认串口，备用 |
+
+> ★ **实测接线：pitch 电机接 `U0`、yaw 电机接 `U2`**（与最初设想相反；代码已按此把端口+引脚+地址
+>   整体互换，见 `config.py` 顶部注释）。**TX↔RX 交叉、三路 GND 共地**。
+>   若把两根串口线对调、并把驱动器 `ID_Addr` 设回 yaw=1 / pitch=2，则把 `YAW_DEV/PITCH_DEV` 两组改回即可。
+> 现场排查：板上跑 `python tools/uart_probe.py`（`--listen 3` 盯回帧、`--move` 让两轴小幅动一下）。
+> ⚠ yaw 用的 `UART0` 是系统日志口，内核日志会串进电机 RX。若出现**偶发乱动**，或启动日志
+> `└ 引脚实测` 显示 A28/A29 不是 `UART0_TX/RX`，就把配置切到 **UART3(B2/B3)**：
+> `YAW_DEV="/dev/ttyS3"`、`YAW_PINS={"B2":"UART3_TX","B3":"UART3_RX"}`，其余代码不用动。
+
+### ★ 驱动器必须先开串口模式（否则「上电有反应、发指令没反应」）
+
+`Emm_V5.0` / `ZDT_X42_V1.2` 出厂 `P_Serial` 默认是 **`RxTx_OFF`（通信口关闭）**。此时
+**串口发出的任何帧都不会被解析** —— 现象正是「电机通电锁轴（像"已使能"）、但对串口指令毫无反应、
+`uart_probe --listen` 一个字节都收不到」。**这不是 MaixCAM 侧的问题，是驱动器菜单没配。**
+
+> 另注：`En` 端口不接线时默认 `Hold`（一直使能）→ 上电即锁轴，**「电机有劲」并不代表串口通了**。
+
+**用驱动器上的 OLED + 按键设置**（上电后用 UP/DOWN 翻页、Enter 进入/确认；改完自动保存、立即生效）：
+
+| 菜单项 | 设成 | 说明 |
+|---|---|---|
+| `Cal` | 先跑一次 | **未做过编码器校准的板子只有 6 个菜单项**（`Cal/MotType/P_Pul/P_Serial/Restore/Exit`），校完才解锁完整菜单。上电若提示 `Not Cal` 必须先做，**空载/轻载**下执行，电机会自动正转一圈再反转一圈 |
+| `P_Serial` | **`UART_FUN`** | ← **最关键**。默认 `RxTx_OFF`。改为把 R/T 口复用成串口 |
+| `UartBaud` | **`115200`** | 与 MaixCAM2 一致（默认就是 115200） |
+| `ID_Addr` | yaw=**1**、pitch=**2** | 与 `config.ADDR_YAW/ADDR_PITCH` 一致 |
+| `Checksum` | **`0x6B`** | 代码帧尾就是固定 `0x6B`；改成 XOR/CRC-8 会让所有帧被拒 |
+| `Response` | **`Receive`** | 调试期设这个才能收到回帧/E2；量产可设 `None` |
+| `MotType` | **`1.8°`** | 42 电机 |
+| `MStep` | **`16`** | 16 细分 → 3200 脉冲/圈，与 `MOTOR_PULSES_PER_REV` 一致 |
+| `P_Pul` | `PUL_OFF` | 纯串口控制时建议关掉脉冲口，避免干扰 |
+| `Ma_Limit` | **电机额定相电流**（云台轻载可 **1000mA**） | FOC 闭环堵转最大电流，默认 `3000mA` 偏大；云台负载很轻，调到 1A 左右即可，越小越不烫 |
+| `Ma` | 同 `Ma_Limit`（仅开环用） | 开环模式工作电流，默认 `1000mA`；本项目走 FOC 闭环，主要看 `Ma_Limit` |
+
+**供电与电流（可调电源怎么设）**：
+
+- 驱动器供电 **7–32V，官方推荐 24V**。`11.8V`(≈12V) 能跑（云台低速小负载够用），
+  但电压越低**高速扭矩越小**、越容易欠压告警；有 24V 档就直接用 24V。
+- **两个层面别混淆**：① 驱动器 `Ma_Limit` = **单台电机的相电流**；② 可调电源限流 =
+  **两台之和的母线电流上限**。二者不是一回事（母线电流通常远小于相电流）。
+- 可调电源限流建议 **≥ 1.5–2.0A**：两台同时动作时若限流太小会被拉进 CC（恒流），
+  母线电压塌陷 → 驱动器欠压 → 表现就是「更不动」。**若限流被设在 0.3A，一定要调大。**
+- 判据：电源 **CV 灯亮、电压稳在设定值 → 没限流，够用**；**CC 灯亮、电压被拉低 → 已在限流，调到 1.5A 以上**。
+  电机外壳 **>70°C** 就下调 `Ma_Limit` 或改善散热。
+
+**共地（GND 参考）—— UART 的隐形前提**：
+
+- **必须共地**。UART 是**单端信号**：逻辑 0/1 是相对 **GND** 判定的。两边各用各的地参考，
+  接收端就没有公共基准 → 电平判读错乱，表现为**乱码、或一个字节都收不到**（不是"收到但解析失败"）。
+- 接法：MaixCAM2 的 `GND` 与**两台驱动器**的 `GND` 连到同一点（单点/星形接地），即需求文档
+  所谓"三路 GND 全连一起"。驱动器的功率 `GND`（与 `V+` 同端子）**就是信号地**，不用另找一根。
+- **两个独立电源时尤其注意**：MaixCAM2 由 Type-C/USB 供电、电机由可调电源供电时，二者地并不相通，
+  必须把**两个电源的 GND 也连起来**，否则两边地各自浮动，照样不通。
+- 万用表验证：① **断电**用通断档测 MaixCAM2 `GND` ↔ 各驱动器 `GND`，应导通；
+  ② **上电**测两点间电压应 **≈ 0V（< 50mV）**；读到几百 mV～几 V = 没共地或地线过细/过长压降大。
+- ⚠ 共地是**必要条件、不是充分条件**：不共地会乱码，但"共地正确"**不代表** `P_Serial` 已开、
+  地址/校验/波特率正确 —— 那几项仍要按上一节逐一核对，别把两种故障混成一种。
+
+**零回帧三步二分法**（板端 `python tools/uart_probe.py`）：
+
+1. 两轴都 `opened` 但发使能收不到任何回帧 → 先怀疑 **`P_Serial` 没设 `UART_FUN`**（其次看地址/校验/波特率）；
+2. `--loop yaw`（**先把该轴 TX-RX 短接**）能收回自己发的字节 → 说明 MaixCAM2 侧 UART 正常，问题在驱动器端；
+3. 回环也不通 → 查接线（TX↔RX 有没有交叉、GND 有没有共地）或该串口被系统占用。
 
 板端须可导入 `cv2`、`numpy` 和 `maix`。算法代码没有桌面窗口 API。
 首次上板顺序：① `CALIBRATE_AXIS="yaw"` 跑一次 → ② `"pitch"` 跑一次 → ③ 把打印出的

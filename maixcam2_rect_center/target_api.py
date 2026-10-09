@@ -260,16 +260,17 @@ def reset():
 class AimLoop:
     """追踪 + 光斑偏差 + 双轴云台闭环（会驱动 ZDT 电机）。
 
-    ⚠ 使用前必须完成开环标定（``CALIBRATE_AXIS`` 跑一次填回 config），否则方向/增益
-    是占位值，可能正反馈甩头。不需要电机的问请只用 ``detect_black_frame`` /
-    ``CenterTracker``，不要实例化本类。
+    ⚠ 使用前必须完成开环标定（``CALIBRATE_AXIS`` 跑一次，或设 ``"auto"`` 自动标定）。
+    未标定时方向/增益是占位值、可能正反馈甩头，闭环会被锁成 ``UNCALIBRATED``
+    （只出视觉结果、不发指令）；确认已标定后用 ``calibrated=True`` 或 ``.unlock()`` 解锁。
+    不需要电机的场景请只用 ``detect_black_frame`` / ``CenterTracker``，不要实例化本类。
 
     ``step(frame)`` 返回的 ``Result`` 比追踪器多两个字段：
         aim_state  str   状态机状态（FINE/COARSE/SETTLE/HOLD/FAULT…）
         cmds       dict  {"yaw": (ccw, pulses, rpm) or None, "pitch": ...}
     """
 
-    def __init__(self, cfg=None, enable_motors=True, with_laser=True):
+    def __init__(self, cfg=None, enable_motors=True, with_laser=True, calibrated=None):
         self.cfg = cfg if cfg is not None else load_config()
         self.tracker = CenterTracker(self.cfg, with_laser=with_laser)
         self.link = None
@@ -280,6 +281,10 @@ class AimLoop:
             self.link = StepperLink(self.cfg)
             self.link.enable()
             self.aim = GimbalAim(self.cfg)
+            # calibrated=True：显式声明"PULSE_PER_PX_*/DIR_SIGN_* 已是实测值" -> 直接解锁闭环。
+            # 不传则沿用 config.GIMBAL_CALIBRATED 的判定（见 GimbalAim.__init__）。
+            if calibrated is True and self.aim.locked:
+                self.aim.unlock("AimLoop(calibrated=True)")
 
     def step(self, frame, now=None):
         now = time.perf_counter() if now is None else float(now)
@@ -295,12 +300,15 @@ class AimLoop:
                 if command is not None:
                     ccw, pulses, rpm = command
                     self.link.move(axis, ccw, pulses, rpm,
-                                   getattr(self.cfg, "ACC_DEFAULT", 0), now=now)
+                                   getattr(self.cfg, "ACC_TRACK",
+                                           getattr(self.cfg, "ACC_DEFAULT", 0)), now=now)
                     res["cmds"][axis] = command
         fb = self.link.poll(now)
-        if fb.get("fault"):
+        from vision.stepper_link import fault_reason
+        fault = fault_reason(fb)
+        if fault is not None:
             self.link.stop(now=now)
-            self.aim.fault("link:%s" % fb["reason"])
+            self.aim.fault("link:%s" % fault)
             res["aim_state"] = "FAULT"
         return res
 

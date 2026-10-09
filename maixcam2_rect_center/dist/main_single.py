@@ -10,22 +10,22 @@ main_single.py · 25E 靶心识别（轨道 B）—— 单文件自包含版
 用途：在 MaixVision 里点「运行当前文件」即可运行（不必用「运行项目」）。
       行为与模块化工程完全一致，输出也就完全一致。
 
-生成时间：2026-10-08 16:13:09
-    config.py                    sha1=3c6f77da9d88
-    main.py                      sha1=5d9529be6d4b
-    target_api.py                sha1=643af9b092f7
-    vision/gimbal_aim.py         sha1=0b0ae21ebd2e
-    vision/gimbal_calibrate.py   sha1=9c4bb08a1b99
-    vision/gimbal_self_test.py   sha1=b31ac16c287b
+生成时间：2026-10-10 00:51:56
+    config.py                    sha1=f4a153a0eea5
+    main.py                      sha1=0d302e51ecfc
+    target_api.py                sha1=e130d6a4d3a3
+    vision/gimbal_aim.py         sha1=f101f299e842
+    vision/gimbal_calibrate.py   sha1=819bd3980592
+    vision/gimbal_self_test.py   sha1=b21e1ea05d03
     vision/laser_spot.py         sha1=d8d722904443
     vision/rectangle_center.py   sha1=173cbdfeb6a4
-    vision/stepper_link.py       sha1=fad4937b9b8a
+    vision/stepper_link.py       sha1=78063da605ca
 """
 
 import sys as _sys
 import types as _types
 
-_SRC_SHA1 = {'config.py': '3c6f77da9d882deddd66ae2b4b175c160c949de7', 'vision/rectangle_center.py': '173cbdfeb6a4ea3ed2b36726a7cea5db62e9d954', 'vision/laser_spot.py': 'd8d722904443201c539507baca6d69be668ade93', 'vision/gimbal_aim.py': '0b0ae21ebd2e6cce2d7839fccf03dc8ada5c02d3', 'vision/gimbal_self_test.py': 'b31ac16c287b150caeef26728146704a40ad3116', 'vision/stepper_link.py': 'fad4937b9b8a6bf1ecffb0a22bd1419825c3f120', 'vision/gimbal_calibrate.py': '9c4bb08a1b99d6feaef77bc8cf3fc56655e87676', 'target_api.py': '643af9b092f718c87f49f60d62fbb4bb6b467194', 'main.py': '5d9529be6d4b5ebca3f6c5b0e71f838b40e297ab'}
+_SRC_SHA1 = {'config.py': 'f4a153a0eea588b6a2a6165f747bcac71fb75ac0', 'vision/rectangle_center.py': '173cbdfeb6a4ea3ed2b36726a7cea5db62e9d954', 'vision/laser_spot.py': 'd8d722904443201c539507baca6d69be668ade93', 'vision/gimbal_aim.py': 'f101f299e8429831358b9df2a6fddb59562a0067', 'vision/gimbal_self_test.py': 'b21e1ea05d03c7cf760304a3b72d26ee4dae92a2', 'vision/stepper_link.py': '78063da605ca1abcb6248ca1b4801ccc1c5298ce', 'vision/gimbal_calibrate.py': '819bd3980592796289004288d6e95fee5e9aa92f', 'target_api.py': 'e130d6a4d3a32214577cb690424973c5a5543804', 'main.py': '0d302e51ecfc8c181ff26183c6cedb34d94f884e'}
 
 # --------------------------------------------------------------------------
 # ① 各模块源码原样嵌入，运行时装进 sys.modules（保持原 import 语义）
@@ -50,25 +50,83 @@ class Config:
     OPENCV_THREADS = 1
     LOG_INTERVAL = 2.0
     # ---- 双 ZDT 云台链路 -------------------------------------------------
-    # UART1 -> 1 号电机 yaw，UART2 -> 2 号电机 pitch。
-    # 首次上板请先把云台架空，并确认驱动器已设为 UART_FUN/115200/0x6B。
+    # 轴 1 = yaw，轴 2 = pitch。首次上板请先把云台架空，并确认驱动器已设为
+    # UART_FUN / 115200 / Checksum=固定 0x6B。
+    #
+    # ★ MaixCAM2 排针丝印 ↔ 引脚 ↔ 设备（2026-10-09 核对官方 UART 表 + 引脚图 v1.0）：
+    #   串口   丝印      引脚        设备路径        说明
+    #   UART0  U0T/U0R   A28 / A29   /dev/ttyS0     系统终端/日志口。官方**不推荐外接**
+    #                                                （开机打印日志、TX 被拉低会导致不启动）；
+    #                                                但它是本板唯一"默认就是串口、免 pinmap"的口。
+    #   UART1  U1T/U1R   A30 / A31   /dev/ttyS1     官方 UART 表标"无引脚"，引脚图 v1.0 标
+    #                                                A30/A31 可作 UART1_TX/RX（与 SPI2_CS3、
+    #                                                PWM7 复用）；要用必须先 pinmap。
+    #   UART2  U2T/U2R   B0  / B1    /dev/ttyS2     专用脚，需 pinmap 切到 UART2。
+    #   UART3  U3T/U3R   B2  / B3    /dev/ttyS3     B2=UART3_TX / B3=UART3_RX（与 SPI2_MOSI/
+    #                                                MISO 复用）。
+    #   UART4  U4T/U4R   A21 / A22   /dev/ttyS4     底部 6P 1.25mm 扩展座默认串口，备用。
+    # ⚠ 三路 GND 必须共地；TX↔RX 交叉连接。
+    # ⚠ UART0 上可能混有内核日志/终端回显 —— 已在 stepper_link 里做开机清空 RX，
+    #   若现场出现偶发乱动或丢帧，优先改用 UART1(A30/A31) 或 UART3(B2/B3)。
     ENABLE_GIMBAL = True
-    U1_DEV, U1_BAUD = "/dev/ttyS1", 115200
-    U2_DEV, U2_BAUD = "/dev/ttyS2", 115200
-    U1_PINS = {"A30": "UART1_TX", "A31": "UART1_RX"}
-    U2_PINS = {"B0": "UART2_TX", "B1": "UART2_RX"}
-    ADDR_YAW, ADDR_PITCH = 1, 2
-    DIR_SIGN_YAW = 1       # 误差为正默认发 CCW；实测反向改为 -1
-    DIR_SIGN_PITCH = 1
-    PULSE_PER_PX_YAW = 3.67       # 必须用实机开环标定替换
-    PULSE_PER_PX_PITCH = 3.67     # 必须用实机开环标定替换
-    GAIN_YAW = 0.5
-    GAIN_PITCH = 0.5
-    DEADBAND_PX = 2.0
-    MAX_STEP_PULSES = 360
-    RPM_FINE = 300
-    ACC_DEFAULT = 0
-    COMMAND_INTERVAL_S = 0.08
+    # ★★ 2026-10-09 实机实测：**两台电机的接线与预期相反** ——
+    #   U0(`/dev/ttyS0`, 驱动器 ID=1) 上挂的是 **pitch** 轴；U2(`/dev/ttyS2`, ID=2) 上挂的是 **yaw** 轴。
+    #   证据：自检 4 步发出的命令是 "pitch, pitch, yaw, yaw"，而实际动作是 "右→左→下→上"
+    #   （右/左 = yaw，下/上 = pitch）。故这里把 yaw/pitch 的**端口 + 引脚 + 地址整体互换**，
+    #   让代码里的 "yaw" 真的驱动 yaw 轴。
+    #   ⚠ 等效的另一种做法：把两根串口线对调，并把驱动器菜单 ID_Addr 设回 yaw=1 / pitch=2，
+    #     那时把下面两组改回来即可 —— 二者只需一处对上。
+    #   ⚠ U0 是系统日志口（有内核日志噪声），现在承载 pitch；若想避开，请改用上面的"对调接线"方案。
+    # 代码里的 yaw 轴 → UART2(U2T/U2R)：B0/B1 需 pinmap 切到 UART2 功能。
+    YAW_DEV, YAW_BAUD = "/dev/ttyS2", 115200
+    YAW_PINS = {"B0": "UART2_TX", "B1": "UART2_RX"}
+    # pinmap 失败是否致命：False(默认) = 只警告、**仍打开 UART**（UART0 这类可能默认已复用的口，
+    # 不该因功能名不匹配而整条轴不可用）；True = 失败即不打开该轴。
+    PINMAP_STRICT = False
+    # 代码里的 pitch 轴 → UART0(U0T/U0R)：**必须显式 pinmap**（实测走空表会静默不通）。
+    PITCH_DEV, PITCH_BAUD = "/dev/ttyS0", 115200
+    PITCH_PINS = {"A28": "UART0_TX", "A29": "UART0_RX"}
+    # 开机先丢弃该轴串口缓冲区里的陈旧字节（U0 上有内核启动日志/终端回显，必须清掉）。
+    FLUSH_RX_ON_START = True
+    # 地址跟着**电机**走（不是跟着端口）：yaw 电机挂在 U2 上、ID=2；pitch 电机挂在 U0 上、ID=1。
+    ADDR_YAW, ADDR_PITCH = 2, 1
+    # 闭环方向符号：`ccw = (误差 × DIR_SIGN > 0)`，其中 误差 = 靶心 − 光斑。
+    # ★ 未做标定时按几何推断（相机与激光同装在云台上，云台转过去时靶心在画面里**反向**移动）：
+    #   yaw 右转 -> 靶心左移(u↓) -> 要消掉 dx>0 必须右转 -> 发 CW -> sign = -1；
+    #   pitch 下转 -> 靶心上移(v↓) -> 要消掉 dy>0 必须下转 -> 发 CW -> sign = -1。
+    # ⚠ 自检后刚开始追踪时请盯一下：若**越追越偏**（误差持续变大、云台一路跑向一侧），
+    #   说明推断反了 —— 把对应那项改成 +1（`DIVERGE_GUARD` 也会在这种情况下自动停机保护）。
+    DIR_SIGN_YAW = -1
+    DIR_SIGN_PITCH = -1
+    # ==================== ★ 追踪手感（现场只改这一段）====================
+    # 换算链：像素误差 -> 旋转角 -> 电机脉冲
+    #     脉冲 = |误差px| × DEG_PER_PX_x × PULSES_PER_DEG_x × GAIN_x（再受 MAX_STEP_PULSES 限幅）
+    # ① 图像每 1px 偏差对应云台转多少度。**越大跟得越快，也越容易冲过头（超调）**。
+    #    想更柔和就调小（先动这个）；0 = 不启用宏，回退到下面的 PULSE_PER_PX_*。
+    DEG_PER_PX_YAW = 0.30
+    DEG_PER_PX_PITCH = 0.30
+    # ② 每度对应多少电机脉冲 = 3200(脉冲/圈) × 减速比 / 360。
+    #    无减速机构时 = 8.89；装了 i:1 减速就填 8.89 × i。
+    PULSES_PER_DEG_YAW = 8.89
+    PULSES_PER_DEG_PITCH = 8.89
+    # ③ 单帧只修正误差的这个比例（必须 ≤1，否则增量闭环不收敛；0.2~0.4 是稳妥区）。
+    #    ⚠ 2026-10-10 由 0.5 降到 0.3 —— 现场反馈"调节过于激烈、旋转角度过大、超调"。
+    GAIN_YAW = 0.3
+    GAIN_PITCH = 0.3
+    # ④ 转速与曲线：慢 + 带曲线，让单帧修正真正走完再发下一帧，避免指令堆叠成"冲过头"。
+    #    acc=0 会让位置模式**瞬时启停**（急停瞬间激光会晃开），故用 ACC_TRACK。
+    RPM_FINE = 60
+    RPM_COARSE = 150
+    ACC_TRACK = 200        # 非 0 = 走曲线加减速；acc 越小越柔
+    ACC_DEFAULT = 0        # 仅其它机会性发帧用；闭环追踪请用 ACC_TRACK
+    # ⑤ 死区与单帧限幅：死区应 ≥1.5×实测回差（齿隙里来回抖）；限幅防单帧猛甩。
+    DEADBAND_PX = 3.0
+    MAX_STEP_PULSES = 150
+    COMMAND_INTERVAL_S = 0.10
+    # 兼容旧口径 / 标定输出：**仅当上面 DEG_PER_PX_x = 0 时**才回退到这里。
+    # CALIBRATE_AXIS 实测完会把脉冲/像素写回这两个（可在日志里反算 DEG_PER_PX 填回 ①）。
+    PULSE_PER_PX_YAW = 0.0
+    PULSE_PER_PX_PITCH = 0.0
 
     # 上电自检：度数对应的脉冲数必须按实际减速机构标定。
     # 0 表示未标定，程序跳过自动扫动，避免用错误比例撞限位。
@@ -78,11 +136,29 @@ class Config:
     # 计算参考：3200 pulses/rev * 减速比 / 360；减速比未知时不要猜。
     YAW_PULSES_PER_DEG = 0.0
     PITCH_PULSES_PER_DEG = 0.0
-    # 以“yaw 向左 / pitch 仰起”为正方向；按文档两轴正方向均为 CW。
-    YAW_POSITIVE_CCW = False
-    PITCH_POSITIVE_CCW = False
-    SELF_TEST_RPM = 900
-    SELF_TEST_SETTLE_S = 0.35
+    # 以"yaw 向左 / pitch 仰起"为正方向。
+    # ★ 2026-10-09 实机实测：两轴的**正方向都是 CCW** ——
+    #   yaw 驱动器 CCW=左 / CW=右；pitch 驱动器 CCW=上(仰) / CW=下。
+    #   自检序列因此是 pitch 上→下、yaw 左→右（各回到起始位姿）。
+    YAW_POSITIVE_CCW = True
+    PITCH_POSITIVE_CCW = True
+    # ★ 自检必须"慢 + 带曲线"。位置模式若 acc=0，驱动器会**直接以设定速度启停**，
+    #   实机表现就是明显卡顿/冲击（现场反馈）。ZDT 官方：acc≠0 时每 (256-acc)*50us 变化 1 RPM，
+    #   即 **acc 越小越柔和**（3D 打印常用 20-80）；acc=0 才是"不用曲线"。
+    # 自检动作：慢 + 带曲线（acc≠0）。rpm/acc 决定每步快慢，settle 是步间停顿。
+    SELF_TEST_RPM = 60
+    SELF_TEST_ACC = 60
+    SELF_TEST_SETTLE_S = 0.3
+    # 上电后等多久才开始自检（秒）：给驱动器留出处理使能帧的时间，避免使能与运动帧贴太近被丢。
+    SELF_TEST_START_DELAY_S = 0.3
+    # 自检**防死锁**超时（秒）：自检本身不依赖视觉，正常几秒就跑完；这里只兜底"某步迟迟不返回"
+    #   之类的异常（到点强制结束自检、继续往下走）。**不是性能目标**，够宽即可；0 = 关闭。
+    SELF_TEST_TIMEOUT_S = 10.0
+    # 自检幅度（固定脉冲量）：上电自检**不依赖视觉（不需要靶子）、也不依赖标定**，
+    #   直接用这个脉冲量走一遍：**pitch 先上转再下转，yaw 先左转再右转**（各回到起始位姿）。
+    #   400 脉冲 = 电机轴 45°（3200 脉冲/圈）；有减速比时输出轴更小。
+    #   ⚠ 首次务必架空云台确认行程够用；置 0 则回退到"按 YAW/PITCH_PULSES_PER_DEG 换算角度"的老路径。
+    SELF_TEST_PULSES = 400
     MOTOR_PULSES_PER_REV = 3200
     # 减速比未知时留 0：自检角度换算优先用上面的实测 PULSES_PER_DEG，不猜齿轮比。
     # 若已知 i = 大齿轮齿数/小齿轮齿数，填进来即可让自检在未做脉冲/度标定时也生效。
@@ -93,15 +169,28 @@ class Config:
     # 闭环用平滑值会附加 ≈28ms 滞后，底盘运动时直接变成瞄准误差。
     # 切换坐标系后 PULSE_PER_PX_* 必须在同一套坐标下重新标定。
     AIM_USE_RAW = True
+    # 安全闸：未完成开环标定时禁止发电机指令（PULSE_PER_PX_*/DIR_SIGN_* 还是占位值时
+    # 直接闭环可能正反馈甩头）。标定完把 GIMBAL_CALIBRATED 置 True 解锁。
+    AIM_REQUIRE_CALIBRATION = True
+    # ★ 当前 True：换算参数由**手动宏**（DEG_PER_PX_* × PULSES_PER_DEG_*）给出，视为"已就绪"，
+    #   故上电自检一跑完就**直接解锁闭环进入追踪**，不需要先标定。
+    #   若改回"必须标定后才追"，把这里置 False（未标定会锁在 UNCALIBRATED、不发任何指令）。
+    GIMBAL_CALIBRATED = True
+    # ★ 发散看护：持续发指令却始终不收敛（误差还在变大）= 方向反了 -> 自动 FAULT 停机，
+    #   避免云台一路冲到底。窗口内 |误差| 的最小值被放大 DIVERGE_RATIO 倍即判定。
+    DIVERGE_GUARD = True
+    DIVERGE_FRAMES = 30
+    DIVERGE_RATIO = 1.5
     # 离群拒收：|误差| 超过该值先当误检丢弃，连续 JUMP_CONFIRM_FRAMES 帧才采信。
     # 防止单帧误检（反光/干扰）给出 dx=2000px 而甩头。
     JUMP_REJECT_PX = 400.0
     JUMP_CONFIRM_FRAMES = 3
     # 粗/精两段增益：|e| > COARSE_PX 用 GAIN_COARSE（大步快速逼近），否则用 GAIN_YAW/PITCH。
     # 必须保持 gain <= 1，否则增量闭环不收敛（需求文档 §7.4）。
+    # ⚠ 2026-10-10 由 0.9 降到 0.5 —— 大误差时同样要避免冲过头。
+    # （转速 RPM_COARSE / RPM_FINE 已统一到上方「★ 追踪手感」④）
     COARSE_PX = 24.0
-    GAIN_COARSE = 0.9
-    RPM_COARSE = 1200
+    GAIN_COARSE = 0.5
 
     # ---- 链路健康（ACK / E2 看门狗，需求文档 §7.9）------------------------
     ENABLE_ACK_WATCHDOG = True
@@ -125,19 +214,40 @@ class Config:
     SCAN_RPM = 60
     SCAN_STEP_INTERVAL_S = 0.15
 
-    # ---- 开环标定（一次性；标完把 CALIBRATE_AXIS 置回 ""）----------------
-    # "yaw"/"pitch"：开机只做该轴开环标定，实测并打印 PULSE_PER_PX/DIR_SIGN/交叉项/回差。
-    # 标定期不发闭环指令。跑一次拿到数值填进本文件后，务必置回 ""。
+    # ---- 开环标定（闭环能不能收敛全看这里）--------------------------------
+    # ""      : 不标定，直接用本文件里的 PULSE_PER_PX_* / DIR_SIGN_*（默认占位值 3.67 / +1）。
+    # "yaw"   : 开机只标该轴，实测并打印 PULSE_PER_PX / DIR_SIGN / 交叉项 / 回差；标定期不发闭环指令。
+    # "pitch" : 同上，另一轴。
+    # "auto"  : ★ 依次自动标定两轴，**标完自动写回运行时 config 并解锁闭环进入跟踪** ——
+    #           不需要人工读数回填、不需要重启。任一轴失败则整体保持锁定（宁可不追，不用错参数甩头）。
+    #           前提：开机时画面里能看到靶心（否则 dx/dy 无效 -> 超时失败）。
+    # 人工标定拿到数值后，请填进本文件并把 CALIBRATE_AXIS 置回 ""。
+    # ★ 当前设 ""：**不做自动标定**。
+    #   原因（用户实测）：标定必须"画面里看得见靶心"，而云台一动/抬头后黑框常跑出视野，
+    #   标定就卡在等 dv（视觉无效）上直到 20s 超时 —— 即"校准抬头后黑框消失导致堵塞"。
+    #   现改用手动宏（DEG_PER_PX_*）直接换算，**上电自检完即进入追踪**。
+    #   需要重新标定时临时改回 "auto"（或 "yaw"/"pitch" 单轴），标完再置回 ""。
     CALIBRATE_AXIS = ""
-    CALIBRATE_PULSES = 2000
-    CALIBRATE_RPM = 300
+    AUTO_CALIBRATE_AXES = ("yaw", "pitch")
+    AUTO_CALIBRATE_TIMEOUT_S = 150.0
+    # ★ 标定行程宁小勿大：脉冲给太多会把靶心推出视野 -> 测到位移无效 -> 标定失败。
+    #   400 脉冲 = 电机轴 45°（3200 脉冲/圈）；只要 |Δpx| > 0.5 就能算出 PULSE_PER_PX。
+    CALIBRATE_PULSES = 400
+    # 标定动作同样要"慢 + 带曲线"，否则同样卡顿（机理见 SELF_TEST_ACC 处的注释）。
+    CALIBRATE_RPM = 60
+    CALIBRATE_ACC = 60
     CALIBRATE_SAMPLES = 5
     CALIBRATE_SETTLE_S = 1.0
     CALIBRATE_TIMEOUT_S = 20.0
+    # ★ 视觉无效**快速失败**（秒）：标定每一步都要 dx/dy，画面里没有靶心时**不该干等 20s**
+    #   （现场"抬头后黑框出视野 -> 卡住不动"就是这么来的）。超过该时长没有任何有效视觉
+    #   就直接判失败、立刻交还给主流程（接着自检/追踪），不再阻塞。0 = 关闭。
+    CALIBRATE_VISUAL_TIMEOUT_S = 3.0
 
     # 兼容旧版纯视觉 ASCII 输出；开启云台时默认关闭，避免同一串口混发两种协议。
     # ⚠ 本组只在 ENABLE_GIMBAL=False 的降级路径使用；ENABLE_GIMBAL=True 时电机走
-    #    U1_DEV/U2_DEV 两条串口，本条的 /dev/ttyS0 是系统日志口，切勿改成实际接线。
+    #    YAW_DEV/PITCH_DEV 两条串口（当前 pitch 用的就是 /dev/ttyS0，但那是给电机的，
+    #    不要在这里再开一次 —— 同一端口开两个 UART 对象会互相抢字节）。
     ENABLE_UART = False
     UART_PORT = "/dev/ttyS0"
     UART_BAUD = 115200
@@ -952,6 +1062,7 @@ SETTLE = "SETTLE"    # 进入死区，停止发指令
 HOLD = "HOLD"        # 视觉失效，保持不动
 SCAN = "SCAN"        # 失锁后慢扫重捕获（需 ENABLE_SCAN）
 FAULT = "FAULT"      # 链路/机械故障，停机不再发指令
+UNCALIBRATED = "UNCALIBRATED"  # 未标定 PULSE_PER_PX/DIR_SIGN，闭环锁定、只出视觉结果
 
 
 class GimbalAim:
@@ -968,6 +1079,22 @@ class GimbalAim:
         self._settle = 0
         self._scan_dir = 1
         self._scan_pos = 0
+        # 安全闸：未完成开环标定时禁止发电机指令。PULSE_PER_PX_*/DIR_SIGN_* 若还是占位值，
+        # 直接闭环可能正反馈甩头（README §四）。标定完把 GIMBAL_CALIBRATED=True 解锁。
+        self.require_calibration = bool(getattr(cfg, "AIM_REQUIRE_CALIBRATION", False))
+        self.calibrated = bool(getattr(cfg, "GIMBAL_CALIBRATED", False))
+        self.locked = self.require_calibration and not self.calibrated
+        if self.locked:
+            self.state = UNCALIBRATED
+            print("[aim] 未标定：闭环已锁定（只输出视觉结果，不发电机指令）")
+            print("[aim] 先跑 CALIBRATE_AXIS 标定 PULSE_PER_PX_*/DIR_SIGN_*，再置 GIMBAL_CALIBRATED=True")
+        # ★ 发散看护：一直发指令却始终不收敛（误差反而变大）= 方向反了（正反馈）
+        #   -> 自动 FAULT 停机，避免云台一路冲到底。详见 `_guard_check()`。
+        self._guard_on = bool(getattr(cfg, "DIVERGE_GUARD", False))
+        self._guard_frames = int(getattr(cfg, "DIVERGE_FRAMES", 30))
+        self._guard_ratio = float(getattr(cfg, "DIVERGE_RATIO", 1.5))
+        self._guard_n = 0
+        self._guard_min = None
 
     # ------------------------------------------------------------- 外部接口
     def set_controller(self, controller):
@@ -981,18 +1108,48 @@ class GimbalAim:
         print("[aim] FAULT: %s" % self.fault_reason)
         return self.state
 
-    def reset(self):
-        self.state = BOOT
+    def unlock(self, reason="calibrated"):
+        """标定完成 -> 解除未标定锁，允许发电机指令。返回是否真的发生了状态变化。
+
+        由 ``AutoCalibrate`` 在两轴全部标定成功后调用。只有在
+        ``AIM_REQUIRE_CALIBRATION=True`` 且 ``GIMBAL_CALIBRATED=False`` 时才处于锁定态，
+        因此重复调用是幂等的（第二次返回 False）。
+        """
+        if not self.locked:
+            return False
+        self.locked = False
+        self.calibrated = True
+        if self.state == UNCALIBRATED:
+            self.state = BOOT
         self.fault_reason = None
         self._lost = self._settle = self._scan_pos = 0
         self._scan_dir = 1
         self._jump = {"yaw": 0, "pitch": 0}
         self.last_command_time = {"yaw": -1e9, "pitch": -1e9}
+        print("[aim] 闭环解锁（%s）：PULSE_PER_PX_*/DIR_SIGN_* 已按实测值写入，开始跟踪" % reason)
+        return True
+
+    def reset(self):
+        self.state = UNCALIBRATED if self.locked else BOOT
+        self.fault_reason = None
+        self._lost = self._settle = self._scan_pos = 0
+        self._scan_dir = 1
+        self._jump = {"yaw": 0, "pitch": 0}
+        self.last_command_time = {"yaw": -1e9, "pitch": -1e9}
+        self._guard_n = 0
+        self._guard_min = None
         return self.state
 
     def update(self, result, now=0.0):
         """输入视觉 result，返回 ``cmds``；无效结果按状态机处理（HOLD / SCAN）。"""
         now = float(now)
+        if self.locked:
+            valid = bool(result and result.get("aim_valid") and
+                         result.get("dx") is not None and result.get("dy") is not None)
+            dx = float(result["dx"]) if valid else None
+            dy = float(result["dy"]) if valid else None
+            self.state = UNCALIBRATED
+            return self._emit(dx, dy, {"yaw": None, "pitch": None})
         if self.state == FAULT:
             return self._emit(None, None, {"yaw": None, "pitch": None})
         valid = bool(result and result.get("aim_valid") and
@@ -1008,6 +1165,9 @@ class GimbalAim:
             self.state = SETTLE
             return self._emit(dx, dy, {"yaw": None, "pitch": None})
         self._settle = 0
+        # 发散看护：只在"确实要发指令"时检查（死区内已提前 return，不参与判断）。
+        if self._guard_check(max(abs(dx), abs(dy))):
+            return self._emit(dx, dy, {"yaw": None, "pitch": None})
         coarse_px = float(getattr(self.cfg, "COARSE_PX", 0.0))
         self.state = COARSE if (coarse_px > 0 and max(abs(dx), abs(dy)) > coarse_px) else FINE
         cmds = {"yaw": self._axis_command("yaw", dx, now),
@@ -1033,6 +1193,29 @@ class GimbalAim:
     def _deadband(self):
         return float(getattr(self.cfg, "DEADBAND_PX", 2.0))
 
+    def _guard_check(self, err_abs):
+        """发散看护：判断"一直在发指令却始终不收敛"，是则置 FAULT。
+
+        判据：观察窗内记录 |误差| 的**最小值**；窗口满之后若当前值涨到 `最小值 × DIVERGE_RATIO`
+        以上，说明"追了这么久反而更偏"，与收敛的预期相反 —— 多半是 `DIR_SIGN_*` 反了。
+        误差每次创出新低就重新计数，因此正常波动/正常收敛不会被误判。
+        """
+        if not self._guard_on:
+            return False
+        if self._guard_min is None or err_abs < self._guard_min:
+            self._guard_min = err_abs
+            self._guard_n = 0
+            return False
+        self._guard_n += 1
+        if self._guard_n < self._guard_frames:
+            return False
+        if self._guard_min > 0 and err_abs >= self._guard_min * self._guard_ratio:
+            self.fault("diverge(|误差| 从 %.1fpx 涨到 %.1fpx，趋势不收敛 -> 检查 DIR_SIGN_*)"
+                       % (self._guard_min, err_abs))
+            return True
+        self._guard_n = 0
+        return False
+
     def _on_lost(self, now):
         self._lost += 1
         self._settle = 0
@@ -1052,10 +1235,27 @@ class GimbalAim:
             return float(getattr(cfg, "GAIN_COARSE", min(1.0, fine * 1.8)))
         return fine
 
+    def _pulse_per_px(self, axis):
+        """像素 -> 脉冲 的换算系数，也是"调节激烈程度"的总闸门。
+
+        取值优先级（现场调参入口见 `config.py` 的「★ 追踪手感」）：
+          ① `DEG_PER_PX_x × PULSES_PER_DEG_x` —— **手感宏，推荐**（每像素多少度 × 每度多少脉冲）；
+          ② 回退 `PULSE_PER_PX_x` —— CALIBRATE_AXIS 实测写回的值 / 旧口径。
+
+        标定实测出的脉冲/像素可反算回宏：`DEG_PER_PX = PULSE_PER_PX / PULSES_PER_DEG`。
+        """
+        cfg = self.cfg
+        upper = axis.upper()
+        deg = float(getattr(cfg, "DEG_PER_PX_%s" % upper, 0.0) or 0.0)
+        ppd = float(getattr(cfg, "PULSES_PER_DEG_%s" % upper, 0.0) or 0.0)
+        if deg > 0 and ppd > 0:
+            return deg * ppd
+        return float(getattr(cfg, "PULSE_PER_PX_%s" % upper, 3.67))
+
     def _rpm(self):
         if self.state == COARSE:
-            return int(getattr(self.cfg, "RPM_COARSE", 1200))
-        return int(getattr(self.cfg, "RPM_FINE", 300))
+            return int(getattr(self.cfg, "RPM_COARSE", 150))
+        return int(getattr(self.cfg, "RPM_FINE", 60))
 
     def _axis_command(self, axis, error, now):
         cfg = self.cfg
@@ -1081,8 +1281,7 @@ class GimbalAim:
             pulses = min(max_pulses, max(1, int(round(abs(float(output))))))
             ccw = float(output) * sign > 0
         else:
-            ppp = float(getattr(cfg, "PULSE_PER_PX_YAW" if axis == "yaw"
-                                else "PULSE_PER_PX_PITCH", 3.67))
+            ppp = self._pulse_per_px(axis)
             pulses = min(max_pulses, max(1, int(round(abs(error) * ppp * self._gain(axis, error)))))
             ccw = error * sign > 0
         self.last_command_time[axis] = now
@@ -1112,7 +1311,49 @@ class GimbalAim:
 
 # ===== vision.gimbal_self_test  (vision/gimbal_self_test.py) =====
 _MOD_SRC['vision.gimbal_self_test'] = r'''
-"""上电云台小幅自检：yaw ±15°，pitch ±30°，最后回到启动姿态。"""
+"""上电云台小幅自检：**pitch 先上转再下转、yaw 先左转再右转**，最后回到启动姿态。
+
+默认走**固定脉冲**（``SELF_TEST_PULSES``）——**不需要看到靶子、也不依赖脉冲/度标定**，
+上电即可验证"串口通 + 两轴机械行程"；置 0 才回退到按角度换算的精细自检。
+
+两条设计红线（2026-10-09 修复"U2 只使能、不自校"时定下）：
+
+1. **只对链路真的打开的轴做自检** —— 一条轴不通不该拖累另一条；
+2. **单轴写失败只跳过该轴剩余步骤**，另一轴继续走完。旧实现遇到第一条 yaw 指令
+   写失败就整机 FAULT，导致 pitch 一步都收不到指令（现场表现就是"只使能、不动"）。
+
+第三条（2026-10-09 现场反馈"自检把电机抖得卡顿"后定下）：**自检运动必须慢 + 带曲线**。
+位置模式命令的加速度档位 `acc=0` 表示"不使用曲线加减速、直接以设定速度启停"，
+对云台这种小惯量机构就是硬启硬停；`acc≠0` 时按 ZDT 官方公式每 `(256-acc)*50us`
+变化 1 RPM，**acc 越小越柔和**。见 `estimate_move_seconds()`。
+"""
+
+
+def estimate_move_seconds(pulses, rpm, acc, pulses_per_rev=3200.0):
+    """估算一段位置命令的运动时间（秒），供自检排程使用（纯函数，可单测）。
+
+    模型（ZDT Emm_V5.0 官方说明）：
+      · `acc == 0`：不使用曲线加减速，直接以设定速度运行 → 只有匀速段；
+      · `acc != 0`：曲线加减速，速度变化率 a = 1 / ((256 - acc) * 50us) [RPM/s]。
+    行程不足时自动退化为**三角速度曲线**（实际峰值低于设定速度），此时按
+    `2 * V_peak / a` 计算，不会高估成梯形时间。
+    """
+    pulses = max(0.0, float(pulses))
+    rpm = max(1e-6, float(rpm))
+    per_rev = max(1.0, float(pulses_per_rev))
+    rate = rpm * per_rev / 60.0                     # 脉冲/秒（匀速段）
+    cruise_s = pulses / rate
+    acc = int(acc)
+    if acc <= 0:
+        return cruise_s
+    # 秒/RPM：每 (256-acc)*50us 变化 1 RPM
+    k = (256 - max(0, min(255, acc))) * 50e-6
+    t_ramp = rpm * k                                # 从 0 加到设定速度所需时间
+    s_ramp = 0.5 * rpm * t_ramp * per_rev / 60.0    # 加速段走过的脉冲（平均速度 = rpm/2）
+    if 2.0 * s_ramp <= pulses:                      # 能加到设定速度 -> 梯形
+        return 2.0 * t_ramp + (pulses - 2.0 * s_ramp) / rate
+    v_peak = (pulses * 60.0 / (k * per_rev)) ** 0.5  # 三角：峰值转速（RPM）
+    return 2.0 * v_peak * k
 
 
 class GimbalSelfTest:
@@ -1123,19 +1364,74 @@ class GimbalSelfTest:
         self.link = link
         self.state = "IDLE"
         self.index = 0
-        self.deadline = float(now)
+        self.sent = 0
+        self.total = 0
+        self.deadline = float(now) + float(getattr(cfg, "SELF_TEST_START_DELAY_S", 0.2))
+        # ★ 硬超时：到点**无条件**结束自检（"上电 3s 内跑完"的兜底），0 = 关闭。
+        self._t0 = float(now)
+        self.timeout_s = float(getattr(cfg, "SELF_TEST_TIMEOUT_S", 0.0) or 0.0)
         self.sequence = []
         self.reason = None
+        self._failed = set()
+        self._planned = set()
+        # 可用轴：链路报告了就把不通的轴排除在自检之外；没有该接口（PC 假链路）则不筛。
+        self.available = None
+        probe = getattr(link, "available_axes", None)
+        if callable(probe):
+            try:
+                self.available = set(probe())
+            except Exception:
+                self.available = None
         self._prepare()
+
+    def _install(self, seq):
+        """装入自检序列；剔除链路未打开的轴（一条轴不通不该拖累另一条）。"""
+        missing = sorted({a for a, _c, _p in seq
+                          if self.available is not None and a not in self.available})
+        if missing:
+            print("[self-test] 跳过链路未打开的轴: %s（不参与自检，另一轴照常）" % ",".join(missing))
+            seq = [s for s in seq if s[0] not in missing]
+        info_map = getattr(self.link, "axis_info", None)
+        if isinstance(info_map, dict):
+            for axis in ("yaw", "pitch"):
+                info = info_map.get(axis) or {}
+                if not info.get("opened"):
+                    print("[self-test] %-5s 链路未就绪: dev=%s err=%s" %
+                          (axis, info.get("device"), info.get("error") or "not opened"))
+        if not seq:
+            self.state, self.reason = "SKIPPED", "no_available_axis"
+            print("[self-test] 两轴串口都没打开 -> 自检跳过（不会看到任何电机动作）")
+            return
+        self.sequence = list(seq)
+        self.total = len(self.sequence)
+        self._planned = {s[0] for s in self.sequence}
+        self.state = "RUNNING"
 
     def _prepare(self):
         if not bool(getattr(self.cfg, "GIMBAL_SELF_TEST", True)):
             self.state, self.reason = "DONE", "disabled"
             return
+        yaw_ccw_positive = bool(getattr(self.cfg, "YAW_POSITIVE_CCW", False))
+        pitch_ccw_positive = bool(getattr(self.cfg, "PITCH_POSITIVE_CCW", False))
+        # ★ 首选「固定脉冲自检」：**不需要看到靶子（不依赖视觉）、也不依赖脉冲/度标定**，
+        #   上电即可验证两轴链路与机械行程。顺序按现场要求：
+        #   **pitch 先上转再下转，yaw 先左转再右转**；每轴两段等长，结束时回到起始位姿。
+        pulses = int(getattr(self.cfg, "SELF_TEST_PULSES",
+                             getattr(self.cfg, "SELF_TEST_FALLBACK_PULSES", 0)))
+        if pulses > 0:
+            print("[self-test] 固定脉冲自检（无需靶子 / 无需标定）："
+                  "pitch 上转 %d → 下转 %d，yaw 左转 %d → 右转 %d"
+                  % (pulses, pulses, pulses, pulses))
+            self._install([
+                ("pitch", pitch_ccw_positive, pulses),        # pitch 上转（仰起）
+                ("pitch", not pitch_ccw_positive, pulses),    # pitch 下转（回到起始）
+                ("yaw", yaw_ccw_positive, pulses),            # yaw 左转
+                ("yaw", not yaw_ccw_positive, pulses),        # yaw 右转（回到起始）
+            ])
+            return
+        # 备选：按"脉冲/度"换算角度的精细自检（需先 CALIBRATE_AXIS 实测，或给 GIMBAL_GEAR_RATIO）。
         yaw_ppd = float(getattr(self.cfg, "YAW_PULSES_PER_DEG", 0.0))
         pitch_ppd = float(getattr(self.cfg, "PITCH_PULSES_PER_DEG", 0.0))
-        # 未做"脉冲/度"标定时，允许用已知减速比推导：脉冲/度 = 每圈脉冲 × 减速比 / 360。
-        # 减速比未知（0）则保持跳过 —— 不用错误比例去撞限位。
         ratio = float(getattr(self.cfg, "GIMBAL_GEAR_RATIO", 0.0))
         if ratio > 0:
             per_rev = float(getattr(self.cfg, "MOTOR_PULSES_PER_REV", 3200))
@@ -1146,22 +1442,19 @@ class GimbalSelfTest:
                 pitch_ppd = derived
         if yaw_ppd <= 0 or pitch_ppd <= 0:
             self.state, self.reason = "SKIPPED", "pulse_per_degree_not_calibrated"
-            print("[self-test] skipped: set YAW_PULSES_PER_DEG / PITCH_PULSES_PER_DEG")
-            print("[self-test]           或用 GIMBAL_GEAR_RATIO 提供减速比，或先用 CALIBRATE_AXIS 实测")
+            print("[self-test] skipped: 置 SELF_TEST_PULSES>0 走固定脉冲自检（推荐，无需靶子）")
+            print("[self-test]           或填 YAW/PITCH_PULSES_PER_DEG / GIMBAL_GEAR_RATIO 走角度自检")
             return
         yaw_angle = abs(float(getattr(self.cfg, "SELF_TEST_YAW_DEG", 15.0)))
         pitch_angle = abs(float(getattr(self.cfg, "SELF_TEST_PITCH_DEG", 30.0)))
-        yaw_ccw_positive = bool(getattr(self.cfg, "YAW_POSITIVE_CCW", False))
-        pitch_ccw_positive = bool(getattr(self.cfg, "PITCH_POSITIVE_CCW", False))
-        self.sequence = [
+        self._install([
             ("yaw", yaw_ccw_positive, yaw_angle * yaw_ppd),
             ("yaw", not yaw_ccw_positive, 2 * yaw_angle * yaw_ppd),
             ("yaw", yaw_ccw_positive, yaw_angle * yaw_ppd),
             ("pitch", pitch_ccw_positive, pitch_angle * pitch_ppd),
             ("pitch", not pitch_ccw_positive, 2 * pitch_angle * pitch_ppd),
             ("pitch", pitch_ccw_positive, pitch_angle * pitch_ppd),
-        ]
-        self.state = "RUNNING"
+        ])
 
     @property
     def done(self):
@@ -1172,33 +1465,52 @@ class GimbalSelfTest:
         if self.done:
             return self.state
         now = float(now)
+        # ★ 硬超时优先于一切：无论卡在哪一步（链路抖动、帧率骤降、某步不返回），
+        #   到点就结束自检并交给上层继续（接着标定 / 直接追踪）。
+        # 只在"**还有步没发完**"时才算卡住并强制结束；4 步都发出后应正常等最后一步走完，
+        # 否则最后一段机械动作会被截断、紧接着的追踪指令会与之堆叠。
+        if self.timeout_s > 0 and self.sequence and now - self._t0 >= self.timeout_s:
+            self.state = "DONE"
+            print("[self-test] 硬超时 %.1fs -> 强制结束（已发 %d/%d 步），转入下一阶段"
+                  % (self.timeout_s, self.sent, self.total))
+            return self.state
         if now < self.deadline:
             return self.state
-        if self.index >= len(self.sequence):
+        if not self.sequence:
             self.state = "DONE"
             print("[self-test] complete; returned to startup pose")
             return self.state
-        axis, ccw, raw_pulses = self.sequence[self.index]
+        axis, ccw, raw_pulses = self.sequence.pop(0)
         pulses = int(round(raw_pulses))
+        self.sent += 1
         if pulses <= 0:
-            self.state, self.reason = "FAULT", "invalid_pulse_count"
-            self.link.stop(axis)
+            print("[self-test] %s 脉冲数非法(%d) -> 跳过该步" % (axis, pulses))
+            self.deadline = now + 0.05
             return self.state
-        rpm = int(getattr(self.cfg, "SELF_TEST_RPM", 900))
-        if not self.link.move(axis, ccw, pulses, rpm,
-                              int(getattr(self.cfg, "ACC_DEFAULT", 0))):
-            self.state, self.reason = "FAULT", "uart_write_failed"
-            self.link.stop(axis)
-            print("[self-test] fault: %s command failed" % axis)
+        # ★ 慢速 + 曲线加减速：SELF_TEST_RPM 默认 60（旧 900 太快、肉眼像"弹"一下），
+        #   SELF_TEST_ACC 默认 60（非 0 才启用 ZDT 曲线加减速；0 = 直接启停 = 卡顿）。
+        rpm = int(getattr(self.cfg, "SELF_TEST_RPM", 60))
+        acc = int(getattr(self.cfg, "SELF_TEST_ACC", 0))
+        if not self.link.move(axis, ccw, pulses, rpm, acc):
+            # 关键：单轴写失败只跳过该轴剩余步骤，另一轴继续 —— 旧实现直接整机 FAULT，
+            # 结果"yaw 链路不通 -> pitch 一步指令都发不出去"（现场=只使能、不动）。
+            self._failed.add(axis)
+            self.sequence = [s for s in self.sequence if s[0] not in self._failed]
+            print("[self-test] %s 指令发送失败 -> 跳过该轴剩余步骤（另一轴继续）" % axis)
+            # 判据是"**所有参与轴都失败**"才算 FAULT，而不是"序列恰好走空" ——
+            # 否则"最后一轴才失败"（例如 pitch 先动完、yaw 才写失败）会被误判成整机故障。
+            if self._planned and self._failed >= self._planned:
+                self.state, self.reason = "FAULT", "uart_write_failed"
+                print("[self-test] fault: 所有参与轴的指令都发不出去")
+            self.deadline = now + 0.05
             return self.state
         pulses_per_rev = float(getattr(self.cfg, "MOTOR_PULSES_PER_REV", 3200))
-        move_s = pulses / max(1.0, pulses_per_rev * max(1, rpm) / 60.0)
-        settle_s = float(getattr(self.cfg, "SELF_TEST_SETTLE_S", 0.35))
+        move_s = estimate_move_seconds(pulses, rpm, acc, pulses_per_rev)
+        settle_s = float(getattr(self.cfg, "SELF_TEST_SETTLE_S", 0.8))
         self.deadline = now + move_s + settle_s
-        self.index += 1
-        print("[self-test] %s %s %dp rpm=%d step=%d/%d" %
-              (axis, "CCW" if ccw else "CW", pulses, rpm,
-               self.index, len(self.sequence)))
+        print("[self-test] %s %s %dp rpm=%d acc=%d step=%d/%d 预计%.2fs" %
+              (axis, "CCW" if ccw else "CW", pulses, rpm, acc,
+               self.sent, self.total, move_s + settle_s))
         return self.state
 
 
@@ -1250,6 +1562,25 @@ _MOD_SRC['vision.stepper_link'] = r'''
 本模块可以在 PC 上导入；只有创建 StepperLink 时才会导入 MaixPy。
 协议使用固定 0x6B 校验、大端参数、相对位置命令（`MaixCAM2串口直控云台需求文档.md` §6）。
 
+⚠ **MaixCAM2 可用串口（2026-10-09 核对官方 UART 表 + 引脚图 v1.0）**：
+
+    串口   丝印      引脚        设备路径        pinmap
+    UART0  U0T/U0R   A28 / A29   /dev/ttyS0     免（默认已复用）；系统终端/日志口
+    UART1  U1T/U1R   A30 / A31   /dev/ttyS1     需（官方 UART 表标"无引脚"）
+    UART2  U2T/U2R   B0  / B1    /dev/ttyS2     需
+    UART3  U3T/U3R   B2  / B3    /dev/ttyS3     需
+    UART4  U4T/U4R   A21 / A22   /dev/ttyS4     需；底部 6P 扩展座默认串口
+
+本工程：轴 1 (yaw) = UART0(U0T/U0R)，轴 2 (pitch) = UART2(B0/B1)。
+配置项 `YAW_DEV/YAW_BAUD/YAW_PINS` 与 `PITCH_DEV/PITCH_BAUD/PITCH_PINS`（旧名
+`U1_*`/`U2_*` 仍兼容）。**pins 传空表 = 该轴不做 pinmap**；两轴默认都显式声明引脚功能，
+且 `PINMAP_STRICT=False`（默认）时 pinmap 失败只警告、**仍打开 UART**，
+避免因功能名不匹配把整条轴变成"打不开"（那会把真正的故障点藏起来）。
+
+打开后还会用 `pinmap.get_pin_function()` **回读实测功能**（MaixCAM2 支持从硬件读），
+启动日志以 `└ 引脚实测:` 一行打印 —— 这是判断"某一轴为什么不通"的第一手证据。
+
+
 帧构造是纯函数（``cmd_*``），返回帧解析也做成纯函数 + 可注入的 ``_ingest``，
 这样即使没有 MaixPy 也能在 PC 上逐字节回归。
 
@@ -1262,6 +1593,12 @@ import time
 CR = 0x6B
 STATUS_OK = 0x02
 STATUS_E2 = 0xE2
+
+# 各轴的"标称引脚"（仅用于诊断回读）：即使 config 里 pins 为空，也去查这些脚**实测**是什么功能。
+NOMINAL_PINS = {
+    "yaw": {"A28": "UART0_TX", "A29": "UART0_RX"},
+    "pitch": {"B0": "UART2_TX", "B1": "UART2_RX"},
+}
 
 
 def _frame(addr, func, data=()):
@@ -1305,6 +1642,47 @@ def frame_status(frame):
     return int(frame[2]) if frame is not None and len(frame) >= 3 else None
 
 
+def fault_reason(fb):
+    """从 ``poll()``/``_ingest()`` 的结果里取出故障原因；**无故障返回 None**。
+
+    ★ 必须走这个函数，不要直接写 ``fb.get("fault") is not None``：
+    ``_ingest()`` 的约定是 **"fault: False 表示无故障"**（见其返回值），而
+    ``False is not None`` 恒为 True —— 2026-10-09 现场 bug 就是 main.py 用
+    ``is not None`` 判断，导致**开机第 1 帧就误判 FAULT 并停机**，
+    云台从此不接收任何指令（表现："电机上电有劲、但永不自检、永不追踪"）。
+    """
+    if not fb:
+        return None
+    return fb.get("reason") if fb.get("fault") else None
+
+
+def axis_cfg(cfg, axis):
+    """读取某轴的 (device, baud, pins)。新命名 `YAW_*`/`PITCH_*` 优先，兼容旧 `U1_*`/`U2_*`。
+
+    pins 为空 dict 表示**该轴不做 pinmap**（设备默认已复用为串口，如 UART0/U0T-U0R）。
+    """
+    if axis == "yaw":
+        dev = getattr(cfg, "YAW_DEV", getattr(cfg, "U1_DEV", "/dev/ttyS0"))
+        baud = getattr(cfg, "YAW_BAUD", getattr(cfg, "U1_BAUD", 115200))
+        pins = getattr(cfg, "YAW_PINS", getattr(cfg, "U1_PINS", None))
+        if pins is None:
+            pins = {}
+    else:
+        dev = getattr(cfg, "PITCH_DEV", getattr(cfg, "U2_DEV", "/dev/ttyS2"))
+        baud = getattr(cfg, "PITCH_BAUD", getattr(cfg, "U2_BAUD", 115200))
+        pins = getattr(cfg, "PITCH_PINS", getattr(cfg, "U2_PINS", None))
+        if pins is None:
+            pins = {"B0": "UART2_TX", "B1": "UART2_RX"}
+    return str(dev), int(baud), dict(pins)
+
+
+def _pins_text(pins):
+    """把引脚映射打印成可读串；空表表示"免 pinmap（设备默认已复用为串口）"。"""
+    if not pins:
+        return "(默认复用,免pinmap)"
+    return ",".join("%s=%s" % kv for kv in pins.items())
+
+
 class StepperLink:
     """两条独立 UART 链路；任一轴打开失败不会阻塞另一轴。"""
 
@@ -1320,32 +1698,119 @@ class StepperLink:
         self._timeout_count = {"yaw": 0, "pitch": 0}
         self._e2_times = []
         self.fault_reason = None
+        self._init_error = None
+        # 逐轴链路诊断（启动打印 / uart_probe 用）：设备、引脚、pinmap 结果、是否打开、失败原因。
+        self.axis_info = {}
+        for axis in ("yaw", "pitch"):
+            dev, baud, pins = axis_cfg(cfg, axis)
+            self.axis_info[axis] = {
+                "device": dev, "baud": baud, "pins": pins,
+                "pinmap_ok": None, "pinmap_error": None, "pin_funcs": {},
+                "opened": False, "error": None,
+            }
         try:
             from maix import uart, pinmap
+            try:
+                from maix import err
+            except Exception:
+                err = None
         except Exception as exc:
             self._stats["err"] += 1
             self._stats["yaw"] = self._stats["pitch"] = False
             self._init_error = exc
+            for info in self.axis_info.values():
+                info["error"] = "maix import failed: %s" % exc
             return
-        pin_sets = {
-            "yaw": getattr(cfg, "U1_PINS", {"A30": "UART1_TX", "A31": "UART1_RX"}),
-            "pitch": getattr(cfg, "U2_PINS", {"B0": "UART2_TX", "B1": "UART2_RX"}),
-        }
-        devices = {"yaw": (getattr(cfg, "U1_DEV", "/dev/ttyS1"),
-                             getattr(cfg, "U1_BAUD", 115200)),
-                   "pitch": (getattr(cfg, "U2_DEV", "/dev/ttyS2"),
-                               getattr(cfg, "U2_BAUD", 115200))}
+        strict = bool(getattr(cfg, "PINMAP_STRICT", False))
         for axis in ("yaw", "pitch"):
+            info = self.axis_info[axis]
+            # ---- 1) pinmap（失败是否致命由 PINMAP_STRICT 决定）----
             try:
-                for pin, func in pin_sets[axis].items():
+                for pin, func in info["pins"].items():
                     result = pinmap.set_pin_function(pin, func)
-                    if result is not None and hasattr(result, "value") and result.value != 0:
-                        raise RuntimeError("pinmap %s=%s failed: %s" % (pin, func, result))
-                self._ports[axis] = uart.UART(*devices[axis])
+                    # 严格判定：成功返回 None/0；失败返回 err.Err（err.check_raise 会抛）。
+                    # 旧写法只在"返回对象带 .value 且非 0"时报错，遇到未知返回类型会静默吞掉失败。
+                    if err is not None:
+                        err.check_raise(result, "pinmap set %s=%s failed" % (pin, func))
+                    elif result is not None and int(getattr(result, "value", 0) or 0) != 0:
+                        raise RuntimeError("pinmap set %s=%s failed: %s" % (pin, func, result))
+                info["pinmap_ok"] = True
             except Exception as exc:
+                info["pinmap_ok"] = False
+                info["pinmap_error"] = str(exc)
+                if strict:
+                    info["error"] = "pinmap: %s" % exc
+                    self._stats[axis] = False
+                    self._stats["err"] += 1
+                    print("[gimbal] %s 链路不可用（PINMAP_STRICT=True）| dev=%s pins=%s | %s" %
+                          (axis, info["device"], _pins_text(info["pins"]), exc))
+                    continue
+                print("[gimbal] %s pinmap 设置失败（按 PINMAP_STRICT=False 继续打开）：%s"
+                      % (axis, exc))
+            # ---- 2) 回读实测引脚功能（诊断；MaixCAM2 支持直接从硬件读）----
+            watch = dict(info["pins"]) or dict(NOMINAL_PINS.get(axis, {}))
+            funcs = {}
+            for pin in watch:
+                try:
+                    funcs[pin] = pinmap.get_pin_function(pin)
+                except Exception as exc:
+                    funcs[pin] = "?err:%s" % exc
+            info["pin_funcs"] = funcs
+            # ---- 3) 打开 UART ----
+            try:
+                self._ports[axis] = uart.UART(info["device"], info["baud"])
+                info["opened"] = True
+            except Exception as exc:
+                info["error"] = str(exc)
                 self._stats[axis] = False
                 self._stats["err"] += 1
-                print("[gimbal] %s UART open failed: %s" % (axis, exc))
+                print("[gimbal] %s 串口打开失败 | dev=%s | %s" % (axis, info["device"], exc))
+        # 开机清空缓冲：UART0(U0) 上常有内核启动日志/终端回显，必须丢掉再发指令。
+        if bool(getattr(cfg, "FLUSH_RX_ON_START", True)):
+            self.flush()
+
+    def flush(self, axis=None):
+        """丢弃串口缓冲区里的陈旧字节（U0 上可能有内核日志/终端回显），返回丢弃字节数。"""
+        axes = tuple(self._ports) if axis is None else (axis,)
+        dropped = 0
+        for name in axes:
+            port = self._ports.get(name)
+            self._rxbuf[name] = bytearray()
+            if port is None:
+                continue
+            try:
+                avail = int(port.available(0))
+                if avail > 0:
+                    data = port.read(avail)
+                    dropped += len(bytes(data)) if data else 0
+            except Exception:
+                pass
+        return dropped
+
+    def health_lines(self):
+        """返回两轴链路自检的可读行（启动时打印，用于现场确认串口是否真的开上了）。"""
+        lines = []
+        for axis in ("yaw", "pitch"):
+            info = self.axis_info[axis]
+            if info["opened"]:
+                state = "OK"
+            elif self._init_error is not None:
+                state = "NO-MAIX"
+            else:
+                state = "FAIL"
+            lines.append("[gimbal] %-5s %-4s dev=%-12s baud=%d pins=%-30s pinmap=%s -> %s%s" % (
+                axis, state, info["device"], info["baud"], _pins_text(info["pins"]),
+                info["pinmap_ok"], "opened" if info["opened"] else "NOT opened",
+                ("  err=%s" % info["error"]) if info["error"] else ""))
+            # 实测引脚功能：判断"该轴明明打开了却不通"的关键证据（例如 A28 实测不是 UART0_TX）。
+            funcs = info.get("pin_funcs") or {}
+            if funcs:
+                lines.append("[gimbal]   └ 引脚实测: %s" %
+                             "  ".join("%s=%s" % kv for kv in funcs.items()))
+        return lines
+
+    def available_axes(self):
+        return [axis for axis in ("yaw", "pitch") if self.axis_info[axis]["opened"]]
 
     # ------------------------------------------------------------- 发送
     def _write(self, axis, payload, now=None):
@@ -1484,6 +1949,27 @@ class StepperLink:
 
     def stats(self):
         return dict(self._stats)
+
+    def status_line(self):
+        """单行链路心跳（周期日志用）：证明"是否真的发过帧 / 是否收到过回帧"。
+
+        判读：tx=0 -> 一条指令都没发出（链路没打开或被上层拦住）；
+              tx>0 rx=0 -> 发出去了但驱动器一个字节都没回（查 P_Serial/地址/波特率/接线）；
+              ok>0      -> 驱动器确实在应答，链路通。
+        """
+        s = self._stats
+        axes = []
+        for axis in ("yaw", "pitch"):
+            info = self.axis_info[axis]
+            if not info["opened"]:
+                axes.append("%s:FAIL" % axis)
+            elif self._last_status[axis] is None:
+                axes.append("%s:open" % axis)
+            else:
+                axes.append("%s:open,0x%02X" % (axis, self._last_status[axis]))
+        return "[gimbal] 链路 tx=%d rx=%d ok=%d e2=%d to=%d drop=%d | %s" % (
+            s["tx"], s["rx"], s["ok"], s["e2"], s["timeout"], s["err"],
+            " ".join(axes))
 '''
 
 # ===== vision.gimbal_calibrate  (vision/gimbal_calibrate.py) =====
@@ -1505,18 +1991,34 @@ _MOD_SRC['vision.gimbal_calibrate'] = r'''
     PULSE_PER_PX = N / |Δ|；DIR_SIGN（走正方向后 |误差| 反而变大 ⇒ 符号反 ⇒ -1）；
     交叉项 C = Δdy/Δdx（判相机横滚）；回差估计 |Δ2−Δ0| / 2（决定 DEADBAND 下限）。
 
-标定期 main 会跳过闭环（见 ``CALIBRATE_AXIS`` 非空）。标完把打印出的数值填进
-``config.py``，再把 ``CALIBRATE_AXIS`` 置回 ``""``，重新上电即进入正常跟踪。
+标定期 main 会跳过闭环（见 ``CALIBRATE_AXIS`` 非空）。两种用法：
+
+* **人工**：``CALIBRATE_AXIS = "yaw"``（或 ``"pitch"``）跑一次，把打印出的数值填进
+  ``config.py``，再置回 ``""``，重新上电进入跟踪；
+* **自动**：``CALIBRATE_AXIS = "auto"`` —— ``AutoCalibrate`` 依次标定两轴，成功后把结果
+  写回**运行时** cfg 并解锁闭环，**上电一次即进入跟踪**（无需回填、无需重启）。
 
 保持纯 Python（不 import maix），可在 PC 上用假链路回归。
 """
 
 
+def _estimate_seconds(pulses, rpm, acc, pulses_per_rev):
+    """复用自检的时间建模；单文件打包等 import 不可用场景退化为保守估计（曲线留 1.4 倍余量）。"""
+    try:
+        from vision.gimbal_self_test import estimate_move_seconds
+        return estimate_move_seconds(pulses, rpm, acc, pulses_per_rev)
+    except Exception:
+        travel = pulses / max(1e-6, pulses_per_rev * max(1, rpm) / 60.0)
+        return travel * (1.4 if int(acc) > 0 else 1.0)
+
+
 class GimbalCalibrator:
-    def __init__(self, cfg, link, now=0.0):
+    def __init__(self, cfg, link, now=0.0, axis=None):
         self.cfg = cfg
         self.link = link
-        self.axis = str(getattr(cfg, "CALIBRATE_AXIS", "")).strip().lower()
+        # axis 显式传入时优先于 cfg.CALIBRATE_AXIS —— AutoCalibrate 靠它逐轴切换。
+        self.axis = (str(axis) if axis is not None
+                     else str(getattr(cfg, "CALIBRATE_AXIS", ""))).strip().lower()
         self.pulses = int(getattr(cfg, "CALIBRATE_PULSES", 2000))
         self.need = max(2, int(getattr(cfg, "CALIBRATE_SAMPLES", 5)))
         self.samples = []
@@ -1525,6 +2027,10 @@ class GimbalCalibrator:
         self.reason = None
         self.started = float(now)
         self.deadline = float(now) + float(getattr(cfg, "CALIBRATE_SETTLE_S", 1.0))
+        # ★ 视觉无效快速失败：标定每一步都要 dx/dy，画面里没有靶心时不该干等 CALIBRATE_TIMEOUT_S
+        #   （现场"抬头后黑框出视野 -> 卡在等 dv"就是这么来的）。
+        self._last_dv = float(now)
+        self.visual_timeout_s = float(getattr(cfg, "CALIBRATE_VISUAL_TIMEOUT_S", 0.0) or 0.0)
         self.limit_s = float(getattr(cfg, "CALIBRATE_TIMEOUT_S", 20.0))
         self.state = "BASELINE"
         if self.axis not in ("yaw", "pitch") or self.pulses <= 0:
@@ -1543,6 +2049,11 @@ class GimbalCalibrator:
         now = float(now)
         if self.done:
             return self.state
+        # ★ 视觉无效**快速失败**：不再等到 20s 总超时。只要连续 visual_timeout_s 收不到有效
+        #   dx/dy，就立刻判失败、把控制权交还主流程 —— 这是"没靶心 / 抬头后黑框跑出视野
+        #   导致校准卡住"的直接解法。
+        if self.visual_timeout_s > 0 and now - self._last_dv >= self.visual_timeout_s:
+            return self._fault("no_vision(%.1fs 无有效 dx/dy)" % self.visual_timeout_s)
         if now - self.started > self.limit_s:
             return self._fault("timeout_no_valid_aim(%.1fs)" % self.limit_s)
         if now < self.deadline:
@@ -1550,6 +2061,7 @@ class GimbalCalibrator:
         dv = None
         if result and result.get("aim_valid") and result.get("dx") is not None:
             dv = (float(result["dx"]), float(result["dy"]))
+            self._last_dv = now          # 有有效视觉 -> 刷新，视觉超时不会误伤正常标定
         if self.state == "BASELINE":
             if dv is None:
                 return self.state
@@ -1601,16 +2113,18 @@ class GimbalCalibrator:
                 sum(s[1] for s in self.samples) / n)
 
     def _move_seconds(self):
-        rpm = max(1, int(getattr(self.cfg, "CALIBRATE_RPM", 300)))
+        rpm = max(1, int(getattr(self.cfg, "CALIBRATE_RPM", 60)))
+        acc = int(getattr(self.cfg, "CALIBRATE_ACC", getattr(self.cfg, "SELF_TEST_ACC", 0)))
         ppr = max(1.0, float(getattr(self.cfg, "MOTOR_PULSES_PER_REV", 3200)))
-        travel = self.pulses / (ppr * rpm / 60.0)
+        # 与自检同一套建模（含曲线加减速；行程不足自动退化三角曲线），避免早发下一条。
+        travel = _estimate_seconds(self.pulses, rpm, acc, ppr)
         settle = float(getattr(self.cfg, "CALIBRATE_SETTLE_S", 1.0))
-        return travel * 1.4 + settle
+        return travel + settle
 
     def _send(self, ccw):
-        ok = self.link.move(self.axis, ccw, self.pulses,
-                            int(getattr(self.cfg, "CALIBRATE_RPM", 300)),
-                            int(getattr(self.cfg, "ACC_DEFAULT", 0)))
+        rpm = int(getattr(self.cfg, "CALIBRATE_RPM", 60))
+        acc = int(getattr(self.cfg, "CALIBRATE_ACC", getattr(self.cfg, "SELF_TEST_ACC", 0)))
+        ok = self.link.move(self.axis, ccw, self.pulses, rpm, acc)
         if not ok:
             self._fault("uart_write_failed")
         return bool(ok)
@@ -1642,6 +2156,127 @@ class GimbalCalibrator:
         print("[calib]   回差估计 ≈ %.2fpx（DEADBAND_PX 建议 ≥ 1.5×该值，下限 1.5px）" % backlash)
         print("[calib]   换轴标定请把 CALIBRATE_AXIS 改成另一轴重跑；标完置回 \"\"")
         self.state = "DONE"
+        return self.state
+
+
+class AutoCalibrate:
+    """开机自动逐轴标定（``CALIBRATE_AXIS = "auto"``）：yaw -> pitch，成功后自动解锁闭环。
+
+    与人工标定的差别：不需要看屏幕读数、不需要回填 config 再重启 —— 实测结果直接写回
+    **运行时**的 cfg 对象，上层据此解除 ``GimbalAim`` 的未标定锁，上电一次即可从
+    "自检" 直接进入 "跟踪"。
+
+    安全口径：**任一轴失败就整体不解锁**（宁可不追，也不用错误参数正反馈甩头）。
+    标定前提是画面里能看到靶心，否则 ``dx/dy`` 无效 -> 超时失败。
+    """
+
+    def __init__(self, cfg, link, now=0.0, axes=None):
+        self.cfg = cfg
+        self.link = link
+        self.axes = [str(a).lower() for a in
+                     (axes or getattr(cfg, "AUTO_CALIBRATE_AXES", ("yaw", "pitch")))]
+        self.axis = None
+        self.current = None
+        self.results = {}
+        self.failed = {}
+        self.state = "RUNNING"
+        self.reason = None
+        self._started = float(now)
+        self._limit_s = float(getattr(cfg, "AUTO_CALIBRATE_TIMEOUT_S", 150.0))
+        self._next(float(now))
+
+    # ------------------------------------------------------------- 接口
+    @property
+    def done(self):
+        return self.state in ("DONE", "FAILED", "SKIPPED")
+
+    @property
+    def applied(self):
+        """是否已把结果写回 cfg 且**两轴全部成功** —— 只有此时才允许解锁闭环。"""
+        return bool(self.results) and not self.failed
+
+    @property
+    def deadline(self):
+        """当前正在标定的那一轴的截止时刻（供上层推进时钟/测试用）。"""
+        return self.current.deadline if self.current is not None else self._started
+
+    def update(self, now, result=None):
+        now = float(now)
+        if self.done:
+            return self.state
+        if now - self._started > self._limit_s:
+            return self._fail("auto_calibrate_timeout(%.0fs)" % self._limit_s)
+        if self.current is None:
+            return self.state
+        self.current.update(now, result)
+        if not self.current.done:
+            return self.state
+        if self.current.state == "DONE" and self.current.report:
+            self.results[self.axis] = dict(self.current.report)
+            print("[calib-auto] %s 标定成功" % self.axis)
+        else:
+            self.failed[self.axis] = self.current.reason or self.current.state
+            print("[calib-auto] %s 标定失败: %s" % (self.axis, self.failed[self.axis]))
+        self._next(now)
+        return self.state
+
+    def apply(self):
+        """把实测值写回运行时 cfg（**不改磁盘 config.py**），并打印可粘贴片段。"""
+        for axis, rep in self.results.items():
+            upper = axis.upper()
+            setattr(self.cfg, "PULSE_PER_PX_%s" % upper, round(float(rep["pulse_per_px"]), 2))
+            setattr(self.cfg, "DIR_SIGN_%s" % upper, int(rep["dir_sign"]))
+        print("[calib-auto] 已写入运行时 config（磁盘文件未改）。要固定下来请复制到 config.py：")
+        for axis, rep in self.results.items():
+            upper = axis.upper()
+            print("[calib-auto]   PULSE_PER_PX_%s = %.2f" % (upper, rep["pulse_per_px"]))
+            print("[calib-auto]   DIR_SIGN_%s = %d" % (upper, rep["dir_sign"]))
+        return len(self.results)
+
+    # ------------------------------------------------------------- 内部
+    def _next(self, now):
+        remaining = [a for a in self.axes if a not in self.results and a not in self.failed]
+        if not remaining:
+            return self._finish()
+        self.axis = remaining[0]
+        self.current = GimbalCalibrator(self.cfg, self.link, now, axis=self.axis)
+        if self.current.done:
+            # 该轴不可标（脉冲数非法等）-> 记失败后继续下一轴
+            self.failed[self.axis] = self.current.reason or "unavailable"
+            print("[calib-auto] %s 无法标定: %s" % (self.axis, self.failed[self.axis]))
+            return self._next(now)
+        idx = len(self.results) + len(self.failed) + 1
+        print("[calib-auto] 开始标定 %s（第 %d/%d 轴，走 %d 脉冲，请确认云台有行程余量）" %
+              (self.axis, idx, len(self.axes), self.current.pulses))
+        return None
+
+    def _finish(self):
+        print("[calib-auto] ================== 自动标定汇总 ==================")
+        for axis in self.axes:
+            if axis in self.results:
+                rep = self.results[axis]
+                print("[calib-auto]   %-5s OK    PULSE_PER_PX=%7.2f  DIR_SIGN=%+d  交叉=%+.3f  回差=%.2fpx"
+                      % (axis, rep["pulse_per_px"], rep["dir_sign"],
+                         rep["cross"], rep["backlash_px"]))
+            else:
+                print("[calib-auto]   %-5s 失败  %s" % (axis, self.failed.get(axis)))
+        if not self.results:
+            self.state, self.reason = "FAILED", "no_axis_calibrated"
+            print("[calib-auto] 没有任何轴标定成功 -> 闭环保持锁定（不会发电机指令）")
+            return self.state
+        self.apply()
+        if self.failed:
+            self.state = "DONE"
+            self.reason = "partial:%s" % ",".join(sorted(self.failed))
+            print("[calib-auto] 有轴未标定成功(%s) -> 闭环仍**保持锁定**，请修好后重跑"
+                  % ",".join(sorted(self.failed)))
+            return self.state
+        self.state = "DONE"
+        return self.state
+
+    def _fail(self, reason):
+        self.state, self.reason = "FAILED", str(reason)
+        print("[calib-auto] 失败：%s" % self.reason)
         return self.state
 '''
 
@@ -1909,16 +2544,17 @@ def reset():
 class AimLoop:
     """追踪 + 光斑偏差 + 双轴云台闭环（会驱动 ZDT 电机）。
 
-    ⚠ 使用前必须完成开环标定（``CALIBRATE_AXIS`` 跑一次填回 config），否则方向/增益
-    是占位值，可能正反馈甩头。不需要电机的问请只用 ``detect_black_frame`` /
-    ``CenterTracker``，不要实例化本类。
+    ⚠ 使用前必须完成开环标定（``CALIBRATE_AXIS`` 跑一次，或设 ``"auto"`` 自动标定）。
+    未标定时方向/增益是占位值、可能正反馈甩头，闭环会被锁成 ``UNCALIBRATED``
+    （只出视觉结果、不发指令）；确认已标定后用 ``calibrated=True`` 或 ``.unlock()`` 解锁。
+    不需要电机的场景请只用 ``detect_black_frame`` / ``CenterTracker``，不要实例化本类。
 
     ``step(frame)`` 返回的 ``Result`` 比追踪器多两个字段：
         aim_state  str   状态机状态（FINE/COARSE/SETTLE/HOLD/FAULT…）
         cmds       dict  {"yaw": (ccw, pulses, rpm) or None, "pitch": ...}
     """
 
-    def __init__(self, cfg=None, enable_motors=True, with_laser=True):
+    def __init__(self, cfg=None, enable_motors=True, with_laser=True, calibrated=None):
         self.cfg = cfg if cfg is not None else load_config()
         self.tracker = CenterTracker(self.cfg, with_laser=with_laser)
         self.link = None
@@ -1929,6 +2565,10 @@ class AimLoop:
             self.link = StepperLink(self.cfg)
             self.link.enable()
             self.aim = GimbalAim(self.cfg)
+            # calibrated=True：显式声明"PULSE_PER_PX_*/DIR_SIGN_* 已是实测值" -> 直接解锁闭环。
+            # 不传则沿用 config.GIMBAL_CALIBRATED 的判定（见 GimbalAim.__init__）。
+            if calibrated is True and self.aim.locked:
+                self.aim.unlock("AimLoop(calibrated=True)")
 
     def step(self, frame, now=None):
         now = time.perf_counter() if now is None else float(now)
@@ -1944,12 +2584,15 @@ class AimLoop:
                 if command is not None:
                     ccw, pulses, rpm = command
                     self.link.move(axis, ccw, pulses, rpm,
-                                   getattr(self.cfg, "ACC_DEFAULT", 0), now=now)
+                                   getattr(self.cfg, "ACC_TRACK",
+                                           getattr(self.cfg, "ACC_DEFAULT", 0)), now=now)
                     res["cmds"][axis] = command
         fb = self.link.poll(now)
-        if fb.get("fault"):
+        from vision.stepper_link import fault_reason
+        fault = fault_reason(fb)
+        if fault is not None:
             self.link.stop(now=now)
-            self.aim.fault("link:%s" % fb["reason"])
+            self.aim.fault("link:%s" % fault)
             res["aim_state"] = "FAULT"
         return res
 
@@ -1988,9 +2631,9 @@ from vision.rectangle_center import RectangleCenterDetector, draw_result
 from vision.laser_spot import LaserSpotDetector, deviation, draw_laser_overlay, PANEL_H
 from vision.gimbal_aim import GimbalAim
 from vision.gimbal_self_test import GimbalSelfTest, probe_imu
-from vision.gimbal_calibrate import GimbalCalibrator
+from vision.gimbal_calibrate import GimbalCalibrator, AutoCalibrate
 
-BUILD_ID = "2026-10-08-target-api-v3"
+BUILD_ID = "2026-10-10-no-block-v14"
 
 
 def _to_gray(img, image_module):
@@ -2043,11 +2686,23 @@ def main():
     aim = None
     self_test = None
     calibrator = None
+    auto_cal = None
+    auto_cal_done = False
     if Config.ENABLE_GIMBAL:
         try:
-            from vision.stepper_link import StepperLink
+            from vision.stepper_link import StepperLink, axis_cfg, fault_reason
             link = StepperLink(Config)
-            link.enable()
+            # 先亮出两条串口的真实状态：设备路径 / 引脚 / pinmap 结果 / 是否打开。
+            for line in link.health_lines():
+                print(line)
+            axes = link.available_axes()
+            if not axes:
+                print("[gimbal] 两条串口都打不开 -> 云台停用（视觉照常运行）；"
+                      "请核对接线：yaw=U0(U0T/U0R,A28/A29)、pitch=U2(U2T/U2R,B0/B1)，"
+                      "TX↔RX 交叉、三路 GND 共地")
+            enabled = link.enable()
+            print("[gimbal] 使能帧 0xF3 已发: %s（True=两轴 write 未报错；驱动器 Response≠None 才会有回执帧）"
+                  % enabled)
             aim = GimbalAim(Config)
             imu_info = probe_imu()
             if imu_info["available"]:
@@ -2055,15 +2710,35 @@ def main():
                       (imu_info["method"], str(imu_info["sample"])))
             else:
                 print("[imu] unavailable: %s" % imu_info["error"])
+            axis_sel = str(getattr(Config, "CALIBRATE_AXIS", "")).strip().lower()
             calibrator = GimbalCalibrator(Config, link, time.perf_counter())
             if calibrator.done:
-                # 未配置标定轴：正常进入自检 + 跟踪。
                 calibrator = None
+                # ★ 上电自检与视觉/标定**完全解耦**：只要本次不是"人工标定"模式，
+                #   上电后立刻按固定脉冲走一遍（**pitch 上→下、yaw 左→右**，各回到起始位姿）。
+                #   自检只用链路 + 时间，**不需要靶纸、不等黑框识别**；4 步跑完才轮到
+                #   自动标定 / 追踪（见主循环：自检分支优先）。
                 self_test = GimbalSelfTest(Config, link, time.perf_counter())
+                if self_test.state == "RUNNING":
+                    axes_txt = "+".join(sorted({s[0] for s in self_test.sequence}))
+                    print("[gimbal] 上电自检 %d 步，参与轴=%s（固定脉冲，不等黑框/靶纸）"
+                          % (self_test.total, axes_txt))
+                elif self_test.state == "SKIPPED":
+                    print("[gimbal] 自检已跳过(%s) -> 上电不会看到电机动作。"
+                          "要么填 YAW/PITCH_PULSES_PER_DEG、要么给 GIMBAL_GEAR_RATIO，"
+                          "要么设 SELF_TEST_PULSES>0 用固定脉冲验证链路"
+                          % self_test.reason)
+                if axis_sel == "auto":
+                    print("[gimbal] 自检完成后自动标定 %s（标定期才需要画面里有靶心，"
+                          "否则按 AUTO_CALIBRATE_TIMEOUT_S 超时失败）"
+                          % "+".join(getattr(Config, "AUTO_CALIBRATE_AXES", ("yaw", "pitch"))))
             else:
-                print("[gimbal] calibration mode axis=%s（本次只标定，不闭环）" % calibrator.axis)
-            print("[gimbal] enabled yaw=%s pitch=%s addr=%d/%d" %
-                  (Config.U1_DEV, Config.U2_DEV, Config.ADDR_YAW, Config.ADDR_PITCH))
+                print("[gimbal] calibration mode axis=%s（本次只人工标定：不自检、不闭环）"
+                      % calibrator.axis)
+            print("[gimbal] axes yaw=%s@%s pitch=%s@%s addr=%d/%d" %
+                  (axis_cfg(Config, "yaw")[0], axis_cfg(Config, "yaw")[2] or "默认复用",
+                   axis_cfg(Config, "pitch")[0], axis_cfg(Config, "pitch")[2] or "默认复用",
+                   Config.ADDR_YAW, Config.ADDR_PITCH))
         except Exception as exc:
             print("[gimbal] disabled after init failure: %s" % exc)
     detector = RectangleCenterDetector(Config)
@@ -2140,24 +2815,49 @@ def main():
         rx_started = time.perf_counter()
         fb = link.poll(after_uart) if link is not None else None
         rx_elapsed = time.perf_counter() - rx_started
-        link_fault = (fb or {}).get("fault")
+        link_fault = fault_reason(fb) if link is not None else None
         aim_started = time.perf_counter()
         if link_fault is not None and aim is not None and aim.state != "FAULT":
             print("[gimbal] link fault: %s -> 立即停止并进入 FAULT" % link_fault)
             link.stop(now=after_uart)
             aim.fault("link:%s" % link_fault)
         if calibrator is not None:
-            if not calibrator.done:
+            if not calibrator.done and aim is not None and aim.state != "FAULT":
                 calibrator.update(after_uart, result)
-        elif aim is not None and link is not None and aim.state != "FAULT":
-            if self_test is not None and not self_test.done:
+        elif self_test is not None and not self_test.done:
+            # ★ 上电自检优先：固定脉冲 4 步（pitch 上→下、yaw 左→右）先走完，
+            #   期间不发任何标定/闭环指令；**不依赖视觉结果**（无黑框也照走）。
+            #   唯一例外：链路已被判 FAULT 时不再下发任何指令。
+            if aim is not None and aim.state != "FAULT":
                 self_test.update(after_uart)
-            elif self_test is None or self_test.state != "FAULT":
-                aim_result = aim.update(result, now=after_uart)
-                for axis, command in aim_result["cmds"].items():
-                    if command is not None:
-                        ccw, pulses, rpm = command
-                        link.move(axis, ccw, pulses, rpm, Config.ACC_DEFAULT, now=after_uart)
+        elif self_test is not None and self_test.state == "FAULT":
+            # 自检判定链路故障（所有参与轴都写不出去）-> 保持静默：不标定、不追踪。
+            pass
+        elif (auto_cal is None and aim is not None and aim.state != "FAULT"
+              and str(getattr(Config, "CALIBRATE_AXIS", "")).strip().lower() == "auto"):
+            # 自检结束后才真正开始自动标定：时间窗口从"这一刻"算起，
+            # 不被上电自检的机械动作耗时挤占（否则自检慢时会吞掉标定预算）。
+            auto_cal = AutoCalibrate(Config, link, after_uart)
+            print("[gimbal] 上电自检完成 -> 开始自动标定 %s（标定期不闭环，需画面里有靶心）"
+                  % "+".join(auto_cal.axes))
+        elif auto_cal is not None and not auto_cal.done:
+            # 自动标定期间只标定、不闭环（与人工标定同一口径）。
+            if aim is not None and aim.state != "FAULT":
+                auto_cal.update(after_uart, result)
+        elif aim is not None and link is not None and aim.state != "FAULT":
+            if auto_cal is not None and not auto_cal_done:
+                # 自动标定刚结束：只有两轴全部标定成功才解锁闭环（否则保持锁定）。
+                auto_cal_done = True
+                if auto_cal.applied and aim.unlock("auto-calibrate"):
+                    print("[gimbal] 自动标定完成 -> 闭环已解锁，开始跟踪")
+                else:
+                    print("[gimbal] 自动标定未全部成功(%s) -> 闭环保持锁定，不会发电机指令"
+                          % (auto_cal.reason or auto_cal.state))
+            aim_result = aim.update(result, now=after_uart)
+            for axis, command in aim_result["cmds"].items():
+                if command is not None:
+                    ccw, pulses, rpm = command
+                    link.move(axis, ccw, pulses, rpm, Config.ACC_TRACK, now=after_uart)
         aim_elapsed = time.perf_counter() - aim_started
         after_aim = time.perf_counter()
         if disp is not None and (after_uart - last_show >= 1.0 / max(1, Config.SHOW_FPS)):
@@ -2198,6 +2898,8 @@ def main():
                    (laser_avg, laser_calls, laser_hits)))
             if aim is not None:
                 print(aim.status_line())
+            if link is not None:
+                print(link.status_line())
             count, searches = 0, 0
             laser_ms, laser_calls, laser_hits = 0.0, 0, 0
             for key in totals:

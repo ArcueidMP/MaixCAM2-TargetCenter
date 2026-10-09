@@ -1,0 +1,24 @@
+# =============================================================================
+# .gitignore（轨道 B · maixcam2_rect_center/ 子树专属）
+# 只影响本目录；跨轨公共规则在仓库根 ../.gitignore。
+# 原则与根一致：**源码 / 固件 / 文档 / 单文件版进库；能重新生成的产物、缓存不进库。**
+# 注：本文件已被 app.yaml 的 exclude 排除，**不会进应用包**。
+# =============================================================================
+
+# ---- Python 缓存 ----
+__pycache__/
+*.py[cod]
+*.pyo
+
+# ---- 测试 / 调试产出（可随时重新生成）----
+# e2e 报告目录：每次跑 tools/test_images_e2e.py 都会重画总览图 + 重写结果 json
+# -> 整个目录不回库，避免无意义二进制/数值 diff。
+tools/e2e_report/
+# 板端 / 桌面调试截图（与根 .gitignore 同口径）。
+screenshot*.png
+frame*.png
+mask*.png
+debug_*.png
+
+# ⚠ 注意：tools/negative_e421.png / tools/negative_e880.png 是**测试输入固件**（负样本），
+#    被 tools/test_images_e2e.py 引用，**必须进库** —— 不要在此忽略它们。
