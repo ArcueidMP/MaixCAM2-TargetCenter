@@ -10,7 +10,7 @@ main_single.py · 25E 靶心识别（轨道 B）—— 单文件自包含版
 用途：在 MaixVision 里点「运行当前文件」即可运行（不必用「运行项目」）。
       行为与模块化工程完全一致，输出也就完全一致。
 
-生成时间：2026-10-10 23:34:14
+生成时间：2026-10-10 23:35:44
     config.py                    sha1=3c6f77da9d88
     main.py                      sha1=5d9529be6d4b
     target_api.py                sha1=9c5a71aa209b
