@@ -1,11 +1,54 @@
 # MaixCAM2 黑框中心：四边精修、快速跟踪与双轴云台瞄准
 
-构建号 `2026-10-10-sync-display-v18`，应用版本 `1.4.0`。在 MaixVision 中打开本文件夹，选择“运行项目”。
+构建号 `2026-10-10-lens-off-v19`，应用版本 `1.4.0`。在 MaixVision 中打开本文件夹，选择“运行项目”。
 必须一起下发应用包内的 **12 个文件**（`app.yaml` / `main.py` / `config.py` / `target_api.py` /
 `assets/icon.png` / `vision/` 下 7 个 `.py`），不能只运行当前 `main.py`。
 
 > 只想临时试参数时，也可以先 `python tools/build_single.py` 生成 `dist/main_single.py`，
 > 再用「运行当前文件」—— 那是自包含的单文件版，语义与分模块完全一致。改了源码记得重新生成。
+
+## 2026-10-10 改动⑪：关掉未调参的镜头畸变校正——修「识别黑框时画面畸变」（`-lens-off-v19`）
+
+**现场现象**：识别黑框时，画面本身呈现**畸变**（外凸 / 边缘拉伸）。
+
+**定位：`main.py` 主循环里的镜头校正块**
+
+```python
+# main.py  (每帧、在检测与显示之前)
+if lens_enabled:
+    corrected = img.lens_corr(strength=Config.LENS_STRENGTH)   # LENS_STRENGTH = 1.5
+    if corrected is not None:
+        img = corrected                # ← 校正结果**替换**原图
+gray = _to_gray(img, image)            # 检测用这张
+result = detector.process(gray)
+view = draw_result(gray, result, ...)  # 显示也用这张
+```
+
+`img.lens_corr()` 是**软件径向重映射**：它把整幅画面非线性地重新采样，`strength` 是矫正强度。
+它**同时决定检测输入和 MaixVision 里看到的画面** —— 所以"画面畸变"就是它产生的。
+
+**为什么当时会畸变**（三条，缺一不可）：
+
+1. **strength 未按实际镜头实测**。官方口径是"调 `strength` 直到画面不再畸变"；写死 `1.5` 在
+   非鱼眼镜头上属于**过校正** → 直线反而外凸。
+2. **`zoom` 用了默认 1.0**。官方示例在 `strength=2.1` 时要配 `zoom=0.9` 规避**边角拉伸/黑边**；
+   本项目从未碰过 `zoom`，强校正下的边角拉伸就留在了画面上。
+3. **离线基线是在"无校正"的合成图上测的**（`test_performance` 直接喂 `detector.process`，
+   不经过 `lens_corr`）。板上开校正 = 让实际管线**偏离已验证配置**，且测试覆盖不到这一层。
+
+**改法**：`LENS_CORR: True → False`（A 轨本来就是 `False`，注释写着"边缘直线弯时再开"）。
+启动日志新增一行显式说明当前状态，避免再出现"不知道开了校正"：
+
+```
+[lens] LENS_CORR=False strength=1.50 —— 未做畸变校正，画面/检测均为原始帧（离线回归基线用的就是这一档）
+```
+
+**何时才该打开**：画面里**靶纸长边明显弯曲**（广角/鱼眼边缘）时。步骤：`LENS_CORR=True`
+→ `LENS_STRENGTH` 从 **0.6~0.8** 起逐步调大直到直线变直、且画面不再外凸 → 必要时再引入
+`zoom` 参数（`img.lens_corr(strength=…, zoom=0.9)`）压边角拉伸。**改完务必回看 `[perf] lens=`**
+（软件校正要耗 CPU，历史实测约 8ms/帧）。
+
+- `BUILD_ID = 2026-10-10-lens-off-v19`；门禁 **72 OK / 0 FAIL**；6 个测试脚本全过；单文件版已重生成。
 
 ## 当前能力与实测指标（v18 快照）
 

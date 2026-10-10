@@ -26,7 +26,7 @@ from vision.gimbal_aim import GimbalAim
 from vision.gimbal_self_test import GimbalSelfTest, probe_imu
 from vision.gimbal_calibrate import GimbalCalibrator, AutoCalibrate
 
-BUILD_ID = "2026-10-10-sync-display-v18"
+BUILD_ID = "2026-10-10-lens-off-v19"
 
 
 def _preview_loop(frames, ready, closing, elapsed, max_ms, shown, slow,
@@ -330,6 +330,13 @@ def main():
           "sync 路径在 MaixVision 一定能看到，async 依赖子进程建 Display"
           % (Config.SHOW, preview_mode))
     print("[rect-center] 四边窄带跟踪 / 失锁后低分辨率搜索 / 72 点逆投影")
+    # ★ 镜头畸变校正必须显式可见：它是**软件重映射**，会把整幅画面（含预览）非线性地改写，
+    #   未按实际镜头调好 strength 时，看起来就是"画面畸变/边缘拉伸"。检测与显示喂的是**同一张**校正图。
+    print("[lens] LENS_CORR=%s strength=%.2f —— %s" %
+          (Config.LENS_CORR, Config.LENS_STRENGTH,
+           "已对每帧做软件畸变校正（画面是矫正后的形态；若看起来畸变，置 False 或调小 strength）"
+           if Config.LENS_CORR else
+           "未做畸变校正，画面/检测均为原始帧（离线回归基线用的就是这一档）"))
     print("[aim] 闭环口径=%s（raw_u/raw_v）离群拒收=%spx 死区=%.1fpx 限幅=%dp" %
           ("raw" if aim_use_raw else "smoothed", Config.JUMP_REJECT_PX,
             Config.DEADBAND_PX, Config.MAX_STEP_PULSES))

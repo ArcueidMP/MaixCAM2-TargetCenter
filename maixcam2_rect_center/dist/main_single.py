@@ -10,9 +10,9 @@ main_single.py · 25E 靶心识别（轨道 B）—— 单文件自包含版
 用途：在 MaixVision 里点「运行当前文件」即可运行（不必用「运行项目」）。
       行为与模块化工程完全一致，输出也就完全一致。
 
-生成时间：2026-10-10 14:27:20
-    config.py                    sha1=00aaa5ba9ced
-    main.py                      sha1=662793fb69ae
+生成时间：2026-10-10 15:08:34
+    config.py                    sha1=bbb3ab8087ed
+    main.py                      sha1=726cbae2d077
     target_api.py                sha1=e334a5b938ac
     vision/gimbal_aim.py         sha1=9231e9b98ce5
     vision/gimbal_calibrate.py   sha1=819bd3980592
@@ -25,7 +25,7 @@ main_single.py · 25E 靶心识别（轨道 B）—— 单文件自包含版
 import sys as _sys
 import types as _types
 
-_SRC_SHA1 = {'config.py': '00aaa5ba9ced016cdceb23901dce5d99adc193e1', 'vision/rectangle_center.py': 'f779e749d2d853f982429c0a88a92b551bcbb46a', 'vision/laser_spot.py': 'd8d722904443201c539507baca6d69be668ade93', 'vision/gimbal_self_test.py': 'b21e1ea05d03c7cf760304a3b72d26ee4dae92a2', 'vision/gimbal_aim.py': '9231e9b98ce54a4015f7610256050a56cfb9a948', 'vision/stepper_link.py': 'c41fd48b7a2f45be83d8557f61ed35380ca3e006', 'vision/gimbal_calibrate.py': '819bd3980592796289004288d6e95fee5e9aa92f', 'target_api.py': 'e334a5b938ac1315d2111c16b90dd30467fc11f6', 'main.py': '662793fb69ae7ef28a4e4a0646b761de32acc2b0'}
+_SRC_SHA1 = {'config.py': 'bbb3ab8087ed999aca8db8f68cff95bb2e7b5dc4', 'vision/rectangle_center.py': 'f779e749d2d853f982429c0a88a92b551bcbb46a', 'vision/laser_spot.py': 'd8d722904443201c539507baca6d69be668ade93', 'vision/gimbal_self_test.py': 'b21e1ea05d03c7cf760304a3b72d26ee4dae92a2', 'vision/gimbal_aim.py': '9231e9b98ce54a4015f7610256050a56cfb9a948', 'vision/stepper_link.py': 'c41fd48b7a2f45be83d8557f61ed35380ca3e006', 'vision/gimbal_calibrate.py': '819bd3980592796289004288d6e95fee5e9aa92f', 'target_api.py': 'e334a5b938ac1315d2111c16b90dd30467fc11f6', 'main.py': '726cbae2d077cc9bed8450d3deef07dc538e6c2a'}
 
 # --------------------------------------------------------------------------
 # ① 各模块源码原样嵌入，运行时装进 sys.modules（保持原 import 语义）
@@ -41,7 +41,19 @@ class Config:
     CAMERA_FPS = 30
     CAMERA_BUFFERS = 2
     SKIP_FRAMES = 10
-    LENS_CORR = True
+    # ★★ 镜头畸变校正（`img.lens_corr(strength=…)`，**软件重映射**）★★
+    #   它是把整幅画面按径向重新采样 —— 既改检测用的图，也改 MaixVision 里看到的画面。
+    #   ⚠ 2026-10-10 由 True(1.5) 改为 **False**，原因有三：
+    #     ① `strength` 必须**按实际镜头**实测（官方口径："调 strength 直到画面不再畸变"）；
+    #        直接写 1.5 在非鱼眼镜头上属于**过校正** → 表现为画面外凸/边缘拉伸（现场反馈的"画面畸变"）。
+    #     ② 官方 `lens_corr(strength, zoom)` 的 `zoom` 默认 1.0，强校正会把**边角拉出黑边/拉伸**
+    #        （官方示例在 strength 2.1 时要用 zoom=0.9 规避）—— 本项目从未调过 zoom。
+    #     ③ **离线回归基线（29/30、0.803px、0 误检）是在"无校正"的合成图上测的**，
+    #        板上开校正等于让实际管线偏离已验证配置（测试无法覆盖这一层）。
+    #   何时才开：画面里**靶纸长边明显弯曲**（鱼眼/广角边缘）时，改 True 并把 `LENS_STRENGTH`
+    #   从 0.6~0.8 起逐步调大，直到直线变直、且不再外凸；必要时再引入 zoom 参数。
+    #   A 轨同样默认关（`LENS_CORR = False`，注释"边缘直线弯时再开"）。
+    LENS_CORR = False
     LENS_STRENGTH = 1.5
     SHOW = True
     # ★★ 显示通道选择（决定 MaixVision 能不能看到画面）★★
@@ -2868,7 +2880,7 @@ from vision.gimbal_aim import GimbalAim
 from vision.gimbal_self_test import GimbalSelfTest, probe_imu
 from vision.gimbal_calibrate import GimbalCalibrator, AutoCalibrate
 
-BUILD_ID = "2026-10-10-sync-display-v18"
+BUILD_ID = "2026-10-10-lens-off-v19"
 
 
 def _preview_loop(frames, ready, closing, elapsed, max_ms, shown, slow,
@@ -3172,6 +3184,13 @@ def main():
           "sync 路径在 MaixVision 一定能看到，async 依赖子进程建 Display"
           % (Config.SHOW, preview_mode))
     print("[rect-center] 四边窄带跟踪 / 失锁后低分辨率搜索 / 72 点逆投影")
+    # ★ 镜头畸变校正必须显式可见：它是**软件重映射**，会把整幅画面（含预览）非线性地改写，
+    #   未按实际镜头调好 strength 时，看起来就是"画面畸变/边缘拉伸"。检测与显示喂的是**同一张**校正图。
+    print("[lens] LENS_CORR=%s strength=%.2f —— %s" %
+          (Config.LENS_CORR, Config.LENS_STRENGTH,
+           "已对每帧做软件畸变校正（画面是矫正后的形态；若看起来畸变，置 False 或调小 strength）"
+           if Config.LENS_CORR else
+           "未做畸变校正，画面/检测均为原始帧（离线回归基线用的就是这一档）"))
     print("[aim] 闭环口径=%s（raw_u/raw_v）离群拒收=%spx 死区=%.1fpx 限幅=%dp" %
           ("raw" if aim_use_raw else "smoothed", Config.JUMP_REJECT_PX,
             Config.DEADBAND_PX, Config.MAX_STEP_PULSES))

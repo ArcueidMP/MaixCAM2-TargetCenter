@@ -5,7 +5,19 @@ class Config:
     CAMERA_FPS = 30
     CAMERA_BUFFERS = 2
     SKIP_FRAMES = 10
-    LENS_CORR = True
+    # ★★ 镜头畸变校正（`img.lens_corr(strength=…)`，**软件重映射**）★★
+    #   它是把整幅画面按径向重新采样 —— 既改检测用的图，也改 MaixVision 里看到的画面。
+    #   ⚠ 2026-10-10 由 True(1.5) 改为 **False**，原因有三：
+    #     ① `strength` 必须**按实际镜头**实测（官方口径："调 strength 直到画面不再畸变"）；
+    #        直接写 1.5 在非鱼眼镜头上属于**过校正** → 表现为画面外凸/边缘拉伸（现场反馈的"画面畸变"）。
+    #     ② 官方 `lens_corr(strength, zoom)` 的 `zoom` 默认 1.0，强校正会把**边角拉出黑边/拉伸**
+    #        （官方示例在 strength 2.1 时要用 zoom=0.9 规避）—— 本项目从未调过 zoom。
+    #     ③ **离线回归基线（29/30、0.803px、0 误检）是在"无校正"的合成图上测的**，
+    #        板上开校正等于让实际管线偏离已验证配置（测试无法覆盖这一层）。
+    #   何时才开：画面里**靶纸长边明显弯曲**（鱼眼/广角边缘）时，改 True 并把 `LENS_STRENGTH`
+    #   从 0.6~0.8 起逐步调大，直到直线变直、且不再外凸；必要时再引入 zoom 参数。
+    #   A 轨同样默认关（`LENS_CORR = False`，注释"边缘直线弯时再开"）。
+    LENS_CORR = False
     LENS_STRENGTH = 1.5
     SHOW = True
     # ★★ 显示通道选择（决定 MaixVision 能不能看到画面）★★
