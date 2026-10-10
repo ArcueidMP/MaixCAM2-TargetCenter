@@ -9,7 +9,25 @@
 | 轨 | 目录 | BUILD_ID | 状态 |
 |---|---|---|---|
 | A（DeepSeek） | 根 | `2026-10-05-r7` | 性能治理 + 抗抖跟踪已完成 |
-| B（名义 GPT） | `maixcam2_rect_center/` | `2026-10-10-sync-display-v18` | 黑框检测 + 光斑(fixed) + 双轴云台闭环 + 自检后免标定直接追踪（见 `B轨云台调参手册.md`） |
+| B（名义 GPT） | `maixcam2_rect_center/` | `2026-10-08-target-api-v3` | **已整轨回退到 v3 基线**（10-10 23:2x，committed `0f139b1`，用户指令"回退到 v9 之前重新调试"）—— 见下方 ★ |
+
+- ★ **B 轨回退定案（10-10）**：**git 里不存在 v9 快照**（`track-curve-v9` 是被外部进程覆写的未入库中间态；
+  提交从 `b32cd08(v3)` 直接跳到 `v14`）。用户改选「回退到 v9 前最后一个提交 = `b32cd08`」。
+  应用源码 + v3 测试已回退（保留 build 工具/文档），`dist` 重建，门禁 72 OK/0 FAIL、性能 29/30。
+  **安全分支 `backup/b-track-v20-pre-v9-rollback`（=`2a08703`）可一键还原。**
+  ⚠ 回退后**轴映射/方向是 v3 旧值**（`ttyS1`=yaw 无引脚、`ttyS0` 未用、`DIR_SIGN=+1/+1`，均未经 v8 实测校正），
+  且用 `ACC_DEFAULT=0`（无曲线）、无上电自检优先/SyncPreview/LENS_CORR/帧率计量修复 —— **上板前必须重核标定**。
+  ⚠ `tools/apply_gimbal_track_patch.py` 与 `tools/git_round.py` 是 v9+ 专用，对 v3 代码会误报/挡提交，**勿运行**。
+
+- B 轨 v20（10-10）：**帧率"虚假显示 + 过低"定案修复**。根因 = 屏幕叠加的 `FPS` 曾画的是
+  **主循环速率**（`1/EMA(主循环dt)`），而显示被 `can_submit()` 节流、"多数帧只算不画"，
+  那一两个 150-500ms 的 show 帧被大量 ~5ms 跳过帧稀释 → EMA 虚高到上百，眼睛却只看到 ≈1fps。
+  **日志侧口径本来就是对的**（`[perf] FPS=`=主循环 vs `[preview] 实测显示 FPS=`=shown/窗口），
+  错的是**屏幕文字没分口径**。修法：屏幕改画 0.5s 窗口实测显示帧率（格式 `FPS <disp> loop <loop>`）。
+  另"过低"来自 `SyncPreview` 慢帧降速：恢复阈值过硬（`<0.5×SHOW_SLOW_MS`=40ms，真机几乎不满足）
+  且下限 `SHOW_SLOW_MIN_FPS=1.0` → 一旦降速长期钉在 1fps。改为 0.8×/步进 0.7、下限 2.0。
+  **⚠ 改 BUILD_ID 必须同步 `tools/apply_gimbal_track_patch.py` 的 `LATEST_BUILD`**，否则 `git_round --check` 报缺项。
+  commit `2a08703`；门禁 72 OK/0 FAIL。
 
 - B 轨 v18（10-10）：**MaixVision 看不到画面 = 代码问题（v16 架构缺陷）已修**。v16 把 `Display()` 放进
   **spawn 子进程**（`AsyncPreview`）；`can_submit()` = `ready 置位 and 子进程存活`，而 `ready` 只在子进程
