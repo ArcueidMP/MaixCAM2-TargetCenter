@@ -7,6 +7,33 @@
 > 只想临时试参数时，也可以先 `python tools/build_single.py` 生成 `dist/main_single.py`，
 > 再用「运行当前文件」—— 那是自包含的单文件版，语义与分模块完全一致。改了源码记得重新生成。
 
+## 当前能力与实测指标（v18 快照）
+
+| 能力 | 现状 | 依据（可复跑） |
+|---|---|---|
+| **视频流畅度** | 主进程内显示、按 `SHOW_FPS=10` 限频；图传慢时**自动降速**（下限 `SHOW_SLOW_MIN_FPS=1.0`），不再冻结、不再拖死主循环；显示帧率**可实测** | `[preview] 实测显示 FPS=… show_max=…`、`[perf-max] show=` |
+| **黑框锁定** | 30 个透视/光照场景**检出 29**（仅 fixture#2 强反光属安全失败）；**5 个反例 0 误检**；运动/暂时失锁后可**自动重捕获** | `test_performance`：`detected=29/30`、`false_positives=0`、`reacquired=True` |
+| **中心追踪** | 稳态**最大中心误差 0.803px**；运动中最大 0.637px；锁定态单帧检测 0.72ms(PC) / ≈31ms(板端) | `test_performance`：`max_center_error_px=0.803`、`optimized {median 0.72ms}` |
+| **云台顺滑** | 有限运动模型：**12 条命令收敛到 2.74px、1.26s、无命令重叠**；急停/换向/失锁即时收缩 | `test_gimbal_aim`：`smooth finite-motion: commands=12 final=2.74px time=1.26s` |
+| **低通滤波** | 测量侧 `CENTER_ALPHA=0.70`（因 `AIM_USE_RAW=True` **只作用于显示**）；**环内唯一低通 = 输出侧** `AIM_OUTPUT_LPF_TAU_S=0.10s` + 增长限速 `AIM_OUTPUT_SLEW_PPS=400` | `vision/gimbal_aim.py::_filter_output` |
+| **速度曲线** | 闭环 `ACC_TRACK=160`（**非 0 = 走曲线加减速**；短行程自动退化为三角曲线）；自检/标定用 `RPM 60 / ACC 60` | `config.py`「追踪手感」组 |
+
+> 复跑一行命令：`check_app --manifest`（门禁 72 OK）、`test_performance`（上表第 2/3 行）、
+> `test_gimbal_aim`（第 4 行）、`test_runtime_performance`（第 1 行 + 显示隔离）。
+
+## 工作区体积治理（`tools/clean_artifacts.py`）
+
+B 轨的调试抓屏（`tools/e2e_report/*.png`）会随每次 e2e 审查快速堆积（实测数小时内 4.7M→9.6M）。
+统一用清理器回收，**默认只扫描**：
+
+```bash
+"D:/Python311/python.exe" -B tools/clean_artifacts.py           # 扫描（打印清单与体积）
+"D:/Python311/python.exe" -B tools/clean_artifacts.py --apply   # 删除，并核对是否在 5MB 上限内
+```
+
+只删**可再生 / 已被 `.gitignore` 忽略**的产物（e2e 抓屏、`__pycache__`、`screenshot*/frame*/mask*/debug_*.png`）；
+**保留** `tools/negative_e421.png`、`negative_e880.png`（测试输入固件）、e2e 报告 HTML/json、全部源码与文档。
+
 ## 2026-10-10 改动⑩：恢复「主进程内显示」——修 MaixVision 看不到画面（`-sync-display-v18`）
 
 **现场现象**：运行当前版本后，**MaixVision 看不到摄像头画面**（预览面板无数据/全黑）。

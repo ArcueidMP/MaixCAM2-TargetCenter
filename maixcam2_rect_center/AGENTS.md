@@ -245,6 +245,12 @@ dist 与 `main.py` 的 `BUILD_ID` 是否一致），确认没有半新半旧。
    （`SELF_TEST_ACC` / `ACC_TRACK`），且 **acc 越小越柔**。
 6. **标定依赖视觉会阻塞**：抬头后黑框出视野 → 卡在等 `dv`。已加 `CALIBRATE_VISUAL_TIMEOUT_S` 快速失败。
 7. **`app.yaml` 的 `exclude` 漏目录** → 文档/嵌套目录混进应用包；改完核 `check_app.py --manifest`。
+8. **调试抓屏会迅速堆爆工作区**（`tools/e2e_report/*.png` 实测数小时内 4.7M→9.6M）→
+   定期跑 `"D:/Python311/python.exe" -B tools/clean_artifacts.py`（扫描）/ `--apply`（删除），
+   目标保持 B 轨目录 **≤5MB**。该脚本只删可再生/已忽略产物，**保留 `negative_e*.png` 测试固件**。
+9. **`Display()` 放进子进程 = MaixVision 可能完全看不到画面**（`SHOW_ASYNC=True` 的未验证用法：
+   子进程起不来就 `can_submit()` 恒 False，一帧都不画且无报错）。默认必须走 `SHOW_ASYNC=False`
+   的主进程内路径；排查先看启动日志 `[preview] mode=sync-inprocess`。
 
 ---
 
