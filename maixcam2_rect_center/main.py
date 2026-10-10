@@ -26,7 +26,7 @@ from vision.gimbal_aim import GimbalAim
 from vision.gimbal_self_test import GimbalSelfTest, probe_imu
 from vision.gimbal_calibrate import GimbalCalibrator, AutoCalibrate
 
-BUILD_ID = "2026-10-10-lens-off-v19"
+BUILD_ID = "2026-10-10-fps-honest-v20"
 
 
 def _preview_loop(frames, ready, closing, elapsed, max_ms, shown, slow,
@@ -165,9 +165,11 @@ class SyncPreview:
                 print("[preview] ⚠ show=%.0fms 偏慢 -> 显示节拍自动降到 %.1ffps（MaixVision 图传瓶颈）"
                       "；需要主循环完全不受显示影响可设 SHOW_ASYNC=True，不需要预览可设 SHOW=False"
                       % (show_ms, 1.0 / self._period), flush=True)
-        elif show_ms < self._slow_ms * 0.5:
-            # 恢复：节拍逐步回到目标帧率。
-            self._period = max(self._base_period, self._period * 0.9)
+        elif show_ms < self._slow_ms * 0.8:
+            # 恢复：图传回到"明显不慢"（< 0.8×阈值）即较快回落到目标帧率。
+            # 旧阈值 0.5×(=40ms) 在真机 MaixVision 上几乎不满足 → 一旦降速就长期钉在最低帧率
+            # （现场"帧率过低"的来源之一）。0.7 的步进也让恢复更快。
+            self._period = max(self._base_period, self._period * 0.7)
         # 下一次显示 = 现在 + (目标周期 − 本次 show 耗时)，实际帧率才真正贴近目标。
         self._next = time.perf_counter() + max(0.0, self._period - show_ms / 1000.0)
         return True
@@ -319,6 +321,12 @@ def main():
     # 每个阶段的本窗口**最大值**：均值会掩盖"某一帧突然卡 500ms"这类卡顿。
     maxima = {k: 0.0 for k in totals}
     shown_prev = 0
+    # ★ 屏幕叠加用的**实测显示帧率**：与主循环速率分开统计，0.5s 短窗口刷新。
+    #   旧版 putText 直接画主循环 fps —— 由于多数帧只算不画，该值被快帧拉高（虚高到上百），
+    #   而眼睛看到的刷新率可能只有 1~2fps。此处改画"窗口内真正 show 成功的帧数 / 时间"。
+    disp_fps = 0.0
+    disp_t = last
+    disp_shown0 = 0
     count, searches = 0, 0
     laser_state = laser_det.static_state() if laser_static else None
     laser_ms, laser_calls, laser_hits = 0.0, 0, 0
@@ -447,14 +455,22 @@ def main():
         aim_elapsed = time.perf_counter() - aim_started
         after_aim = time.perf_counter()
         if preview is not None and preview.can_submit():
+            # 屏幕上的 FPS = **实测显示帧率**（0.5s 窗口）；loop = 主循环速率，二者分开标注，
+            # 不再把"主循环跑得快"当成"画面刷新快"。
+            disp_now = time.perf_counter()
+            if disp_now - disp_t >= 0.5:
+                cur_shown = _stat(preview, "shown")
+                disp_fps = (cur_shown - disp_shown0) / max(1e-6, disp_now - disp_t)
+                disp_shown0, disp_t = cur_shown, disp_now
             view = draw_result(gray, result, Config.SHOW_WIDTH,
                                top_offset=PANEL_H if laser_state is not None else 0)
             if laser_state is not None:
                 draw_laser_overlay(view, laser_state, result,
                                    min(1.0, float(Config.SHOW_WIDTH) / gray.shape[1]),
                                    use_raw=aim_use_raw)
-            cv2.putText(view, "FPS %.1f" % fps, (12, view.shape[0] - 12),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2)
+            cv2.putText(view, "FPS %.1f loop %.0f" % (disp_fps, fps),
+                        (12, view.shape[0] - 12),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
             preview.submit(view)
         after_show = time.perf_counter()
         now = after_show

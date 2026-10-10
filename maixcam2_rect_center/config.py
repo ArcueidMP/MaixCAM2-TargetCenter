@@ -35,7 +35,9 @@ class Config:
     SHOW_FPS = 10
     # 同步显示在"图传变慢"时的自动最低帧率：show 越慢，节拍越慢（最多降到这个值），
     # 保证主循环不被 0.5s 级的 show 拖死，同时画面仍然会更新。
-    SHOW_SLOW_MIN_FPS = 1.0
+    # ★ 2026-10-10 由 1.0 提到 2.0：真机 MaixVision 图传常 >80ms，下限 1.0 时画面会**长期停在
+    #   1fps**（现场"帧率过低"的主因之一）。2.0 下 show≈150ms 时显示仅占主循环约 30%，仍安全。
+    SHOW_SLOW_MIN_FPS = 2.0
     # Display.show 含 MaixVision 图传，网络超时可能阻塞 500ms。
     SHOW_SLOW_MS = 80.0
     # ★ 慢帧的额外退避（秒）：仅 `SHOW_ASYNC=True` 的子进程路径使用（只补一点点）。

@@ -10,9 +10,9 @@ main_single.py · 25E 靶心识别（轨道 B）—— 单文件自包含版
 用途：在 MaixVision 里点「运行当前文件」即可运行（不必用「运行项目」）。
       行为与模块化工程完全一致，输出也就完全一致。
 
-生成时间：2026-10-10 15:08:34
-    config.py                    sha1=bbb3ab8087ed
-    main.py                      sha1=726cbae2d077
+生成时间：2026-10-10 23:14:52
+    config.py                    sha1=084360a01ed2
+    main.py                      sha1=3082f43b61a9
     target_api.py                sha1=e334a5b938ac
     vision/gimbal_aim.py         sha1=9231e9b98ce5
     vision/gimbal_calibrate.py   sha1=819bd3980592
@@ -25,7 +25,7 @@ main_single.py · 25E 靶心识别（轨道 B）—— 单文件自包含版
 import sys as _sys
 import types as _types
 
-_SRC_SHA1 = {'config.py': 'bbb3ab8087ed999aca8db8f68cff95bb2e7b5dc4', 'vision/rectangle_center.py': 'f779e749d2d853f982429c0a88a92b551bcbb46a', 'vision/laser_spot.py': 'd8d722904443201c539507baca6d69be668ade93', 'vision/gimbal_self_test.py': 'b21e1ea05d03c7cf760304a3b72d26ee4dae92a2', 'vision/gimbal_aim.py': '9231e9b98ce54a4015f7610256050a56cfb9a948', 'vision/stepper_link.py': 'c41fd48b7a2f45be83d8557f61ed35380ca3e006', 'vision/gimbal_calibrate.py': '819bd3980592796289004288d6e95fee5e9aa92f', 'target_api.py': 'e334a5b938ac1315d2111c16b90dd30467fc11f6', 'main.py': '726cbae2d077cc9bed8450d3deef07dc538e6c2a'}
+_SRC_SHA1 = {'config.py': '084360a01ed2591a1997330abe61f3f41074bef5', 'vision/rectangle_center.py': 'f779e749d2d853f982429c0a88a92b551bcbb46a', 'vision/laser_spot.py': 'd8d722904443201c539507baca6d69be668ade93', 'vision/gimbal_self_test.py': 'b21e1ea05d03c7cf760304a3b72d26ee4dae92a2', 'vision/gimbal_aim.py': '9231e9b98ce54a4015f7610256050a56cfb9a948', 'vision/stepper_link.py': 'c41fd48b7a2f45be83d8557f61ed35380ca3e006', 'vision/gimbal_calibrate.py': '819bd3980592796289004288d6e95fee5e9aa92f', 'target_api.py': 'e334a5b938ac1315d2111c16b90dd30467fc11f6', 'main.py': '3082f43b61a98e005684c245b788b8df16fb3a49'}
 
 # --------------------------------------------------------------------------
 # ① 各模块源码原样嵌入，运行时装进 sys.modules（保持原 import 语义）
@@ -71,7 +71,9 @@ class Config:
     SHOW_FPS = 10
     # 同步显示在"图传变慢"时的自动最低帧率：show 越慢，节拍越慢（最多降到这个值），
     # 保证主循环不被 0.5s 级的 show 拖死，同时画面仍然会更新。
-    SHOW_SLOW_MIN_FPS = 1.0
+    # ★ 2026-10-10 由 1.0 提到 2.0：真机 MaixVision 图传常 >80ms，下限 1.0 时画面会**长期停在
+    #   1fps**（现场"帧率过低"的主因之一）。2.0 下 show≈150ms 时显示仅占主循环约 30%，仍安全。
+    SHOW_SLOW_MIN_FPS = 2.0
     # Display.show 含 MaixVision 图传，网络超时可能阻塞 500ms。
     SHOW_SLOW_MS = 80.0
     # ★ 慢帧的额外退避（秒）：仅 `SHOW_ASYNC=True` 的子进程路径使用（只补一点点）。
@@ -2880,7 +2882,7 @@ from vision.gimbal_aim import GimbalAim
 from vision.gimbal_self_test import GimbalSelfTest, probe_imu
 from vision.gimbal_calibrate import GimbalCalibrator, AutoCalibrate
 
-BUILD_ID = "2026-10-10-lens-off-v19"
+BUILD_ID = "2026-10-10-fps-honest-v20"
 
 
 def _preview_loop(frames, ready, closing, elapsed, max_ms, shown, slow,
@@ -3019,9 +3021,11 @@ class SyncPreview:
                 print("[preview] ⚠ show=%.0fms 偏慢 -> 显示节拍自动降到 %.1ffps（MaixVision 图传瓶颈）"
                       "；需要主循环完全不受显示影响可设 SHOW_ASYNC=True，不需要预览可设 SHOW=False"
                       % (show_ms, 1.0 / self._period), flush=True)
-        elif show_ms < self._slow_ms * 0.5:
-            # 恢复：节拍逐步回到目标帧率。
-            self._period = max(self._base_period, self._period * 0.9)
+        elif show_ms < self._slow_ms * 0.8:
+            # 恢复：图传回到"明显不慢"（< 0.8×阈值）即较快回落到目标帧率。
+            # 旧阈值 0.5×(=40ms) 在真机 MaixVision 上几乎不满足 → 一旦降速就长期钉在最低帧率
+            # （现场"帧率过低"的来源之一）。0.7 的步进也让恢复更快。
+            self._period = max(self._base_period, self._period * 0.7)
         # 下一次显示 = 现在 + (目标周期 − 本次 show 耗时)，实际帧率才真正贴近目标。
         self._next = time.perf_counter() + max(0.0, self._period - show_ms / 1000.0)
         return True
@@ -3173,6 +3177,12 @@ def main():
     # 每个阶段的本窗口**最大值**：均值会掩盖"某一帧突然卡 500ms"这类卡顿。
     maxima = {k: 0.0 for k in totals}
     shown_prev = 0
+    # ★ 屏幕叠加用的**实测显示帧率**：与主循环速率分开统计，0.5s 短窗口刷新。
+    #   旧版 putText 直接画主循环 fps —— 由于多数帧只算不画，该值被快帧拉高（虚高到上百），
+    #   而眼睛看到的刷新率可能只有 1~2fps。此处改画"窗口内真正 show 成功的帧数 / 时间"。
+    disp_fps = 0.0
+    disp_t = last
+    disp_shown0 = 0
     count, searches = 0, 0
     laser_state = laser_det.static_state() if laser_static else None
     laser_ms, laser_calls, laser_hits = 0.0, 0, 0
@@ -3301,14 +3311,22 @@ def main():
         aim_elapsed = time.perf_counter() - aim_started
         after_aim = time.perf_counter()
         if preview is not None and preview.can_submit():
+            # 屏幕上的 FPS = **实测显示帧率**（0.5s 窗口）；loop = 主循环速率，二者分开标注，
+            # 不再把"主循环跑得快"当成"画面刷新快"。
+            disp_now = time.perf_counter()
+            if disp_now - disp_t >= 0.5:
+                cur_shown = _stat(preview, "shown")
+                disp_fps = (cur_shown - disp_shown0) / max(1e-6, disp_now - disp_t)
+                disp_shown0, disp_t = cur_shown, disp_now
             view = draw_result(gray, result, Config.SHOW_WIDTH,
                                top_offset=PANEL_H if laser_state is not None else 0)
             if laser_state is not None:
                 draw_laser_overlay(view, laser_state, result,
                                    min(1.0, float(Config.SHOW_WIDTH) / gray.shape[1]),
                                    use_raw=aim_use_raw)
-            cv2.putText(view, "FPS %.1f" % fps, (12, view.shape[0] - 12),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2)
+            cv2.putText(view, "FPS %.1f loop %.0f" % (disp_fps, fps),
+                        (12, view.shape[0] - 12),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 2)
             preview.submit(view)
         after_show = time.perf_counter()
         now = after_show
