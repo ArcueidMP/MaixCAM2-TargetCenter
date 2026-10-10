@@ -10,11 +10,11 @@ main_single.py · 25E 靶心识别（轨道 B）—— 单文件自包含版
 用途：在 MaixVision 里点「运行当前文件」即可运行（不必用「运行项目」）。
       行为与模块化工程完全一致，输出也就完全一致。
 
-生成时间：2026-10-10 00:51:56
-    config.py                    sha1=f4a153a0eea5
-    main.py                      sha1=0d302e51ecfc
-    target_api.py                sha1=e130d6a4d3a3
-    vision/gimbal_aim.py         sha1=f101f299e842
+生成时间：2026-10-10 08:38:18
+    config.py                    sha1=24c12f3cb7ba
+    main.py                      sha1=e981307f6386
+    target_api.py                sha1=bd7c9d2de759
+    vision/gimbal_aim.py         sha1=67c5bc83a689
     vision/gimbal_calibrate.py   sha1=819bd3980592
     vision/gimbal_self_test.py   sha1=b21e1ea05d03
     vision/laser_spot.py         sha1=d8d722904443
@@ -25,7 +25,7 @@ main_single.py · 25E 靶心识别（轨道 B）—— 单文件自包含版
 import sys as _sys
 import types as _types
 
-_SRC_SHA1 = {'config.py': 'f4a153a0eea588b6a2a6165f747bcac71fb75ac0', 'vision/rectangle_center.py': '173cbdfeb6a4ea3ed2b36726a7cea5db62e9d954', 'vision/laser_spot.py': 'd8d722904443201c539507baca6d69be668ade93', 'vision/gimbal_aim.py': 'f101f299e8429831358b9df2a6fddb59562a0067', 'vision/gimbal_self_test.py': 'b21e1ea05d03c7cf760304a3b72d26ee4dae92a2', 'vision/stepper_link.py': '78063da605ca1abcb6248ca1b4801ccc1c5298ce', 'vision/gimbal_calibrate.py': '819bd3980592796289004288d6e95fee5e9aa92f', 'target_api.py': 'e130d6a4d3a32214577cb690424973c5a5543804', 'main.py': '0d302e51ecfc8c181ff26183c6cedb34d94f884e'}
+_SRC_SHA1 = {'config.py': '24c12f3cb7bac0fa488b6160a304d374876d23ec', 'vision/rectangle_center.py': '173cbdfeb6a4ea3ed2b36726a7cea5db62e9d954', 'vision/laser_spot.py': 'd8d722904443201c539507baca6d69be668ade93', 'vision/gimbal_self_test.py': 'b21e1ea05d03c7cf760304a3b72d26ee4dae92a2', 'vision/gimbal_aim.py': '67c5bc83a689fe4b5888ab18bb1c21774f96b4cf', 'vision/stepper_link.py': '78063da605ca1abcb6248ca1b4801ccc1c5298ce', 'vision/gimbal_calibrate.py': '819bd3980592796289004288d6e95fee5e9aa92f', 'target_api.py': 'bd7c9d2de759be2e91a92d042412b96a98ea88cb', 'main.py': 'e981307f6386520c2c057ea091f3f8368cda1e4b'}
 
 # --------------------------------------------------------------------------
 # ① 各模块源码原样嵌入，运行时装进 sys.modules（保持原 import 语义）
@@ -117,12 +117,20 @@ class Config:
     #    acc=0 会让位置模式**瞬时启停**（急停瞬间激光会晃开），故用 ACC_TRACK。
     RPM_FINE = 60
     RPM_COARSE = 150
-    ACC_TRACK = 200        # 非 0 = 走曲线加减速；acc 越小越柔
+    ACC_TRACK = 80         # 非 0 = 走曲线加减速；acc 越小越柔
     ACC_DEFAULT = 0        # 仅其它机会性发帧用；闭环追踪请用 ACC_TRACK
     # ⑤ 死区与单帧限幅：死区应 ≥1.5×实测回差（齿隙里来回抖）；限幅防单帧猛甩。
     DEADBAND_PX = 3.0
-    MAX_STEP_PULSES = 150
+    MAX_STEP_PULSES = 60
     COMMAND_INTERVAL_S = 0.10
+    # 对最终运动量滤波：增大时缓慢跟随，减小/进入死区/换向时立即收缩，避免低通拖尾。
+    # 时间常数越大越柔（0 = 关闭低通）；同时限制每秒运动量增长，0 = 关闭增长限速。
+    AIM_OUTPUT_LPF_TAU_S = 0.25
+    AIM_OUTPUT_SLEW_PPS = 120.0
+    # 下一条相对位置命令等上一段曲线运动的估算时间 + 余量，避免覆盖尚未完成的命令。
+    # 这是时间估算，不是驱动器到位反馈；机构慢时可增大余量。
+    AIM_WAIT_MOTION = True
+    AIM_MOTION_MARGIN_S = 0.03
     # 兼容旧口径 / 标定输出：**仅当上面 DEG_PER_PX_x = 0 时**才回退到这里。
     # CALIBRATE_AXIS 实测完会把脉冲/像素写回这两个（可在日志里反算 DEG_PER_PX 填回 ①）。
     PULSE_PER_PX_YAW = 0.0
@@ -1038,277 +1046,6 @@ def draw_laser_overlay(canvas, laser, result=None, scale=1.0, use_raw=False):
     return PANEL_H
 '''
 
-# ===== vision.gimbal_aim  (vision/gimbal_aim.py) =====
-_MOD_SRC['vision.gimbal_aim'] = r'''
-"""基于像素误差的两轴增量比例控制器 + 状态机。
-
-对照 `MaixCAM2串口直控云台需求文档.md` §7 实现：
-
-- 闭环输入 = ``result["dx"]/["dy"]``（靶心 − 光斑，见 ``laser_spot.deviation``）；
-- 每帧只发一帧**相对位置**命令（0xFD、mode=0），单帧脉冲限幅，``acc=0``（增量闭环）；
-- 状态机 ``BOOT / COARSE / FINE / SETTLE / HOLD / SCAN / FAULT``；
-- 三重保护：离群拒收（``JUMP_REJECT_PX``）、死区（``DEADBAND_PX``）、指令限频
-  （``COMMAND_INTERVAL_S``）、单帧限幅（``MAX_STEP_PULSES``）。
-
-本模块**保持纯 Python（不 import maix）**，可在 PC 上离线仿真与回归。
-控制律可整体替换：``controller(axis, error_px, now) -> 带符号脉冲数``，传 None 用内置比例律。
-"""
-
-# 状态语义（给日志和上层判断用）
-BOOT = "BOOT"        # 上电，等第一帧合法误差
-COARSE = "COARSE"    # 大误差，大步快速逼近
-FINE = "FINE"        # 小误差，小步逼近
-SETTLE = "SETTLE"    # 进入死区，停止发指令
-HOLD = "HOLD"        # 视觉失效，保持不动
-SCAN = "SCAN"        # 失锁后慢扫重捕获（需 ENABLE_SCAN）
-FAULT = "FAULT"      # 链路/机械故障，停机不再发指令
-UNCALIBRATED = "UNCALIBRATED"  # 未标定 PULSE_PER_PX/DIR_SIGN，闭环锁定、只出视觉结果
-
-
-class GimbalAim:
-    def __init__(self, cfg, controller=None):
-        self.cfg = cfg
-        self.controller = controller
-        self.state = BOOT
-        self.fault_reason = None
-        self.last_command_time = {"yaw": -1e9, "pitch": -1e9}
-        self.last = {"state": self.state, "dx": None, "dy": None,
-                     "cmds": {"yaw": None, "pitch": None}}
-        self._jump = {"yaw": 0, "pitch": 0}
-        self._lost = 0
-        self._settle = 0
-        self._scan_dir = 1
-        self._scan_pos = 0
-        # 安全闸：未完成开环标定时禁止发电机指令。PULSE_PER_PX_*/DIR_SIGN_* 若还是占位值，
-        # 直接闭环可能正反馈甩头（README §四）。标定完把 GIMBAL_CALIBRATED=True 解锁。
-        self.require_calibration = bool(getattr(cfg, "AIM_REQUIRE_CALIBRATION", False))
-        self.calibrated = bool(getattr(cfg, "GIMBAL_CALIBRATED", False))
-        self.locked = self.require_calibration and not self.calibrated
-        if self.locked:
-            self.state = UNCALIBRATED
-            print("[aim] 未标定：闭环已锁定（只输出视觉结果，不发电机指令）")
-            print("[aim] 先跑 CALIBRATE_AXIS 标定 PULSE_PER_PX_*/DIR_SIGN_*，再置 GIMBAL_CALIBRATED=True")
-        # ★ 发散看护：一直发指令却始终不收敛（误差反而变大）= 方向反了（正反馈）
-        #   -> 自动 FAULT 停机，避免云台一路冲到底。详见 `_guard_check()`。
-        self._guard_on = bool(getattr(cfg, "DIVERGE_GUARD", False))
-        self._guard_frames = int(getattr(cfg, "DIVERGE_FRAMES", 30))
-        self._guard_ratio = float(getattr(cfg, "DIVERGE_RATIO", 1.5))
-        self._guard_n = 0
-        self._guard_min = None
-
-    # ------------------------------------------------------------- 外部接口
-    def set_controller(self, controller):
-        """设置后续 PID/前馈控制器；传入 None 恢复内置比例律。"""
-        self.controller = controller
-
-    def fault(self, reason):
-        """进入 FAULT：不再发任何指令，由上层决定是否复位。"""
-        self.state = FAULT
-        self.fault_reason = str(reason)
-        print("[aim] FAULT: %s" % self.fault_reason)
-        return self.state
-
-    def unlock(self, reason="calibrated"):
-        """标定完成 -> 解除未标定锁，允许发电机指令。返回是否真的发生了状态变化。
-
-        由 ``AutoCalibrate`` 在两轴全部标定成功后调用。只有在
-        ``AIM_REQUIRE_CALIBRATION=True`` 且 ``GIMBAL_CALIBRATED=False`` 时才处于锁定态，
-        因此重复调用是幂等的（第二次返回 False）。
-        """
-        if not self.locked:
-            return False
-        self.locked = False
-        self.calibrated = True
-        if self.state == UNCALIBRATED:
-            self.state = BOOT
-        self.fault_reason = None
-        self._lost = self._settle = self._scan_pos = 0
-        self._scan_dir = 1
-        self._jump = {"yaw": 0, "pitch": 0}
-        self.last_command_time = {"yaw": -1e9, "pitch": -1e9}
-        print("[aim] 闭环解锁（%s）：PULSE_PER_PX_*/DIR_SIGN_* 已按实测值写入，开始跟踪" % reason)
-        return True
-
-    def reset(self):
-        self.state = UNCALIBRATED if self.locked else BOOT
-        self.fault_reason = None
-        self._lost = self._settle = self._scan_pos = 0
-        self._scan_dir = 1
-        self._jump = {"yaw": 0, "pitch": 0}
-        self.last_command_time = {"yaw": -1e9, "pitch": -1e9}
-        self._guard_n = 0
-        self._guard_min = None
-        return self.state
-
-    def update(self, result, now=0.0):
-        """输入视觉 result，返回 ``cmds``；无效结果按状态机处理（HOLD / SCAN）。"""
-        now = float(now)
-        if self.locked:
-            valid = bool(result and result.get("aim_valid") and
-                         result.get("dx") is not None and result.get("dy") is not None)
-            dx = float(result["dx"]) if valid else None
-            dy = float(result["dy"]) if valid else None
-            self.state = UNCALIBRATED
-            return self._emit(dx, dy, {"yaw": None, "pitch": None})
-        if self.state == FAULT:
-            return self._emit(None, None, {"yaw": None, "pitch": None})
-        valid = bool(result and result.get("aim_valid") and
-                     result.get("dx") is not None and result.get("dy") is not None)
-        if not valid:
-            return self._on_lost(now)
-        dx, dy = float(result["dx"]), float(result["dy"])
-        self._lost = 0
-        self._scan_pos = 0
-        deadband = self._deadband()
-        if abs(dx) <= deadband and abs(dy) <= deadband:
-            self._settle += 1
-            self.state = SETTLE
-            return self._emit(dx, dy, {"yaw": None, "pitch": None})
-        self._settle = 0
-        # 发散看护：只在"确实要发指令"时检查（死区内已提前 return，不参与判断）。
-        if self._guard_check(max(abs(dx), abs(dy))):
-            return self._emit(dx, dy, {"yaw": None, "pitch": None})
-        coarse_px = float(getattr(self.cfg, "COARSE_PX", 0.0))
-        self.state = COARSE if (coarse_px > 0 and max(abs(dx), abs(dy)) > coarse_px) else FINE
-        cmds = {"yaw": self._axis_command("yaw", dx, now),
-                "pitch": self._axis_command("pitch", dy, now)}
-        return self._emit(dx, dy, cmds)
-
-    def status_line(self):
-        def fmt(cmd):
-            if not cmd:
-                return "-"
-            return ("CCW" if cmd[0] else "CW") + "/%dp" % cmd[1]
-        return "[aim] state=%s dx=%s dy=%s yaw=%s pit=%s lost=%d" % (
-            self.last.get("state", self.state), self.last.get("dx"), self.last.get("dy"),
-            fmt(self.last.get("cmds", {}).get("yaw")),
-            fmt(self.last.get("cmds", {}).get("pitch")), self._lost)
-
-    # ------------------------------------------------------------- 内部实现
-    def _emit(self, dx, dy, cmds):
-        out = {"state": self.state, "dx": dx, "dy": dy, "cmds": cmds}
-        self.last = out
-        return out
-
-    def _deadband(self):
-        return float(getattr(self.cfg, "DEADBAND_PX", 2.0))
-
-    def _guard_check(self, err_abs):
-        """发散看护：判断"一直在发指令却始终不收敛"，是则置 FAULT。
-
-        判据：观察窗内记录 |误差| 的**最小值**；窗口满之后若当前值涨到 `最小值 × DIVERGE_RATIO`
-        以上，说明"追了这么久反而更偏"，与收敛的预期相反 —— 多半是 `DIR_SIGN_*` 反了。
-        误差每次创出新低就重新计数，因此正常波动/正常收敛不会被误判。
-        """
-        if not self._guard_on:
-            return False
-        if self._guard_min is None or err_abs < self._guard_min:
-            self._guard_min = err_abs
-            self._guard_n = 0
-            return False
-        self._guard_n += 1
-        if self._guard_n < self._guard_frames:
-            return False
-        if self._guard_min > 0 and err_abs >= self._guard_min * self._guard_ratio:
-            self.fault("diverge(|误差| 从 %.1fpx 涨到 %.1fpx，趋势不收敛 -> 检查 DIR_SIGN_*)"
-                       % (self._guard_min, err_abs))
-            return True
-        self._guard_n = 0
-        return False
-
-    def _on_lost(self, now):
-        self._lost += 1
-        self._settle = 0
-        scan_on = bool(getattr(self.cfg, "ENABLE_SCAN", False))
-        if scan_on and self._lost >= int(getattr(self.cfg, "LOST_FRAMES", 15)):
-            self.state = SCAN
-            cmd = self._scan_command("yaw", now)
-            return self._emit(None, None, {"yaw": cmd, "pitch": None})
-        self.state = HOLD
-        return self._emit(None, None, {"yaw": None, "pitch": None})
-
-    def _gain(self, axis, error):
-        cfg = self.cfg
-        fine = float(getattr(cfg, "GAIN_YAW" if axis == "yaw" else "GAIN_PITCH", 0.5))
-        coarse_px = float(getattr(cfg, "COARSE_PX", 0.0))
-        if coarse_px > 0 and abs(error) > coarse_px:
-            return float(getattr(cfg, "GAIN_COARSE", min(1.0, fine * 1.8)))
-        return fine
-
-    def _pulse_per_px(self, axis):
-        """像素 -> 脉冲 的换算系数，也是"调节激烈程度"的总闸门。
-
-        取值优先级（现场调参入口见 `config.py` 的「★ 追踪手感」）：
-          ① `DEG_PER_PX_x × PULSES_PER_DEG_x` —— **手感宏，推荐**（每像素多少度 × 每度多少脉冲）；
-          ② 回退 `PULSE_PER_PX_x` —— CALIBRATE_AXIS 实测写回的值 / 旧口径。
-
-        标定实测出的脉冲/像素可反算回宏：`DEG_PER_PX = PULSE_PER_PX / PULSES_PER_DEG`。
-        """
-        cfg = self.cfg
-        upper = axis.upper()
-        deg = float(getattr(cfg, "DEG_PER_PX_%s" % upper, 0.0) or 0.0)
-        ppd = float(getattr(cfg, "PULSES_PER_DEG_%s" % upper, 0.0) or 0.0)
-        if deg > 0 and ppd > 0:
-            return deg * ppd
-        return float(getattr(cfg, "PULSE_PER_PX_%s" % upper, 3.67))
-
-    def _rpm(self):
-        if self.state == COARSE:
-            return int(getattr(self.cfg, "RPM_COARSE", 150))
-        return int(getattr(self.cfg, "RPM_FINE", 60))
-
-    def _axis_command(self, axis, error, now):
-        cfg = self.cfg
-        # 离群拒收：单帧超大误差先当误检丢弃，连续若干帧才采信（防甩头）。
-        jump = float(getattr(cfg, "JUMP_REJECT_PX", 0.0))
-        if jump > 0 and abs(error) > jump:
-            self._jump[axis] += 1
-            if self._jump[axis] < int(getattr(cfg, "JUMP_CONFIRM_FRAMES", 3)):
-                return None
-        else:
-            self._jump[axis] = 0
-        if abs(error) <= self._deadband():
-            return None
-        interval = float(getattr(cfg, "COMMAND_INTERVAL_S", 0.08))
-        if now - self.last_command_time[axis] < interval:
-            return None
-        sign = float(getattr(cfg, "DIR_SIGN_YAW" if axis == "yaw" else "DIR_SIGN_PITCH", 1))
-        max_pulses = int(getattr(cfg, "MAX_STEP_PULSES", 360))
-        if self.controller is not None:
-            output = self.controller(axis, float(error), now)
-            if output is None or float(output) == 0:
-                return None
-            pulses = min(max_pulses, max(1, int(round(abs(float(output))))))
-            ccw = float(output) * sign > 0
-        else:
-            ppp = self._pulse_per_px(axis)
-            pulses = min(max_pulses, max(1, int(round(abs(error) * ppp * self._gain(axis, error)))))
-            ccw = error * sign > 0
-        self.last_command_time[axis] = now
-        return ccw, pulses, self._rpm()
-
-    def _scan_command(self, axis, now):
-        cfg = self.cfg
-        if now - self.last_command_time[axis] < float(getattr(cfg, "SCAN_STEP_INTERVAL_S", 0.15)):
-            return None
-        ppd = float(getattr(cfg, "YAW_PULSES_PER_DEG", 0.0))
-        if ppd > 0:
-            step = max(1, int(round(float(getattr(cfg, "SCAN_STEP_DEG", 1.5)) * ppd)))
-            limit = max(step, int(round(float(getattr(cfg, "SCAN_LIMIT_DEG", 15.0)) * ppd)))
-        else:
-            step = max(1, int(getattr(cfg, "SCAN_STEP_PULSES", 40)))
-            limit = max(step, int(getattr(cfg, "SCAN_LIMIT_PULSES", 400)))
-        if self._scan_pos >= limit:
-            self._scan_dir = -1
-        elif self._scan_pos <= -limit:
-            self._scan_dir = 1
-        sign = float(getattr(cfg, "DIR_SIGN_YAW", 1))
-        ccw = (self._scan_dir * sign) > 0
-        self._scan_pos += self._scan_dir * step
-        self.last_command_time[axis] = now
-        return ccw, step, int(getattr(cfg, "SCAN_RPM", 60))
-'''
-
 # ===== vision.gimbal_self_test  (vision/gimbal_self_test.py) =====
 _MOD_SRC['vision.gimbal_self_test'] = r'''
 """上电云台小幅自检：**pitch 先上转再下转、yaw 先左转再右转**，最后回到启动姿态。
@@ -1553,6 +1290,370 @@ def probe_imu():
                 "IMU object has no recognized read method"}
     except Exception as exc:
         return {"available": False, "module": None, "names": [], "error": str(exc)}
+'''
+
+# ===== vision.gimbal_aim  (vision/gimbal_aim.py) =====
+_MOD_SRC['vision.gimbal_aim'] = r'''
+"""基于像素误差的两轴增量比例控制器 + 状态机。
+
+对照 `MaixCAM2串口直控云台需求文档.md` §7 实现：
+
+- 闭环输入 = ``result["dx"]/["dy"]``（靶心 − 光斑，见 ``laser_spot.deviation``）；
+- 相对位置命令（0xFD、mode=0），运动量低通/增长限速，等待曲线运动估算完成；
+- 状态机 ``BOOT / COARSE / FINE / SETTLE / HOLD / SCAN / FAULT``；
+- 三重保护：离群拒收（``JUMP_REJECT_PX``）、死区（``DEADBAND_PX``）、指令限频
+  （``COMMAND_INTERVAL_S``）、单帧限幅（``MAX_STEP_PULSES``）。
+
+本模块**保持纯 Python（不 import maix）**，可在 PC 上离线仿真与回归。
+控制律可整体替换：``controller(axis, error_px, now) -> 带符号脉冲数``，传 None 用内置比例律。
+"""
+
+import math
+
+from vision.gimbal_self_test import estimate_move_seconds
+
+# 状态语义（给日志和上层判断用）
+BOOT = "BOOT"        # 上电，等第一帧合法误差
+COARSE = "COARSE"    # 大误差，大步快速逼近
+FINE = "FINE"        # 小误差，小步逼近
+SETTLE = "SETTLE"    # 进入死区，停止发指令
+HOLD = "HOLD"        # 视觉失效，保持不动
+SCAN = "SCAN"        # 失锁后慢扫重捕获（需 ENABLE_SCAN）
+FAULT = "FAULT"      # 链路/机械故障，停机不再发指令
+UNCALIBRATED = "UNCALIBRATED"  # 未标定 PULSE_PER_PX/DIR_SIGN，闭环锁定、只出视觉结果
+
+
+class GimbalAim:
+    def __init__(self, cfg, controller=None):
+        self.cfg = cfg
+        self.controller = controller
+        self.state = BOOT
+        self.fault_reason = None
+        self.last_command_time = {"yaw": -1e9, "pitch": -1e9}
+        self.last = {"state": self.state, "dx": None, "dy": None,
+                     "cmds": {"yaw": None, "pitch": None}}
+        self._jump = {"yaw": 0, "pitch": 0}
+        self._lost = 0
+        self._settle = 0
+        self._scan_dir = 1
+        self._scan_pos = 0
+        # 安全闸：未完成开环标定时禁止发电机指令。PULSE_PER_PX_*/DIR_SIGN_* 若还是占位值，
+        # 直接闭环可能正反馈甩头（README §四）。标定完把 GIMBAL_CALIBRATED=True 解锁。
+        self.require_calibration = bool(getattr(cfg, "AIM_REQUIRE_CALIBRATION", False))
+        self.calibrated = bool(getattr(cfg, "GIMBAL_CALIBRATED", False))
+        self.locked = self.require_calibration and not self.calibrated
+        if self.locked:
+            self.state = UNCALIBRATED
+            print("[aim] 未标定：闭环已锁定（只输出视觉结果，不发电机指令）")
+            print("[aim] 先跑 CALIBRATE_AXIS 标定 PULSE_PER_PX_*/DIR_SIGN_*，再置 GIMBAL_CALIBRATED=True")
+        # ★ 发散看护：一直发指令却始终不收敛（误差反而变大）= 方向反了（正反馈）
+        #   -> 自动 FAULT 停机，避免云台一路冲到底。详见 `_guard_check()`。
+        self._guard_on = bool(getattr(cfg, "DIVERGE_GUARD", False))
+        self._guard_frames = int(getattr(cfg, "DIVERGE_FRAMES", 30))
+        self._guard_ratio = float(getattr(cfg, "DIVERGE_RATIO", 1.5))
+        self._guard_n = 0
+        self._guard_min = None
+        self._motion_until = {"yaw": -1e9, "pitch": -1e9}
+        self._pending_stops = set()
+        self._clear_output()
+
+    # ------------------------------------------------------------- 外部接口
+    def set_controller(self, controller):
+        """设置后续 PID/前馈控制器；传入 None 恢复内置比例律。"""
+        self.controller = controller
+        self._clear_output()
+
+    def fault(self, reason):
+        """进入 FAULT：不再发任何指令，由上层决定是否复位。"""
+        self.state = FAULT
+        self.fault_reason = str(reason)
+        self._clear_output()
+        print("[aim] FAULT: %s" % self.fault_reason)
+        return self.state
+
+    def unlock(self, reason="calibrated"):
+        """标定完成 -> 解除未标定锁，允许发电机指令。返回是否真的发生了状态变化。
+
+        由 ``AutoCalibrate`` 在两轴全部标定成功后调用。只有在
+        ``AIM_REQUIRE_CALIBRATION=True`` 且 ``GIMBAL_CALIBRATED=False`` 时才处于锁定态，
+        因此重复调用是幂等的（第二次返回 False）。
+        """
+        if not self.locked:
+            return False
+        self.locked = False
+        self.calibrated = True
+        if self.state == UNCALIBRATED:
+            self.state = BOOT
+        self.fault_reason = None
+        self._lost = self._settle = self._scan_pos = 0
+        self._scan_dir = 1
+        self._jump = {"yaw": 0, "pitch": 0}
+        self.last_command_time = {"yaw": -1e9, "pitch": -1e9}
+        self._clear_output()
+        print("[aim] 闭环解锁（%s）：PULSE_PER_PX_*/DIR_SIGN_* 已按实测值写入，开始跟踪" % reason)
+        return True
+
+    def reset(self):
+        self.state = UNCALIBRATED if self.locked else BOOT
+        self.fault_reason = None
+        self._lost = self._settle = self._scan_pos = 0
+        self._scan_dir = 1
+        self._jump = {"yaw": 0, "pitch": 0}
+        self.last_command_time = {"yaw": -1e9, "pitch": -1e9}
+        self._guard_n = 0
+        self._guard_min = None
+        self._clear_output()
+        return self.state
+
+    def update(self, result, now=0.0):
+        """输入视觉 result，返回 ``cmds``；无效结果按状态机处理（HOLD / SCAN）。"""
+        now = float(now)
+        self._pending_stops = set()
+        if self.locked:
+            valid = bool(result and result.get("aim_valid") and
+                         result.get("dx") is not None and result.get("dy") is not None)
+            dx = float(result["dx"]) if valid else None
+            dy = float(result["dy"]) if valid else None
+            self.state = UNCALIBRATED
+            return self._emit(dx, dy, {"yaw": None, "pitch": None})
+        if self.state == FAULT:
+            return self._emit(None, None, {"yaw": None, "pitch": None})
+        valid = bool(result and result.get("aim_valid") and
+                     result.get("dx") is not None and result.get("dy") is not None)
+        if not valid:
+            return self._on_lost(now)
+        dx, dy = float(result["dx"]), float(result["dy"])
+        self._lost = 0
+        self._scan_pos = 0
+        deadband = self._deadband()
+        if abs(dx) <= deadband and abs(dy) <= deadband:
+            for axis in ("yaw", "pitch"):
+                self._cancel_motion(axis, now)
+            self._clear_output()
+            self._guard_n, self._guard_min = 0, None
+            self._settle += 1
+            self.state = SETTLE
+            return self._emit(dx, dy, {"yaw": None, "pitch": None})
+        self._settle = 0
+        # 发散看护：只在"确实要发指令"时检查（死区内已提前 return，不参与判断）。
+        if self._guard_check(max(abs(dx), abs(dy))):
+            for axis in ("yaw", "pitch"):
+                self._cancel_motion(axis, now)
+            return self._emit(dx, dy, {"yaw": None, "pitch": None})
+        coarse_px = float(getattr(self.cfg, "COARSE_PX", 0.0))
+        self.state = COARSE if (coarse_px > 0 and max(abs(dx), abs(dy)) > coarse_px) else FINE
+        cmds = {"yaw": self._axis_command("yaw", dx, now),
+                "pitch": self._axis_command("pitch", dy, now)}
+        return self._emit(dx, dy, cmds)
+
+    def status_line(self):
+        def fmt(cmd):
+            if not cmd:
+                return "-"
+            return ("CCW" if cmd[0] else "CW") + "/%dp" % cmd[1]
+        return "[aim] state=%s dx=%s dy=%s yaw=%s pit=%s lost=%d" % (
+            self.last.get("state", self.state), self.last.get("dx"), self.last.get("dy"),
+            fmt(self.last.get("cmds", {}).get("yaw")),
+            fmt(self.last.get("cmds", {}).get("pitch")), self._lost)
+
+    # ------------------------------------------------------------- 内部实现
+    def _emit(self, dx, dy, cmds):
+        out = {"state": self.state, "dx": dx, "dy": dy, "cmds": cmds,
+               "stops": sorted(self._pending_stops),
+               "filtered_pulses": dict(self._output)}
+        self.last = out
+        return out
+
+    def _deadband(self):
+        return float(getattr(self.cfg, "DEADBAND_PX", 2.0))
+
+    def _clear_output(self, axis=None):
+        """清除滤波记忆，但保留尚未结束的机械运动等待时间。"""
+        if axis is None:
+            self._output = {"yaw": 0.0, "pitch": 0.0}
+            self._output_time = {"yaw": None, "pitch": None}
+            self._error_sign = {"yaw": 0, "pitch": 0}
+        else:
+            self._output[axis] = 0.0
+            self._output_time[axis] = None
+            self._error_sign[axis] = 0
+
+    def _cancel_motion(self, axis, now):
+        if now < self._motion_until[axis]:
+            self._pending_stops.add(axis)
+            # 停止后留出一帧间隔再反向，避免同帧 stop/move 贴在一起。
+            self.last_command_time[axis] = now
+            self._motion_until[axis] = now
+
+    def _filter_output(self, axis, requested, now):
+        """时间低通 + 增长限速；缩小运动量立即生效，避免滤波拖尾越过靶心。"""
+        tau = max(0.0, float(getattr(self.cfg, "AIM_OUTPUT_LPF_TAU_S", 0.0)))
+        slew = max(0.0, float(getattr(self.cfg, "AIM_OUTPUT_SLEW_PPS", 0.0)))
+        previous = self._output[axis]
+        last = self._output_time[axis]
+        max_dt = max(0.001, float(getattr(self.cfg, "COMMAND_INTERVAL_S", 0.1)))
+        if last is None:
+            fps = max(1.0, float(getattr(self.cfg, "CAMERA_FPS", 30)))
+            dt = min(max_dt, 1.0 / fps)
+        else:
+            dt = min(max_dt, max(0.0, now - last))
+        self._output_time[axis] = now
+        if abs(requested) <= abs(previous):
+            value = requested
+        else:
+            alpha = 1.0 - math.exp(-dt / tau) if tau > 0 else 1.0
+            magnitude = abs(previous) + alpha * (abs(requested) - abs(previous))
+            if slew > 0:
+                magnitude = min(magnitude, abs(previous) + slew * dt)
+            value = math.copysign(magnitude, requested)
+        self._output[axis] = value
+        return value
+
+    def _guard_check(self, err_abs):
+        """发散看护：判断"一直在发指令却始终不收敛"，是则置 FAULT。
+
+        判据：观察窗内记录 |误差| 的**最小值**；窗口满之后若当前值涨到 `最小值 × DIVERGE_RATIO`
+        以上，说明"追了这么久反而更偏"，与收敛的预期相反 —— 多半是 `DIR_SIGN_*` 反了。
+        误差每次创出新低就重新计数，因此正常波动/正常收敛不会被误判。
+        """
+        if not self._guard_on:
+            return False
+        if self._guard_min is None or err_abs < self._guard_min:
+            self._guard_min = err_abs
+            self._guard_n = 0
+            return False
+        self._guard_n += 1
+        if self._guard_n < self._guard_frames:
+            return False
+        if self._guard_min > 0 and err_abs >= self._guard_min * self._guard_ratio:
+            self.fault("diverge(|误差| 从 %.1fpx 涨到 %.1fpx，趋势不收敛 -> 检查 DIR_SIGN_*)"
+                       % (self._guard_min, err_abs))
+            return True
+        self._guard_n = 0
+        return False
+
+    def _on_lost(self, now):
+        self._clear_output()
+        self._guard_n, self._guard_min = 0, None
+        self._jump = {"yaw": 0, "pitch": 0}
+        for axis in ("yaw", "pitch"):
+            self._cancel_motion(axis, now)
+        self._lost += 1
+        self._settle = 0
+        scan_on = bool(getattr(self.cfg, "ENABLE_SCAN", False))
+        if scan_on and self._lost >= int(getattr(self.cfg, "LOST_FRAMES", 15)):
+            self.state = SCAN
+            cmd = self._scan_command("yaw", now)
+            return self._emit(None, None, {"yaw": cmd, "pitch": None})
+        self.state = HOLD
+        return self._emit(None, None, {"yaw": None, "pitch": None})
+
+    def _gain(self, axis, error):
+        cfg = self.cfg
+        fine = float(getattr(cfg, "GAIN_YAW" if axis == "yaw" else "GAIN_PITCH", 0.5))
+        coarse_px = float(getattr(cfg, "COARSE_PX", 0.0))
+        if coarse_px > 0 and abs(error) > coarse_px:
+            return float(getattr(cfg, "GAIN_COARSE", min(1.0, fine * 1.8)))
+        return fine
+
+    def _pulse_per_px(self, axis):
+        """像素 -> 脉冲 的换算系数，也是"调节激烈程度"的总闸门。
+
+        取值优先级（现场调参入口见 `config.py` 的「★ 追踪手感」）：
+          ① `DEG_PER_PX_x × PULSES_PER_DEG_x` —— **手感宏，推荐**（每像素多少度 × 每度多少脉冲）；
+          ② 回退 `PULSE_PER_PX_x` —— CALIBRATE_AXIS 实测写回的值 / 旧口径。
+
+        标定实测出的脉冲/像素可反算回宏：`DEG_PER_PX = PULSE_PER_PX / PULSES_PER_DEG`。
+        """
+        cfg = self.cfg
+        upper = axis.upper()
+        deg = float(getattr(cfg, "DEG_PER_PX_%s" % upper, 0.0) or 0.0)
+        ppd = float(getattr(cfg, "PULSES_PER_DEG_%s" % upper, 0.0) or 0.0)
+        if deg > 0 and ppd > 0:
+            return deg * ppd
+        return float(getattr(cfg, "PULSE_PER_PX_%s" % upper, 3.67))
+
+    def _rpm(self):
+        if self.state == COARSE:
+            return int(getattr(self.cfg, "RPM_COARSE", 150))
+        return int(getattr(self.cfg, "RPM_FINE", 60))
+
+    def _axis_command(self, axis, error, now):
+        cfg = self.cfg
+        if abs(error) <= self._deadband():
+            self._cancel_motion(axis, now)
+            self._clear_output(axis)
+            self._jump[axis] = 0
+            return None
+        direction = 1 if error > 0 else -1
+        if self._error_sign[axis] and direction != self._error_sign[axis]:
+            self._cancel_motion(axis, now)
+            self._clear_output(axis)
+        self._error_sign[axis] = direction
+        # 离群拒收：单帧超大误差先当误检丢弃，连续若干帧才采信（防甩头）。
+        jump = float(getattr(cfg, "JUMP_REJECT_PX", 0.0))
+        if jump > 0 and abs(error) > jump:
+            self._jump[axis] += 1
+            if self._jump[axis] < int(getattr(cfg, "JUMP_CONFIRM_FRAMES", 3)):
+                self._clear_output(axis)
+                return None
+        else:
+            self._jump[axis] = 0
+        sign = float(getattr(cfg, "DIR_SIGN_YAW" if axis == "yaw" else "DIR_SIGN_PITCH", 1))
+        max_pulses = int(getattr(cfg, "MAX_STEP_PULSES", 360))
+        if self.controller is not None:
+            output = self.controller(axis, float(error), now)
+            if output is None or float(output) == 0:
+                self._clear_output(axis)
+                return None
+            output = float(output)
+        else:
+            ppp = self._pulse_per_px(axis)
+            output = error * ppp * self._gain(axis, error)
+        output = max(-max_pulses, min(max_pulses, output))
+        if self._output[axis] * output < 0:
+            self._cancel_motion(axis, now)
+            self._clear_output(axis)
+        output = self._filter_output(axis, output, now)
+        interval = float(getattr(cfg, "COMMAND_INTERVAL_S", 0.08))
+        if now - self.last_command_time[axis] < interval or now < self._motion_until[axis]:
+            return None
+        pulses = min(max_pulses, int(round(abs(output))))
+        if pulses <= 0:
+            return None
+        ccw = output * sign > 0
+        rpm = self._rpm()
+        if bool(getattr(cfg, "AIM_WAIT_MOTION", False)):
+            acc = int(getattr(cfg, "ACC_TRACK", getattr(cfg, "ACC_DEFAULT", 0)))
+            duration = estimate_move_seconds(pulses, rpm, acc,
+                                            getattr(cfg, "MOTOR_PULSES_PER_REV", 3200))
+            margin = max(0.0, float(getattr(cfg, "AIM_MOTION_MARGIN_S", 0.03)))
+            self._motion_until[axis] = now + duration + margin
+        self.last_command_time[axis] = now
+        return ccw, pulses, rpm
+
+    def _scan_command(self, axis, now):
+        cfg = self.cfg
+        if now < self._motion_until[axis]:
+            return None
+        if now - self.last_command_time[axis] < float(getattr(cfg, "SCAN_STEP_INTERVAL_S", 0.15)):
+            return None
+        ppd = float(getattr(cfg, "YAW_PULSES_PER_DEG", 0.0))
+        if ppd > 0:
+            step = max(1, int(round(float(getattr(cfg, "SCAN_STEP_DEG", 1.5)) * ppd)))
+            limit = max(step, int(round(float(getattr(cfg, "SCAN_LIMIT_DEG", 15.0)) * ppd)))
+        else:
+            step = max(1, int(getattr(cfg, "SCAN_STEP_PULSES", 40)))
+            limit = max(step, int(getattr(cfg, "SCAN_LIMIT_PULSES", 400)))
+        if self._scan_pos >= limit:
+            self._scan_dir = -1
+        elif self._scan_pos <= -limit:
+            self._scan_dir = 1
+        sign = float(getattr(cfg, "DIR_SIGN_YAW", 1))
+        ccw = (self._scan_dir * sign) > 0
+        self._scan_pos += self._scan_dir * step
+        self.last_command_time[axis] = now
+        return ccw, step, int(getattr(cfg, "SCAN_RPM", 60))
 '''
 
 # ===== vision.stepper_link  (vision/stepper_link.py) =====
@@ -2580,12 +2681,22 @@ class AimLoop:
         if self.aim.state != "FAULT":
             out = self.aim.update(res, now=now)
             res["aim_state"] = out["state"]
+            res["filtered_pulses"] = out["filtered_pulses"]
+            res["stops"] = out["stops"]
+            for axis in out["stops"]:
+                self.link.stop(axis, now=now)
+            if out["state"] == "FAULT":
+                self.link.stop(now=now)
             for axis, command in out["cmds"].items():
                 if command is not None:
                     ccw, pulses, rpm = command
-                    self.link.move(axis, ccw, pulses, rpm,
-                                   getattr(self.cfg, "ACC_TRACK",
-                                           getattr(self.cfg, "ACC_DEFAULT", 0)), now=now)
+                    if not self.link.move(axis, ccw, pulses, rpm,
+                                          getattr(self.cfg, "ACC_TRACK",
+                                                  getattr(self.cfg, "ACC_DEFAULT", 0)), now=now):
+                        self.link.stop(now=now)
+                        self.aim.fault("uart_write_failed:%s" % axis)
+                        res["aim_state"] = "FAULT"
+                        break
                     res["cmds"][axis] = command
         fb = self.link.poll(now)
         from vision.stepper_link import fault_reason
@@ -2633,7 +2744,7 @@ from vision.gimbal_aim import GimbalAim
 from vision.gimbal_self_test import GimbalSelfTest, probe_imu
 from vision.gimbal_calibrate import GimbalCalibrator, AutoCalibrate
 
-BUILD_ID = "2026-10-10-no-block-v14"
+BUILD_ID = "2026-10-10-smooth-track-v15"
 
 
 def _to_gray(img, image_module):
@@ -2763,7 +2874,10 @@ def main():
     print("[rect-center] 四边窄带跟踪 / 失锁后低分辨率搜索 / 72 点逆投影")
     print("[aim] 闭环口径=%s（raw_u/raw_v）离群拒收=%spx 死区=%.1fpx 限幅=%dp" %
           ("raw" if aim_use_raw else "smoothed", Config.JUMP_REJECT_PX,
-           Config.DEADBAND_PX, Config.MAX_STEP_PULSES))
+            Config.DEADBAND_PX, Config.MAX_STEP_PULSES))
+    print("[aim] 运动量低通 tau=%.2fs 增长限速=%.0fp/s 曲线acc=%d 等待运动=%s 余量=%.2fs" %
+          (Config.AIM_OUTPUT_LPF_TAU_S, Config.AIM_OUTPUT_SLEW_PPS, Config.ACC_TRACK,
+           Config.AIM_WAIT_MOTION, Config.AIM_MOTION_MARGIN_S))
     if laser_det is not None:
         if laser_static:
             print("[laser] mode=fixed 光斑位置写死 (%d,%d) —— 不做图像检测，每帧只算黑框中心−该常量" %
@@ -2854,10 +2968,17 @@ def main():
                     print("[gimbal] 自动标定未全部成功(%s) -> 闭环保持锁定，不会发电机指令"
                           % (auto_cal.reason or auto_cal.state))
             aim_result = aim.update(result, now=after_uart)
+            for axis in aim_result["stops"]:
+                link.stop(axis, now=after_uart)
+            if aim_result["state"] == "FAULT":
+                link.stop(now=after_uart)
             for axis, command in aim_result["cmds"].items():
                 if command is not None:
                     ccw, pulses, rpm = command
-                    link.move(axis, ccw, pulses, rpm, Config.ACC_TRACK, now=after_uart)
+                    if not link.move(axis, ccw, pulses, rpm, Config.ACC_TRACK, now=after_uart):
+                        link.stop(now=after_uart)
+                        aim.fault("uart_write_failed:%s" % axis)
+                        break
         aim_elapsed = time.perf_counter() - aim_started
         after_aim = time.perf_counter()
         if disp is not None and (after_uart - last_show >= 1.0 / max(1, Config.SHOW_FPS)):
@@ -2919,9 +3040,9 @@ if __name__ == "__main__":
     main()
 '''
 
-_MOD_ORDER = ('config', 'vision.rectangle_center', 'vision.laser_spot', 'vision.gimbal_aim', 'vision.gimbal_self_test', 'vision.stepper_link', 'vision.gimbal_calibrate', 'target_api')
+_MOD_ORDER = ('config', 'vision.rectangle_center', 'vision.laser_spot', 'vision.gimbal_self_test', 'vision.gimbal_aim', 'vision.stepper_link', 'vision.gimbal_calibrate', 'target_api')
 
-_REL_OF = {'config': 'config.py', 'vision.rectangle_center': 'vision/rectangle_center.py', 'vision.laser_spot': 'vision/laser_spot.py', 'vision.gimbal_aim': 'vision/gimbal_aim.py', 'vision.gimbal_self_test': 'vision/gimbal_self_test.py', 'vision.stepper_link': 'vision/stepper_link.py', 'vision.gimbal_calibrate': 'vision/gimbal_calibrate.py', 'target_api': 'target_api.py'}
+_REL_OF = {'config': 'config.py', 'vision.rectangle_center': 'vision/rectangle_center.py', 'vision.laser_spot': 'vision/laser_spot.py', 'vision.gimbal_self_test': 'vision/gimbal_self_test.py', 'vision.gimbal_aim': 'vision/gimbal_aim.py', 'vision.stepper_link': 'vision/stepper_link.py', 'vision.gimbal_calibrate': 'vision/gimbal_calibrate.py', 'target_api': 'target_api.py'}
 
 _pkg = _types.ModuleType("vision")          # 造出虚拟包 vision
 _pkg.__path__ = []

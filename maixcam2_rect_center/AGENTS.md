@@ -99,10 +99,13 @@
 | `GAIN_YAW` / `_PITCH` | 0.3 | 单帧只修正误差的这个比例（必须 ≤1，0.2~0.4 稳妥） |
 | `GAIN_COARSE` / `COARSE_PX` | 0.5 / 24.0 | `|e| > COARSE_PX` 时用大步增益（同样 ≤1） |
 | `RPM_FINE` / `RPM_COARSE` | 60 / 150 | 精调 / 粗调段转速 |
-| `ACC_TRACK` | 200 | **闭环专用**曲线加减速档位；`acc=0` 会瞬时启停（急停瞬间激光晃开）。越小越柔 |
+| `ACC_TRACK` | 80 | **闭环专用**曲线加减速档位；`acc=0` 会瞬时启停。越小越柔 |
 | `DEADBAND_PX` | 3.0 | 死区，应 **≥1.5× 实测回差**（否则在齿隙里来回抖） |
-| `MAX_STEP_PULSES` | 150 | 单帧限幅（≈4° 云台角），防误检猛甩 |
+| `MAX_STEP_PULSES` | 60 | 单帧限幅，防误检猛甩；输出另经过低通/增长限速 |
 | `COMMAND_INTERVAL_S` | 0.10 | 发帧间隔；太小会指令堆叠成"冲过头" |
+| `AIM_OUTPUT_LPF_TAU_S` | 0.25 | 运动量增长的时间低通；缩小/死区/换向立即生效 |
+| `AIM_OUTPUT_SLEW_PPS` | 120 | 单次运动量每秒最多增加的脉冲数 |
+| `AIM_WAIT_MOTION` / `AIM_MOTION_MARGIN_S` | True / 0.03 | 按曲线运动时间估算等待，防尚未完成的指令重叠 |
 
 > **改手感一次只动一个数**（推荐先只改 `DEG_PER_PX_*`），跑一轮看效果再动别的 ——
 > 一次改多个会分不清是谁起的作用。逐条说明与反算方法见 `B轨云台调参手册.md`。
@@ -138,7 +141,7 @@
 
 ## 4. 改完**必须**做的三件事（对齐根 AGENTS.md §3′）
 
-1. **提升 `main.py` 顶部 `BUILD_ID`**（当前 `2026-10-10-no-block-v14`，格式 `YYYY-MM-DD-<slug>-vN`）。
+1. **提升 `main.py` 顶部 `BUILD_ID`**（当前 `2026-10-10-smooth-track-v15`，格式 `YYYY-MM-DD-<slug>-vN`）。
    板端会打印 `[rect-center] <BUILD_ID> ...`，**与本地逐字一致才算跑的是新代码**；
    不更新就无法判断是否生效。**改了 `main.py`/`config.py`/`vision/*`/`target_api.py` 任一个都要做。**
 2. **重新生成单文件版**（`dist/` 不进应用包，但"运行当前文件"要用它）：
@@ -153,7 +156,7 @@
    "D:/Python311/python.exe" -B tools/check_app.py --manifest   # C1..C10 机检 + 打印包内清单（应 12 文件）
    "D:/Python311/python.exe" -B tools/test_performance.py       # 视觉回归（基线：29/30、max 0.803px、0 误检）
    "D:/Python311/python.exe" -B tools/test_target_api.py        # 对外 API 回归
-   "D:/Python311/python.exe" -B tools/test_gimbal_aim.py        # 云台协议/闭环/看门狗/标定/自检（当前 PASS(24)）
+   "D:/Python311/python.exe" -B tools/test_gimbal_aim.py        # 云台协议/闭环/看门狗/标定/自检/低通（当前 PASS(28)）
    "D:/Python311/python.exe" -B tools/test_main_self_test.py    # 端到端跑 main()：上电自检优先 / FAULT 阻断
    ```
    改光斑（`laser_spot.py` / `config.LASER_*`）还要跑 `tools/test_laser.py`；

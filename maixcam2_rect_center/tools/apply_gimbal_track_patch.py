@@ -22,7 +22,7 @@ ROOT = os.path.dirname(HERE)
 MAIN = os.path.join(ROOT, "main.py")
 
 # 恢复接线时顺便把入口构建号提到当前值（被整份覆盖时它也会一并退回旧值）。
-LATEST_BUILD = "2026-10-10-no-block-v14"
+LATEST_BUILD = "2026-10-10-smooth-track-v15"
 
 PATCHES = [
     (
@@ -144,7 +144,7 @@ PATCHES = [
                     if command is not None:
                         ccw, pulses, rpm = command
                         link.move(axis, ccw, pulses, rpm, Config.ACC_TRACK, now=after_uart)
-"""),
+""",
         """        if calibrator is not None:
             if not calibrator.done and aim is not None and aim.state != "FAULT":
                 calibrator.update(after_uart, result)
@@ -182,6 +182,51 @@ PATCHES = [
                 if command is not None:
                     ccw, pulses, rpm = command
                     link.move(axis, ccw, pulses, rpm, Config.ACC_TRACK, now=after_uart)
+"""),
+        """        if calibrator is not None:
+            if not calibrator.done and aim is not None and aim.state != "FAULT":
+                calibrator.update(after_uart, result)
+        elif self_test is not None and not self_test.done:
+            # ★ 上电自检优先：固定脉冲 4 步（pitch 上→下、yaw 左→右）先走完，
+            #   期间不发任何标定/闭环指令；**不依赖视觉结果**（无黑框也照走）。
+            #   唯一例外：链路已被判 FAULT 时不再下发任何指令。
+            if aim is not None and aim.state != "FAULT":
+                self_test.update(after_uart)
+        elif self_test is not None and self_test.state == "FAULT":
+            # 自检判定链路故障（所有参与轴都写不出去）-> 保持静默：不标定、不追踪。
+            pass
+        elif (auto_cal is None and aim is not None and aim.state != "FAULT"
+              and str(getattr(Config, "CALIBRATE_AXIS", "")).strip().lower() == "auto"):
+            # 自检结束后才真正开始自动标定：时间窗口从"这一刻"算起，
+            # 不被上电自检的机械动作耗时挤占（否则自检慢时会吞掉标定预算）。
+            auto_cal = AutoCalibrate(Config, link, after_uart)
+            print("[gimbal] 上电自检完成 -> 开始自动标定 %s（标定期不闭环，需画面里有靶心）"
+                  % "+".join(auto_cal.axes))
+        elif auto_cal is not None and not auto_cal.done:
+            # 自动标定期间只标定、不闭环（与人工标定同一口径）。
+            if aim is not None and aim.state != "FAULT":
+                auto_cal.update(after_uart, result)
+        elif aim is not None and link is not None and aim.state != "FAULT":
+            if auto_cal is not None and not auto_cal_done:
+                # 自动标定刚结束：只有两轴全部标定成功才解锁闭环（否则保持锁定）。
+                auto_cal_done = True
+                if auto_cal.applied and aim.unlock("auto-calibrate"):
+                    print("[gimbal] 自动标定完成 -> 闭环已解锁，开始跟踪")
+                else:
+                    print("[gimbal] 自动标定未全部成功(%s) -> 闭环保持锁定，不会发电机指令"
+                          % (auto_cal.reason or auto_cal.state))
+            aim_result = aim.update(result, now=after_uart)
+            for axis in aim_result["stops"]:
+                link.stop(axis, now=after_uart)
+            if aim_result["state"] == "FAULT":
+                link.stop(now=after_uart)
+            for axis, command in aim_result["cmds"].items():
+                if command is not None:
+                    ccw, pulses, rpm = command
+                    if not link.move(axis, ccw, pulses, rpm, Config.ACC_TRACK, now=after_uart):
+                        link.stop(now=after_uart)
+                        aim.fault("uart_write_failed:%s" % axis)
+                        break
 """,
     ),
     (

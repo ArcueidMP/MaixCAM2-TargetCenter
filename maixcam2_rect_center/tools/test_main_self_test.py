@@ -31,7 +31,7 @@ SELF_TEST_PULSES = 400        # = config.SELF_TEST_PULSES（固定脉冲自检�
 CLOCK_STEP_S = 0.02
 
 
-def run(fault=False, calibration="auto", iterations=400):
+def run(fault=False, calibration="auto", iterations=400, tracking_errors=None):
     ports = []
 
     class UART:
@@ -89,12 +89,24 @@ def run(fault=False, calibration="auto", iterations=400):
         image2cv=lambda img, **kwargs: img)
     cfg = type("TestConfig", (entry.Config,), dict(
         SHOW=False, LENS_CORR=False, LOG_INTERVAL=1000, CALIBRATE_AXIS=calibration))
+    if tracking_errors is not None:
+        cfg.GIMBAL_SELF_TEST = False
+        errors = iter(tracking_errors)
+
+        def detection(gray):
+            dx = next(errors, None)
+            if dx is None:
+                return dict(valid=False, stage="no_black_frame")
+            u, v = cfg.LASER_U_NOMINAL + dx, cfg.LASER_V_NOMINAL
+            return dict(valid=True, stage="track", u=u, v=v, raw_u=u, raw_v=v)
     with contextlib.ExitStack() as stack:
         stack.enter_context(patch.dict(sys.modules, maix=maix))
         stack.enter_context(patch.object(entry, "Config", cfg))
         stack.enter_context(patch.object(entry, "time", Clock))
         stack.enter_context(patch.object(entry, "probe_imu", return_value={
             "available": False, "error": "test"}))
+        if tracking_errors is not None:
+            stack.enter_context(patch.object(entry.RectangleCenterDetector, "process", side_effect=detection))
         if fault:
             stack.enter_context(patch.object(StepperLink, "poll", return_value={
                 "fault": True, "reason": "test_fault", "frames": []}))
@@ -140,6 +152,48 @@ def test_fault_blocks_self_test_and_calibration():
     print("PASS: 链路 FAULT 阻断自检与标定（不发任何 0xFD 运动帧）")
 
 
+def test_tracking_filter_stops_reach_uart():
+    """真实 main() 与 API 都要把控制器取消运动的决定发送为 0xFE，不能只停止生成新指令。"""
+    with patch.dict(globals(), CLOCK_STEP_S=0.001):
+        for errors in ([100, 1], [100, None], [100, -100]):
+            ports, _ = run(calibration="", iterations=2, tracking_errors=errors)
+            yaw = ports[0]
+            assert len(_motion_frames(yaw)) == 1, yaw.sent
+            pulses = int.from_bytes(_motion_frames(yaw)[0][6:10], "big")
+            assert pulses <= 4, pulses
+            # main 正常退出另外发一条 stop；退出前必须已因死区/失锁/换向发过 stop。
+            assert [p[1] for p in yaw.sent].count(0xFE) == 2, yaw.sent
+    from target_api import AimLoop
+    from vision.gimbal_aim import GimbalAim
+
+    class Link:
+        def __init__(self):
+            self.sent = []
+
+        def move(self, axis, ccw, pulses, rpm, acc, now=None):
+            self.sent.append((axis, 0xFD, pulses, acc))
+            return True
+
+        def stop(self, axis=None, now=None):
+            self.sent.append((axis, 0xFE))
+            return True
+
+        def poll(self, now):
+            return {"fault": False}
+
+    loop = AimLoop(enable_motors=False)
+    loop.aim, loop.link = GimbalAim(entry.Config), Link()
+    results = iter([dict(valid=True, aim_valid=True, dx=100, dy=0),
+                    dict(valid=True, aim_valid=True, dx=1, dy=0)])
+    loop.tracker = types.SimpleNamespace(track=lambda frame, now: next(results))
+    loop.step(None, now=0)
+    stopped = loop.step(None, now=0.02)
+    assert loop.link.sent == [("yaw", 0xFD, 4, entry.Config.ACC_TRACK), ("yaw", 0xFE)], loop.link.sent
+    assert stopped["aim_state"] == "SETTLE"
+    print("PASS: main/API 大误差小步起动，死区/失锁/换向取消帧抵达电机链路")
+
+
 if __name__ == "__main__":
     test_self_test_runs_before_calibration()
     test_fault_blocks_self_test_and_calibration()
+    test_tracking_filter_stops_reach_uart()

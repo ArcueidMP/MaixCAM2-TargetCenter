@@ -1,11 +1,34 @@
 # MaixCAM2 黑框中心：四边精修、快速跟踪与双轴云台瞄准
 
-构建号 `2026-10-09-self-test-loop-v4`，应用版本 `1.4.0`。在 MaixVision 中打开本文件夹，选择“运行项目”。
+构建号 `2026-10-10-smooth-track-v15`，应用版本 `1.4.0`。在 MaixVision 中打开本文件夹，选择“运行项目”。
 必须一起下发应用包内的 **12 个文件**（`app.yaml` / `main.py` / `config.py` / `target_api.py` /
 `assets/icon.png` / `vision/` 下 7 个 `.py`），不能只运行当前 `main.py`。
 
 > 只想临时试参数时，也可以先 `python tools/build_single.py` 生成 `dist/main_single.py`，
 > 再用「运行当前文件」—— 那是自包含的单文件版，语义与分模块完全一致。改了源码记得重新生成。
+
+## 当前追踪控制：运动量低通与防超调（v15）
+
+`dx/dy` 继续使用原始靶心坐标。先计算增量比例控制的带符号脉冲，再限幅、低通和限制增长速度，
+最后等待上一段曲线运动的估算时间再发下一条相对位置命令；`main.py` 和 `AimLoop` 共用这一控制器。
+
+| 参数 | 默认 | 作用 |
+|---|---|---|
+| `AIM_OUTPUT_LPF_TAU_S` | 0.25s | 运动量增大时使用 `alpha=1-exp(-dt/tau)` 低通；越大越柔，0 关闭 |
+| `AIM_OUTPUT_SLEW_PPS` | 120 | 每秒最多增加多少脉冲的单次运动量；越小起步越慢，0 关闭 |
+| `MAX_STEP_PULSES` | 60 | 原 150 降到 60，限制大误差下单次转动 |
+| `ACC_TRACK` | 80 | 原 200 降到 80，使驱动器曲线加减速更柔和 |
+| `AIM_WAIT_MOTION` | True | 每轴等待上一段运动的估算时间，防相对位置命令重叠 |
+| `AIM_MOTION_MARGIN_S` | 0.03s | 运动完成后的额外等待余量 |
+
+两轴各有独立滤波记忆。首次锁定/重捕获从零逐渐增加运动量；运动量减小时立即收缩，
+进入 3px 死区、换向或失锁时清空记忆，并取消估计仍在执行的运动。
+取消使用驱动器的 `0xFE` 立即停止命令，属于防越界措施；平常移动的柔和程度由小步长与 `ACC_TRACK` 决定。
+FAULT 和 UART 写失败也会真实发送停止帧。低通不会修正错误的 `DIR_SIGN_*`，方向反了仍会发散并触发保护。
+
+等待依赖软件估算，并非编码器到位反馈；若实机完成动作较慢，增加 `AIM_MOTION_MARGIN_S`。
+首次 250px 误差在默认 30fps 下输出 4 脉冲。有限运动时间的离线模型中，150px 初始误差
+经 14 次小步修正收敛到 2.81px，约 2.17s，无运动指令重叠；实机惯量/齿隙仍需上板验证。
 
 ## 代码结构（应用包 12 文件 + 离线工具）
 
@@ -434,14 +457,14 @@ FPS 根据完整循环计算，包含显示开销；显示限频不会跳过检�
 |---|---|---|
 | `ENABLE_GIMBAL` | True | 打开两条 UART 并驱动两个 ZDT 电机 |
 | `AIM_USE_RAW` | True | 闭环用未平滑的 `raw_u/raw_v`（显示仍用平滑值） |
-| `DIR_SIGN_YAW/PITCH` | +1 | **必须实测**（`CALIBRATE_AXIS`），反了会正反馈甩头 |
-| `PULSE_PER_PX_YAW/PITCH` | 3.67 | **占位值，必须实测替换** |
-| `GAIN_YAW/PITCH`、`GAIN_COARSE` | 0.5 / 0.9 | 精/粗两段增益，必须 ≤1 才收敛 |
-| `DEADBAND_PX` | 2.0 | 应 ≥ 1.5 × 实测回差，否则在齿隙里极限环 |
-| `MAX_STEP_PULSES` | 360 | 单帧脉冲限幅（≈10° 云台角），防误检猛甩 |
-| `RPM_FINE` / `RPM_COARSE` / `ACC_TRACK` | 120 / 400 / 200 | 追踪转速与**曲线加减速档位**；`acc=0` 会让闭环急停、激光晃开 |
+| `DIR_SIGN_YAW/PITCH` | -1 | 当前几何推断，方向仍需实机确认；反了会正反馈甩头 |
+| `PULSE_PER_PX_YAW/PITCH` | 0.0 | 当前用 `DEG_PER_PX=0.30 × PULSES_PER_DEG=8.89`；宏关闭后才回退此项 |
+| `GAIN_YAW/PITCH`、`GAIN_COARSE` | 0.3 / 0.5 | 精/粗两段增益；最终运动量另受低通与增长限速 |
+| `DEADBAND_PX` | 3.0 | 应 ≥ 1.5 × 实测回差，否则在齿隙里极限环 |
+| `MAX_STEP_PULSES` | 60 | 单次脉冲限幅，防误检猛甩 |
+| `RPM_FINE` / `RPM_COARSE` / `ACC_TRACK` | 60 / 150 / 80 | 追踪转速与**曲线加减速档位**；`acc=0` 会让闭环急停、激光晃开 |
 | `JUMP_REJECT_PX` | 400 | 单帧离群拒收门限（连续 3 帧才采信） |
-| `CALIBRATE_AXIS` | `""`（当前值） | `""` = 不标定、**不追踪**；`"yaw"`/`"pitch"` 只标该轴；`"auto"` = 自动标定两轴并自动解锁闭环进入跟踪 |
+| `CALIBRATE_AXIS` | `""`（当前值） | `""` = 不标定，自检完直接追踪；`"yaw"`/`"pitch"` 只标该轴；`"auto"` = 自动标定两轴 |
 | `AUTO_CALIBRATE_AXES` / `_TIMEOUT_S` | ("yaw","pitch") / 150 | auto 模式的标定范围与总超时 |
 | `CALIBRATE_PULSES` / `_RPM` / `_ACC` | 400 / 60 / 60 | 标定行程与动作（宁小勿大；与自检同样走曲线加减速） |
 | `ENABLE_SCAN` | False | 失锁自动慢扫重捕获；确认机械行程后再开 |
@@ -449,7 +472,7 @@ FPS 根据完整循环计算，包含显示开销；显示限频不会跳过检�
 | `PINMAP_STRICT` | False | pinmap 失败是否致命；False=警告后仍打开 UART（避免整轴"打不开"掩盖真故障） |
 | `SELF_TEST_PULSES` | 400 | **上电自检幅度（固定脉冲）**：pitch 上转→下转、yaw 左转→右转，**不需要靶子、不看标定**；置 0 才回退角度模式 |
 | `AIM_REQUIRE_CALIBRATION` | True | 未标定禁止发电机指令，闭环锁定（防正反馈甩头） |
-| `GIMBAL_CALIBRATED` | False | 标定完置 True 解锁闭环 |
+| `GIMBAL_CALIBRATED` | True | 当前手动宏视为已就绪，允许自检完追踪；需强制标定时置 False |
 
 ### 串口接线（MaixCAM2 丝印 ↔ 引脚，2026-10-09 复核官方 UART 表 + 引脚图 v1.0）
 

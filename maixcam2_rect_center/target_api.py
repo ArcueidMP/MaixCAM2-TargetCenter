@@ -296,12 +296,22 @@ class AimLoop:
         if self.aim.state != "FAULT":
             out = self.aim.update(res, now=now)
             res["aim_state"] = out["state"]
+            res["filtered_pulses"] = out["filtered_pulses"]
+            res["stops"] = out["stops"]
+            for axis in out["stops"]:
+                self.link.stop(axis, now=now)
+            if out["state"] == "FAULT":
+                self.link.stop(now=now)
             for axis, command in out["cmds"].items():
                 if command is not None:
                     ccw, pulses, rpm = command
-                    self.link.move(axis, ccw, pulses, rpm,
-                                   getattr(self.cfg, "ACC_TRACK",
-                                           getattr(self.cfg, "ACC_DEFAULT", 0)), now=now)
+                    if not self.link.move(axis, ccw, pulses, rpm,
+                                          getattr(self.cfg, "ACC_TRACK",
+                                                  getattr(self.cfg, "ACC_DEFAULT", 0)), now=now):
+                        self.link.stop(now=now)
+                        self.aim.fault("uart_write_failed:%s" % axis)
+                        res["aim_state"] = "FAULT"
+                        break
                     res["cmds"][axis] = command
         fb = self.link.poll(now)
         from vision.stepper_link import fault_reason

@@ -3,7 +3,7 @@
 对照 `MaixCAM2串口直控云台需求文档.md` §7 实现：
 
 - 闭环输入 = ``result["dx"]/["dy"]``（靶心 − 光斑，见 ``laser_spot.deviation``）；
-- 每帧只发一帧**相对位置**命令（0xFD、mode=0），单帧脉冲限幅，``acc=0``（增量闭环）；
+- 相对位置命令（0xFD、mode=0），运动量低通/增长限速，等待曲线运动估算完成；
 - 状态机 ``BOOT / COARSE / FINE / SETTLE / HOLD / SCAN / FAULT``；
 - 三重保护：离群拒收（``JUMP_REJECT_PX``）、死区（``DEADBAND_PX``）、指令限频
   （``COMMAND_INTERVAL_S``）、单帧限幅（``MAX_STEP_PULSES``）。
@@ -11,6 +11,10 @@
 本模块**保持纯 Python（不 import maix）**，可在 PC 上离线仿真与回归。
 控制律可整体替换：``controller(axis, error_px, now) -> 带符号脉冲数``，传 None 用内置比例律。
 """
+
+import math
+
+from vision.gimbal_self_test import estimate_move_seconds
 
 # 状态语义（给日志和上层判断用）
 BOOT = "BOOT"        # 上电，等第一帧合法误差
@@ -53,16 +57,21 @@ class GimbalAim:
         self._guard_ratio = float(getattr(cfg, "DIVERGE_RATIO", 1.5))
         self._guard_n = 0
         self._guard_min = None
+        self._motion_until = {"yaw": -1e9, "pitch": -1e9}
+        self._pending_stops = set()
+        self._clear_output()
 
     # ------------------------------------------------------------- 外部接口
     def set_controller(self, controller):
         """设置后续 PID/前馈控制器；传入 None 恢复内置比例律。"""
         self.controller = controller
+        self._clear_output()
 
     def fault(self, reason):
         """进入 FAULT：不再发任何指令，由上层决定是否复位。"""
         self.state = FAULT
         self.fault_reason = str(reason)
+        self._clear_output()
         print("[aim] FAULT: %s" % self.fault_reason)
         return self.state
 
@@ -84,6 +93,7 @@ class GimbalAim:
         self._scan_dir = 1
         self._jump = {"yaw": 0, "pitch": 0}
         self.last_command_time = {"yaw": -1e9, "pitch": -1e9}
+        self._clear_output()
         print("[aim] 闭环解锁（%s）：PULSE_PER_PX_*/DIR_SIGN_* 已按实测值写入，开始跟踪" % reason)
         return True
 
@@ -96,11 +106,13 @@ class GimbalAim:
         self.last_command_time = {"yaw": -1e9, "pitch": -1e9}
         self._guard_n = 0
         self._guard_min = None
+        self._clear_output()
         return self.state
 
     def update(self, result, now=0.0):
         """输入视觉 result，返回 ``cmds``；无效结果按状态机处理（HOLD / SCAN）。"""
         now = float(now)
+        self._pending_stops = set()
         if self.locked:
             valid = bool(result and result.get("aim_valid") and
                          result.get("dx") is not None and result.get("dy") is not None)
@@ -119,12 +131,18 @@ class GimbalAim:
         self._scan_pos = 0
         deadband = self._deadband()
         if abs(dx) <= deadband and abs(dy) <= deadband:
+            for axis in ("yaw", "pitch"):
+                self._cancel_motion(axis, now)
+            self._clear_output()
+            self._guard_n, self._guard_min = 0, None
             self._settle += 1
             self.state = SETTLE
             return self._emit(dx, dy, {"yaw": None, "pitch": None})
         self._settle = 0
         # 发散看护：只在"确实要发指令"时检查（死区内已提前 return，不参与判断）。
         if self._guard_check(max(abs(dx), abs(dy))):
+            for axis in ("yaw", "pitch"):
+                self._cancel_motion(axis, now)
             return self._emit(dx, dy, {"yaw": None, "pitch": None})
         coarse_px = float(getattr(self.cfg, "COARSE_PX", 0.0))
         self.state = COARSE if (coarse_px > 0 and max(abs(dx), abs(dy)) > coarse_px) else FINE
@@ -144,12 +162,56 @@ class GimbalAim:
 
     # ------------------------------------------------------------- 内部实现
     def _emit(self, dx, dy, cmds):
-        out = {"state": self.state, "dx": dx, "dy": dy, "cmds": cmds}
+        out = {"state": self.state, "dx": dx, "dy": dy, "cmds": cmds,
+               "stops": sorted(self._pending_stops),
+               "filtered_pulses": dict(self._output)}
         self.last = out
         return out
 
     def _deadband(self):
         return float(getattr(self.cfg, "DEADBAND_PX", 2.0))
+
+    def _clear_output(self, axis=None):
+        """清除滤波记忆，但保留尚未结束的机械运动等待时间。"""
+        if axis is None:
+            self._output = {"yaw": 0.0, "pitch": 0.0}
+            self._output_time = {"yaw": None, "pitch": None}
+            self._error_sign = {"yaw": 0, "pitch": 0}
+        else:
+            self._output[axis] = 0.0
+            self._output_time[axis] = None
+            self._error_sign[axis] = 0
+
+    def _cancel_motion(self, axis, now):
+        if now < self._motion_until[axis]:
+            self._pending_stops.add(axis)
+            # 停止后留出一帧间隔再反向，避免同帧 stop/move 贴在一起。
+            self.last_command_time[axis] = now
+            self._motion_until[axis] = now
+
+    def _filter_output(self, axis, requested, now):
+        """时间低通 + 增长限速；缩小运动量立即生效，避免滤波拖尾越过靶心。"""
+        tau = max(0.0, float(getattr(self.cfg, "AIM_OUTPUT_LPF_TAU_S", 0.0)))
+        slew = max(0.0, float(getattr(self.cfg, "AIM_OUTPUT_SLEW_PPS", 0.0)))
+        previous = self._output[axis]
+        last = self._output_time[axis]
+        max_dt = max(0.001, float(getattr(self.cfg, "COMMAND_INTERVAL_S", 0.1)))
+        if last is None:
+            fps = max(1.0, float(getattr(self.cfg, "CAMERA_FPS", 30)))
+            dt = min(max_dt, 1.0 / fps)
+        else:
+            dt = min(max_dt, max(0.0, now - last))
+        self._output_time[axis] = now
+        if abs(requested) <= abs(previous):
+            value = requested
+        else:
+            alpha = 1.0 - math.exp(-dt / tau) if tau > 0 else 1.0
+            magnitude = abs(previous) + alpha * (abs(requested) - abs(previous))
+            if slew > 0:
+                magnitude = min(magnitude, abs(previous) + slew * dt)
+            value = math.copysign(magnitude, requested)
+        self._output[axis] = value
+        return value
 
     def _guard_check(self, err_abs):
         """发散看护：判断"一直在发指令却始终不收敛"，是则置 FAULT。
@@ -175,6 +237,11 @@ class GimbalAim:
         return False
 
     def _on_lost(self, now):
+        self._clear_output()
+        self._guard_n, self._guard_min = 0, None
+        self._jump = {"yaw": 0, "pitch": 0}
+        for axis in ("yaw", "pitch"):
+            self._cancel_motion(axis, now)
         self._lost += 1
         self._settle = 0
         scan_on = bool(getattr(self.cfg, "ENABLE_SCAN", False))
@@ -217,36 +284,62 @@ class GimbalAim:
 
     def _axis_command(self, axis, error, now):
         cfg = self.cfg
+        if abs(error) <= self._deadband():
+            self._cancel_motion(axis, now)
+            self._clear_output(axis)
+            self._jump[axis] = 0
+            return None
+        direction = 1 if error > 0 else -1
+        if self._error_sign[axis] and direction != self._error_sign[axis]:
+            self._cancel_motion(axis, now)
+            self._clear_output(axis)
+        self._error_sign[axis] = direction
         # 离群拒收：单帧超大误差先当误检丢弃，连续若干帧才采信（防甩头）。
         jump = float(getattr(cfg, "JUMP_REJECT_PX", 0.0))
         if jump > 0 and abs(error) > jump:
             self._jump[axis] += 1
             if self._jump[axis] < int(getattr(cfg, "JUMP_CONFIRM_FRAMES", 3)):
+                self._clear_output(axis)
                 return None
         else:
             self._jump[axis] = 0
-        if abs(error) <= self._deadband():
-            return None
-        interval = float(getattr(cfg, "COMMAND_INTERVAL_S", 0.08))
-        if now - self.last_command_time[axis] < interval:
-            return None
         sign = float(getattr(cfg, "DIR_SIGN_YAW" if axis == "yaw" else "DIR_SIGN_PITCH", 1))
         max_pulses = int(getattr(cfg, "MAX_STEP_PULSES", 360))
         if self.controller is not None:
             output = self.controller(axis, float(error), now)
             if output is None or float(output) == 0:
+                self._clear_output(axis)
                 return None
-            pulses = min(max_pulses, max(1, int(round(abs(float(output))))))
-            ccw = float(output) * sign > 0
+            output = float(output)
         else:
             ppp = self._pulse_per_px(axis)
-            pulses = min(max_pulses, max(1, int(round(abs(error) * ppp * self._gain(axis, error)))))
-            ccw = error * sign > 0
+            output = error * ppp * self._gain(axis, error)
+        output = max(-max_pulses, min(max_pulses, output))
+        if self._output[axis] * output < 0:
+            self._cancel_motion(axis, now)
+            self._clear_output(axis)
+        output = self._filter_output(axis, output, now)
+        interval = float(getattr(cfg, "COMMAND_INTERVAL_S", 0.08))
+        if now - self.last_command_time[axis] < interval or now < self._motion_until[axis]:
+            return None
+        pulses = min(max_pulses, int(round(abs(output))))
+        if pulses <= 0:
+            return None
+        ccw = output * sign > 0
+        rpm = self._rpm()
+        if bool(getattr(cfg, "AIM_WAIT_MOTION", False)):
+            acc = int(getattr(cfg, "ACC_TRACK", getattr(cfg, "ACC_DEFAULT", 0)))
+            duration = estimate_move_seconds(pulses, rpm, acc,
+                                            getattr(cfg, "MOTOR_PULSES_PER_REV", 3200))
+            margin = max(0.0, float(getattr(cfg, "AIM_MOTION_MARGIN_S", 0.03)))
+            self._motion_until[axis] = now + duration + margin
         self.last_command_time[axis] = now
-        return ccw, pulses, self._rpm()
+        return ccw, pulses, rpm
 
     def _scan_command(self, axis, now):
         cfg = self.cfg
+        if now < self._motion_until[axis]:
+            return None
         if now - self.last_command_time[axis] < float(getattr(cfg, "SCAN_STEP_INTERVAL_S", 0.15)):
             return None
         ppd = float(getattr(cfg, "YAW_PULSES_PER_DEG", 0.0))

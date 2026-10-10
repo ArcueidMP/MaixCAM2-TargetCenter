@@ -26,7 +26,7 @@ from vision.gimbal_aim import GimbalAim
 from vision.gimbal_self_test import GimbalSelfTest, probe_imu
 from vision.gimbal_calibrate import GimbalCalibrator, AutoCalibrate
 
-BUILD_ID = "2026-10-10-no-block-v14"
+BUILD_ID = "2026-10-10-smooth-track-v15"
 
 
 def _to_gray(img, image_module):
@@ -156,7 +156,10 @@ def main():
     print("[rect-center] 四边窄带跟踪 / 失锁后低分辨率搜索 / 72 点逆投影")
     print("[aim] 闭环口径=%s（raw_u/raw_v）离群拒收=%spx 死区=%.1fpx 限幅=%dp" %
           ("raw" if aim_use_raw else "smoothed", Config.JUMP_REJECT_PX,
-           Config.DEADBAND_PX, Config.MAX_STEP_PULSES))
+            Config.DEADBAND_PX, Config.MAX_STEP_PULSES))
+    print("[aim] 运动量低通 tau=%.2fs 增长限速=%.0fp/s 曲线acc=%d 等待运动=%s 余量=%.2fs" %
+          (Config.AIM_OUTPUT_LPF_TAU_S, Config.AIM_OUTPUT_SLEW_PPS, Config.ACC_TRACK,
+           Config.AIM_WAIT_MOTION, Config.AIM_MOTION_MARGIN_S))
     if laser_det is not None:
         if laser_static:
             print("[laser] mode=fixed 光斑位置写死 (%d,%d) —— 不做图像检测，每帧只算黑框中心−该常量" %
@@ -247,10 +250,17 @@ def main():
                     print("[gimbal] 自动标定未全部成功(%s) -> 闭环保持锁定，不会发电机指令"
                           % (auto_cal.reason or auto_cal.state))
             aim_result = aim.update(result, now=after_uart)
+            for axis in aim_result["stops"]:
+                link.stop(axis, now=after_uart)
+            if aim_result["state"] == "FAULT":
+                link.stop(now=after_uart)
             for axis, command in aim_result["cmds"].items():
                 if command is not None:
                     ccw, pulses, rpm = command
-                    link.move(axis, ccw, pulses, rpm, Config.ACC_TRACK, now=after_uart)
+                    if not link.move(axis, ccw, pulses, rpm, Config.ACC_TRACK, now=after_uart):
+                        link.stop(now=after_uart)
+                        aim.fault("uart_write_failed:%s" % axis)
+                        break
         aim_elapsed = time.perf_counter() - aim_started
         after_aim = time.perf_counter()
         if disp is not None and (after_uart - last_show >= 1.0 / max(1, Config.SHOW_FPS)):

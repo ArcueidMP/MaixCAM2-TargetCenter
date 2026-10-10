@@ -615,6 +615,112 @@ def test_diverge_guard():
     assert quiet.state != "FAULT"
 
 
+def _smooth_config(**overrides):
+    from config import Config
+    return type("SmoothConfig", (Config,), dict(DIVERGE_GUARD=False, **overrides))()
+
+
+def test_output_filter_spike_and_frame_rate():
+    """同一真实时间下不同帧率的低通结果相同；单帧大误差不能变成满幅转动。"""
+    cfg = _smooth_config()
+    aim = GimbalAim(cfg)
+    first = aim.update({"aim_valid": True, "dx": 250, "dy": 0}, 0)
+    assert 0 < first["cmds"]["yaw"][1] <= 4, first
+    for i in range(1, 61):
+        aim.update({"aim_valid": True, "dx": 10, "dy": 0}, i / 30)
+    baseline = aim._output["yaw"]
+    spike = aim.update({"aim_valid": True, "dx": 250, "dy": 0}, 61 / 30)
+    assert spike["filtered_pulses"]["yaw"] - baseline <= cfg.AIM_OUTPUT_SLEW_PPS / 30 + 1e-9
+    after = aim.update({"aim_valid": True, "dx": 10, "dy": 0}, 62 / 30)
+    assert abs(after["filtered_pulses"]["yaw"]) <= 10 * aim._pulse_per_px("yaw") * cfg.GAIN_YAW + 1e-9
+    # 独立验证时间常数：禁用另一道增长限速，起点先建立零状态。
+    values = []
+    for fps in (20, 40, 80):
+        filtered = GimbalAim(_smooth_config(AIM_OUTPUT_SLEW_PPS=0))
+        filtered._output_time["yaw"] = 0.0
+        for i in range(1, fps + 1):
+            filtered._filter_output("yaw", 60, i / fps)
+        values.append(filtered._output["yaw"])
+    assert max(values) - min(values) < 1e-9, values
+
+
+def test_filtered_motion_cancels_on_settle_reverse_and_loss():
+    for next_result in ({"aim_valid": True, "dx": 1, "dy": 0},
+                        {"aim_valid": True, "dx": -100, "dy": 0},
+                        {"aim_valid": False}):
+        aim = GimbalAim(_smooth_config())
+        aim.update({"aim_valid": True, "dx": 100, "dy": 0}, 0)
+        assert aim._motion_until["yaw"] > 0.02
+        out = aim.update(next_result, 0.02)
+        assert out["stops"] == ["yaw"], out
+        assert out["cmds"]["yaw"] is None, out
+        if next_result.get("dx", 0) < 0:
+            reverse = aim.update(next_result, 0.13)
+            assert reverse["cmds"]["yaw"][0] is True  # DIR_SIGN=-1，负误差发 CCW
+            assert reverse["cmds"]["yaw"][1] <= 20, reverse
+        else:
+            assert out["filtered_pulses"]["yaw"] == 0
+            resumed = aim.update({"aim_valid": True, "dx": 100, "dy": 0}, 10)
+            assert resumed["cmds"]["yaw"][1] <= 4, resumed
+    # 一轴进入死区也必须清零，不能被另一轴尚在追踪掩盖。
+    aim = GimbalAim(_smooth_config())
+    aim.update({"aim_valid": True, "dx": 100, "dy": 100}, 0)
+    out = aim.update({"aim_valid": True, "dx": 1, "dy": 100}, 0.02)
+    assert out["stops"] == ["yaw"] and out["filtered_pulses"]["yaw"] == 0, out
+
+
+def test_smooth_closed_loop_with_moving_motor():
+    """按曲线时间逐帧推进电机，不允许在未完成运动上叠加位置帧，并验证大误差收敛。"""
+    cfg = _smooth_config()
+    aim = GimbalAim(cfg)
+    ppp = cfg.DEG_PER_PX_YAW * cfg.PULSES_PER_DEG_YAW
+    x, dt, active, end, commands = 150.0, 0.01, None, 0.0, 0
+    last_sent = 0.0
+    for i in range(2500):
+        now = i * dt
+        if active is not None:
+            # 同一曲线时间内匀速分摊脉冲，模拟尚未走完的有限行程。
+            start, duration, initial, correction = active
+            x = initial + correction * min(1.0, (now - start) / duration)
+            if now >= end:
+                active = None
+        out = aim.update({"aim_valid": True, "dx": x, "dy": 0}, now)
+        if "yaw" in out["stops"]:
+            active = None
+        cmd = out["cmds"]["yaw"]
+        if cmd is not None:
+            assert active is None, (now, end, cmd)
+            ccw, pulses, rpm = cmd
+            assert pulses <= cfg.MAX_STEP_PULSES
+            commands += 1
+            last_sent = now
+            duration = estimate_move_seconds(pulses, rpm, cfg.ACC_TRACK, cfg.MOTOR_PULSES_PER_REV)
+            end = now + duration
+            correction = (1 if ccw else -1) * pulses / ppp  # 当前 sign=-1
+            active = (now, duration, x, correction)
+        assert x >= -cfg.DEADBAND_PX, x
+        if out["state"] == "SETTLE":
+            break
+    assert aim.state == "SETTLE" and abs(x) <= cfg.DEADBAND_PX, (aim.state, x)
+    assert commands > 5 and last_sent > 1.0
+    print("  smooth finite-motion: commands=%d final=%.2fpx time=%.2fs" % (commands, x, now))
+
+
+def test_smooth_reversed_direction_still_faults():
+    cfg = _smooth_config(DIVERGE_FRAMES=5)
+    cfg.DIVERGE_GUARD = True
+    aim = GimbalAim(cfg)
+    x = 30.0
+    for i in range(100):
+        out = aim.update({"aim_valid": True, "dx": x, "dy": 0}, i * 0.1)
+        cmd = out["cmds"]["yaw"]
+        if cmd is not None:
+            x += cmd[1] / (cfg.DEG_PER_PX_YAW * cfg.PULSES_PER_DEG_YAW)
+        if out["state"] == "FAULT":
+            break
+    assert out["state"] == "FAULT" and "diverge" in aim.fault_reason, (x, out)
+
+
 def main():
     tests = [test_protocol, test_aim_basic, test_clamp_and_jump_reject,
              test_coarse_fine_state, test_closed_loop_convergence,
@@ -626,7 +732,11 @@ def main():
              test_auto_calibrate_success, test_auto_calibrate_failure_keeps_locked,
              test_unlock_after_calibration, test_track_uses_curve_config,
              test_deg_per_px_macro, test_diverge_guard,
-             test_calibrator_fails_fast_without_vision]
+             test_calibrator_fails_fast_without_vision,
+             test_output_filter_spike_and_frame_rate,
+             test_filtered_motion_cancels_on_settle_reverse_and_loss,
+             test_smooth_closed_loop_with_moving_motor,
+             test_smooth_reversed_direction_still_faults]
     for fn in tests:
         fn()
         print("  OK   %s" % fn.__name__)

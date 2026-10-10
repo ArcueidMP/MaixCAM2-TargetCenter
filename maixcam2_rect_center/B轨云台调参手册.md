@@ -2,7 +2,26 @@
 
 > 面向现场调参：**追踪太猛/太慢、超调、停下瞬间激光偏一下**，改这一页就够了。
 > 参数全在 `config.py`，**主入口是「★ 追踪手感」那一段（第 61–89 行）**。
-> 对应 `BUILD_ID = 2026-10-10-track-tune-v12`。行号以此版本为准（改完代码后行号会漂移，以参数名搜索为准）。
+> 对应 `BUILD_ID = 2026-10-10-smooth-track-v15`。旧表行号仅供参考，以参数名搜索为准。
+
+## v15 运动量低通与防超调
+
+滤波作用在最终的带符号运动量上，原始误差仍用于死区、方向和发散判断。
+运动量变大时缓慢跟随，变小时立即缩小；丢靶、到达死区、换向时清掉滤波记忆，
+并向估计仍在运动的轴发送停止帧。重新捕获从小步起动，避免沿用上次的大运动量。
+
+| 参数 | 当前 | 调节建议 |
+|---|---|---|
+| `AIM_OUTPUT_LPF_TAU_S` | 0.25s | 突变仍较猛可加到 0.35s；跟手偏慢可降到 0.15s；0 关闭低通 |
+| `AIM_OUTPUT_SLEW_PPS` | 120 | 单次运动量每秒最多增长 120 脉冲；更柔可降到 80；0 关闭增长限速 |
+| `MAX_STEP_PULSES` | 60 | 大偏差仍容易越过停止点可降到 40 |
+| `ACC_TRACK` | 80 | 驱动器曲线更柔；非 0，越小加减速越慢 |
+| `AIM_WAIT_MOTION` | True | 等待估算运动结束再发送下一条，建议保持开启 |
+| `AIM_MOTION_MARGIN_S` | 0.03s | 机构比模型慢可增加到 0.05～0.10s |
+
+正常追踪是小步曲线运动；死区/换向/丢靶时的取消帧是 `0xFE` 立即停止，不属于柔性减速。
+运动时间来自软件估算，未使用驱动器到位反馈。一次只调一个参数，上板看实际过冲与跟手速度。
+如果小步也持续沿错误方向越追越偏，应重新核对 `DIR_SIGN_*`，低通不能修正控制方向。
 
 ---
 
@@ -61,7 +80,7 @@ python tools/check_app.py --manifest
 ```
 单帧脉冲 = |误差px| × DEG_PER_PX_x × PULSES_PER_DEG_x × GAIN_x
                        └──── ① 每px多少度 ────┘ └── ② 每度多少脉冲 ──┘ └ ③ 单帧修正比例 ┘
-           （结果再受 MAX_STEP_PULSES 单帧限幅）
+           （结果再受限幅、运动量低通、增长限速，等待上一段运动估算完成后发送）
 
 误差px = 靶心(u,v) − 光斑(u,v)
 ```
@@ -72,7 +91,7 @@ python tools/check_app.py --manifest
 |---|---|---|---|
 | ①② 换算系数 | `vision/gimbal_aim.py` | **161** | `def _pulse_per_px(self, axis):` |
 | ③ 增益（含粗/精切换） | `vision/gimbal_aim.py` | **153** | `def _gain(self, axis, error):` |
-| **脉冲公式本体** | `vision/gimbal_aim.py` | **207–208** | `ppp = self._pulse_per_px(axis)`<br>`pulses = min(max_pulses, max(1, int(round(abs(error) * ppp * self._gain(axis, error)))))` |
+| **运动量计算与滤波** | `vision/gimbal_aim.py` | 搜索函数名 | `_axis_command()` → `_filter_output()` → 曲线运动时间等待 |
 | 转速选择 | `vision/gimbal_aim.py` | **178** | `def _rpm(self):` |
 | 死区 | `vision/gimbal_aim.py` | **139** | `def _deadband(self):` |
 | 离群拒收门控 | `vision/gimbal_aim.py` | **183** | `def _axis_command(self, axis, error, now):` |
@@ -94,9 +113,9 @@ python tools/check_app.py --manifest
 | `GAIN_PITCH` | **0.3** | 75 | 同上，pitch 轴 |
 | `RPM_FINE` | **60** | 78 | 精调段转速。**调小 = 每帧走得更慢更稳** |
 | `RPM_COARSE` | 150 | 79 | 粗调段（误差 > `COARSE_PX`）转速 |
-| `ACC_TRACK` | 200 | 80 | 曲线加减速档位。**必须非 0**（0 = 瞬时启停，激光会晃开）；越小越柔 |
+| `ACC_TRACK` | 80 | 搜索参数名 | 曲线加减速档位。**必须非 0**（0 = 瞬时启停，激光会晃开）；越小越柔 |
 | `DEADBAND_PX` | 3.0 | 83 | 死区。应 ≥ 1.5×实测回差，否则在齿隙里来回抖 |
-| `MAX_STEP_PULSES` | **150** | 84 | 单帧脉冲上限。调小 = 单帧最多走这么多，防猛甩 |
+| `MAX_STEP_PULSES` | **60** | 搜索参数名 | 单帧脉冲上限。调小 = 单帧最多走这么多，防猛甩 |
 | `COMMAND_INTERVAL_S` | 0.10 | 85 | 发帧间隔。调大 = 更慢更稳 |
 | `PULSE_PER_PX_YAW` / `PITCH` | 0.0 | 88–89 | 旧口径 / 标定写回值。**仅当上面 `DEG_PER_PX_x = 0` 时才生效** |
 
@@ -163,7 +182,7 @@ python tools/check_app.py --manifest
 | 现象 | 先动这个 | 再动这些 |
 |---|---|---|
 | 转得太猛 / 冲过头 / 来回摆 | `DEG_PER_PX_*` ↓（0.30 → 0.20） | `GAIN_*` ↓（0.3 → 0.2）、`MAX_STEP_PULSES` ↓ |
-| 停下瞬间激光偏一下 | 确认 `ACC_TRACK = 200`（非 0） | `RPM_FINE` ↓（60 → 40） |
+| 停下瞬间激光偏一下 | 确认 `ACC_TRACK = 80`（非 0） | `RPM_FINE` ↓（60 → 40） |
 | 跟不上移动的靶心 | `DEG_PER_PX_*` ↑ | `RPM_FINE` ↑、`GAIN_*` ↑（**别超 0.5**） |
 | 静止时在靶心附近小抖 | `DEADBAND_PX` ↑（3.0 → 4.5） | 用标定日志的"回差估计"×1.5 作为下限 |
 | 只在大误差时冲过头 | `GAIN_COARSE` ↓、`COARSE_PX` ↑ | `RPM_COARSE` ↓ |
