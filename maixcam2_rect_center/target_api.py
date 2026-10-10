@@ -192,7 +192,8 @@ def detect_black_frame(frame, cfg=None, detector=None):
         return Result(valid=False, stage="empty_frame", center=None,
                       dx=None, dy=None, aim_valid=False, ms=0.0)
     started = time.perf_counter()
-    raw = det.process(gray)
+    # 无状态单次检测必须完成整轮；连续视频走有预算的 process()/CenterTracker。
+    raw = det.process(gray, exhaustive=detector is None)
     out = _wrap(raw, gray)
     out["ms"] = out.get("detector_ms", (time.perf_counter() - started) * 1000.0)
     return out

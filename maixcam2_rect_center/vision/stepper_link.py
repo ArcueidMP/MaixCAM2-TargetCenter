@@ -222,7 +222,7 @@ class StepperLink:
             try:
                 avail = int(port.available(0))
                 if avail > 0:
-                    data = port.read(avail)
+                    data = port.read(min(avail, 256), 0)
                     dropped += len(bytes(data)) if data else 0
             except Exception:
                 pass
@@ -307,7 +307,8 @@ class StepperLink:
             try:
                 available = int(port.available(0))
                 if available > 0:
-                    data = port.read(available)
+                    # 明确 timeout=0；每轴每帧最多 256 字节，避免 UART0 日志洪水拖长循环。
+                    data = port.read(min(available, 256), 0)
                     if data:
                         self._rxbuf[axis].extend(bytes(data))
                 buf = self._rxbuf[axis]

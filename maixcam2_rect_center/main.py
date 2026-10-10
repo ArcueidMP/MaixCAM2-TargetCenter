@@ -26,7 +26,98 @@ from vision.gimbal_aim import GimbalAim
 from vision.gimbal_self_test import GimbalSelfTest, probe_imu
 from vision.gimbal_calibrate import GimbalCalibrator, AutoCalibrate
 
-BUILD_ID = "2026-10-10-smooth-track-v15"
+BUILD_ID = "2026-10-10-fps-instrument-v17"
+
+
+def _preview_loop(frames, ready, closing, elapsed, max_ms, shown, slow,
+                  fps, slow_ms, backoff, show_callback=None):
+    """独立进程隔离 Display.show 的网络超时，避免原生绑定持有 GIL 时线程也被阻塞。
+
+    统计量（elapsed=本帧 show 毫秒 / max_ms=历史最大 / shown=已显示帧数 / slow=慢帧计数）
+    都通过共享 Value 回传主进程，用于**真实地**度量显示帧率 —— 不再只有主循环帧率。
+    """
+    disp = None
+    try:
+        if show_callback is None:
+            from maix import display, image
+            disp = display.Display()
+            show_callback = lambda view: disp.show(image.cv2image(view, bgr=True, copy=True))
+        ready.set()
+        while not closing.is_set():
+            try:
+                view = frames.get(timeout=0.1)
+            except Exception:
+                continue
+            started = time.perf_counter()
+            try:
+                show_callback(view)
+            except Exception as exc:
+                print("[preview] show failed: %s" % exc, flush=True)
+            show_ms = (time.perf_counter() - started) * 1000.0
+            elapsed.value = show_ms
+            if show_ms > max_ms.value:
+                max_ms.value = show_ms
+            shown.value += 1
+            if show_ms > slow_ms:
+                slow.value += 1
+            # 节拍 = 目标周期 **减去本帧 show 实际耗时**（旧版没减，实际帧率总是低于 SHOW_FPS）；
+            # 慢帧只加一个很小的退避。队列已是 maxsize=1 的"忙则丢帧"，不需要长睡。
+            delay = max(0.001, 1.0 / max(1, fps) - show_ms / 1000.0)
+            if show_ms > slow_ms:
+                delay += max(0.0, backoff)
+            if closing.wait(delay):
+                break
+            ready.set()
+    except Exception as exc:
+        print("[preview] disabled: %s" % exc, flush=True)
+    finally:
+        ready.clear()
+        if disp is not None:
+            disp.close()
+
+
+class AsyncPreview:
+    """最多一张在途画面；忙时不画图、不排队、不等预览，退出时有界清理。"""
+    def __init__(self, cfg, show_callback=None):
+        import multiprocessing as mp
+        # spawn 不继承 Maix/OpenCV 原生库锁，也兼容单文件版的 __mp_main__ 入口。
+        ctx = mp.get_context("spawn")
+        self.frames = ctx.Queue(maxsize=1)
+        self.ready = ctx.Event()
+        self.closing = ctx.Event()
+        # lock=False：只作日志用的近似读数，避免每帧加锁；读到略旧的值无所谓。
+        self.elapsed = ctx.Value("d", 0.0, lock=False)
+        self.max_ms = ctx.Value("d", 0.0, lock=False)
+        self.shown = ctx.Value("q", 0, lock=False)
+        self.slow = ctx.Value("q", 0, lock=False)
+        self.process = ctx.Process(target=_preview_loop, args=(
+            self.frames, self.ready, self.closing, self.elapsed, self.max_ms,
+            self.shown, self.slow, cfg.SHOW_FPS, cfg.SHOW_SLOW_MS,
+            cfg.SHOW_BACKOFF_S, show_callback), daemon=True)
+        self.process.start()
+
+    def can_submit(self):
+        return self.ready.is_set() and self.process.is_alive()
+
+    def submit(self, view):
+        if not self.can_submit():
+            return False
+        self.ready.clear()
+        try:
+            self.frames.put_nowait(view)
+            return True
+        except Exception:
+            self.ready.set()
+            return False
+
+    def close(self):
+        self.closing.set()
+        self.process.join(timeout=0.1)
+        if self.process.is_alive():
+            self.process.terminate()
+            self.process.join(timeout=0.1)
+        self.frames.cancel_join_thread()
+        self.frames.close()
 
 
 def _to_gray(img, image_module):
@@ -62,12 +153,18 @@ def main():
     # 小图上的多线程调度常常比运算本身更贵，也避免 ARM 多核线程争用。
     cv2.setNumThreads(Config.OPENCV_THREADS)
 
+    preview = None
+    if Config.SHOW:
+        try:
+            preview = AsyncPreview(Config)
+        except Exception as exc:
+            print("[preview] disabled after init failure: %s" % exc)
+
     cam = camera.Camera(Config.CAMERA_W, Config.CAMERA_H,
                         image.Format.FMT_GRAYSCALE,
                         fps=Config.CAMERA_FPS,
                         buff_num=Config.CAMERA_BUFFERS)
     cam.skip_frames(Config.SKIP_FRAMES)
-    disp = display.Display() if Config.SHOW else None
     uart = None
     if Config.ENABLE_UART:
         try:
@@ -142,10 +239,12 @@ def main():
     aim_use_raw = bool(getattr(Config, "AIM_USE_RAW", False))
     last = time.perf_counter()
     last_log = last
-    last_show = -1e10
     lens_enabled = Config.LENS_CORR
     totals = dict(read=0.0, lens=0.0, bridge=0.0, detect=0.0, laser=0.0,
                   uart=0.0, rx=0.0, aim=0.0, show=0.0, loop=0.0)
+    # 每个阶段的本窗口**最大值**：均值会掩盖"某一帧突然卡 500ms"这类卡顿。
+    maxima = {k: 0.0 for k in totals}
+    shown_prev = 0
     count, searches = 0, 0
     laser_state = laser_det.static_state() if laser_static else None
     laser_ms, laser_calls, laser_hits = 0.0, 0, 0
@@ -263,8 +362,7 @@ def main():
                         break
         aim_elapsed = time.perf_counter() - aim_started
         after_aim = time.perf_counter()
-        if disp is not None and (after_uart - last_show >= 1.0 / max(1, Config.SHOW_FPS)):
-            last_show = after_uart
+        if preview is not None and preview.can_submit():
             view = draw_result(gray, result, Config.SHOW_WIDTH,
                                top_offset=PANEL_H if laser_state is not None else 0)
             if laser_state is not None:
@@ -273,7 +371,7 @@ def main():
                                    use_raw=aim_use_raw)
             cv2.putText(view, "FPS %.1f" % fps, (12, view.shape[0] - 12),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2)
-            disp.show(image.cv2image(view, bgr=True, copy=True))
+            preview.submit(view)
         after_show = time.perf_counter()
         now = after_show
         dt = now - last
@@ -286,32 +384,57 @@ def main():
                   after_laser - after_detect, after_uart - after_laser,
                   rx_elapsed, aim_elapsed, after_show - after_aim, now - start)
         for key, elapsed in zip(totals, phases):
-            totals[key] += elapsed * 1000.0
+            ms = elapsed * 1000.0
+            totals[key] += ms
+            if ms > maxima[key]:
+                maxima[key] = ms
         count += 1
         searches += result.get("search_count", 0)
         if now - last_log > Config.LOG_INTERVAL:
-            window_fps = count / max(1e-6, now - last_log)
+            window = max(1e-6, now - last_log)
+            window_fps = count / window
             last_log = now
             laser_avg = laser_ms / laser_calls if laser_calls else 0.0
+            # 显示帧率是**实测**的（子进程真正 show 成功的帧数 / 窗口），与主循环帧率分开报。
+            shown_now = preview.shown.value if preview is not None else 0
+            show_fps = (shown_now - shown_prev) / window
+            shown_prev = shown_now
             print("[perf] %s valid=%s FPS=%.1f stage=%s frames=%d searches=%d "
                   "read=%.1f lens=%.1f bridge=%.1f detect=%.1f laser=%.1f "
                   "uart=%.1f rx=%.1f aim=%.1f show=%.1f loop=%.1f ms | laser_call=%.2fms n=%d hit=%d" %
                   ((BUILD_ID, result["valid"], window_fps, result["stage"], count, searches) +
                    tuple(totals[k] / count for k in totals) +
                    (laser_avg, laser_calls, laser_hits)))
+            print("[perf-max] loop=%.1f read=%.1f lens=%.1f detect=%.1f show=%.1f ms "
+                  "（窗口内单帧最大值；显著高于均值即为卡顿点）" %
+                  (maxima["loop"], maxima["read"], maxima["lens"], maxima["detect"], maxima["show"]))
             if aim is not None:
                 print(aim.status_line())
             if link is not None:
                 print(link.status_line())
+            if preview is not None:
+                slow = preview.slow.value
+                print("[preview] 实测显示 FPS=%.1f shown=%d show_last=%.1fms show_max=%.1fms "
+                      "slow=%d ready=%s（独立进程，不计入主循环）" %
+                      (show_fps, shown_now, preview.elapsed.value, preview.max_ms.value,
+                       slow, preview.can_submit()))
+                if getattr(Config, "SHOW_STALL_LIMIT", 0) and slow >= Config.SHOW_STALL_LIMIT:
+                    print("[preview] ⚠ 显示通道持续缓慢（show 累计 %d 次 > %.0fms）："
+                          "预览卡顿来自 MaixVision 图传链路，与本工程算法无关。"
+                          "正式追踪请设 SHOW=False（或再降 SHOW_WIDTH/SHOW_FPS）。"
+                          % (slow, Config.SHOW_SLOW_MS))
             count, searches = 0, 0
             laser_ms, laser_calls, laser_hits = 0.0, 0, 0
             for key in totals:
                 totals[key] = 0.0
+                maxima[key] = 0.0
     if link is not None:
         try:
             link.stop()
         except Exception as exc:
             print("[gimbal] stop on exit failed: %s" % exc)
+    if preview is not None:
+        preview.close()
     try:
         cam.close()
     except Exception:

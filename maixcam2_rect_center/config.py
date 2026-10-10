@@ -9,8 +9,18 @@ class Config:
     LENS_STRENGTH = 1.5
     SHOW = True
     # 检测不跳帧；显示独立限频，减少 RGB 转换和 MaixVision 图像传输开销。
-    SHOW_WIDTH = 480
-    SHOW_FPS = 15
+    SHOW_WIDTH = 320
+    SHOW_FPS = 10
+    # Display.show 含 MaixVision 图传，网络超时可能阻塞 500ms；由独立进程显示。
+    SHOW_SLOW_MS = 80.0
+    # ★ 慢帧的额外退避（秒）：**只补一点点**。旧值 2.0s 会让"图传一慢就睡 2 秒"，
+    #   预览直接塌到 ~0.4fps（现场"画面极其卡顿"的直接来源之一）。队列已是 maxsize=1
+    #   的"忙则丢帧"，本就不需要长退避；这里给一个小值即可，绝不长时间冻结画面。
+    SHOW_BACKOFF_S = 0.10
+    # ★ 预览看门狗：累计慢帧（show > SHOW_SLOW_MS）达到该值时，在 [perf] 旁打印一次
+    #   醒目提示，说明"画面卡顿来自 MaixVision 图传链路，不是算法"，并建议 SHOW=False。
+    #   预览在独立进程里，本项**不影响主循环帧率**；0 = 不提示。
+    SHOW_STALL_LIMIT = 30
     OPENCV_THREADS = 1
     LOG_INTERVAL = 2.0
     # ---- 双 ZDT 云台链路 -------------------------------------------------
@@ -81,20 +91,21 @@ class Config:
     #    acc=0 会让位置模式**瞬时启停**（急停瞬间激光会晃开），故用 ACC_TRACK。
     RPM_FINE = 60
     RPM_COARSE = 150
-    ACC_TRACK = 80         # 非 0 = 走曲线加减速；acc 越小越柔
+    ACC_TRACK = 160        # 缩短 v15 过慢的曲线，仍保留非零加减速
     ACC_DEFAULT = 0        # 仅其它机会性发帧用；闭环追踪请用 ACC_TRACK
     # ⑤ 死区与单帧限幅：死区应 ≥1.5×实测回差（齿隙里来回抖）；限幅防单帧猛甩。
     DEADBAND_PX = 3.0
-    MAX_STEP_PULSES = 60
-    COMMAND_INTERVAL_S = 0.10
+    MAX_STEP_PULSES = 80
+    COMMAND_INTERVAL_S = 0.06
     # 对最终运动量滤波：增大时缓慢跟随，减小/进入死区/换向时立即收缩，避免低通拖尾。
     # 时间常数越大越柔（0 = 关闭低通）；同时限制每秒运动量增长，0 = 关闭增长限速。
-    AIM_OUTPUT_LPF_TAU_S = 0.25
-    AIM_OUTPUT_SLEW_PPS = 120.0
+    AIM_OUTPUT_LPF_TAU_S = 0.10
+    AIM_OUTPUT_SLEW_PPS = 400.0
+    AIM_START_PULSES = 16
     # 下一条相对位置命令等上一段曲线运动的估算时间 + 余量，避免覆盖尚未完成的命令。
     # 这是时间估算，不是驱动器到位反馈；机构慢时可增大余量。
     AIM_WAIT_MOTION = True
-    AIM_MOTION_MARGIN_S = 0.03
+    AIM_MOTION_MARGIN_S = 0.005
     # 兼容旧口径 / 标定输出：**仅当上面 DEG_PER_PX_x = 0 时**才回退到这里。
     # CALIBRATE_AXIS 实测完会把脉冲/像素写回这两个（可在日志里反算 DEG_PER_PX 填回 ①）。
     PULSE_PER_PX_YAW = 0.0
@@ -232,8 +243,9 @@ class Config:
     # 稳态只采样四边窄带；失锁时缩小图搜索，每档验证成功就立即停止。
     SEARCH_WIDTH = 320
     # 合作式搜索：每帧至多做一次扫描或一次候选验证，时间预算是软预算。
-    SEARCH_BUDGET_MS = 25.0
-    SEARCH_MAX_PROPOSALS = 1
+    SEARCH_BUDGET_MS = 12.0
+    SEARCH_MAX_PROPOSALS = 2
+    TRACK_RETRY_FRAMES = 2
     SEARCH_GEOMETRY_STEPS = 8
     MAX_CONTOURS = 128
     LINE_MAX_PROPOSALS = 36

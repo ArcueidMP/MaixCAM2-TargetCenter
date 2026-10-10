@@ -9,7 +9,20 @@
 | 轨 | 目录 | BUILD_ID | 状态 |
 |---|---|---|---|
 | A（DeepSeek） | 根 | `2026-10-05-r7` | 性能治理 + 抗抖跟踪已完成 |
-| B（名义 GPT） | `maixcam2_rect_center/` | `2026-10-10-no-block-v14` | 黑框检测 + 光斑(fixed) + 双轴云台闭环 + **自检后免标定直接追踪**（标定加视觉快速失败防阻塞；见 `B轨云台调参手册.md`） |
+| B（名义 GPT） | `maixcam2_rect_center/` | `2026-10-10-fps-instrument-v17` | 黑框检测 + 光斑(fixed) + 双轴云台闭环 + 自检后免标定直接追踪（见 `B轨云台调参手册.md`） |
+
+- B 轨 v17（10-10）：**帧率治理 + 诚实计量**。v16 的 `AsyncPreview`（spawn 子进程显示）保住了
+  “主循环不被 `Display.show` 的 500ms 图传超时拖住”，但**板端帧率从没量过**（其测试自述 PC 耗时≠板端 FPS），
+  且**慢帧退避 `SHOW_BACKOFF_S=2.0` 会让预览塌到 ≈0.4fps**、delay 未扣 show 耗时 → 画面卡顿。
+  已改：`delay=max(0.001, 1/fps−show_s)`、退避 0.10、`SHOW_STALL_LIMIT=30`；
+  `[perf-max]`（单帧最大 loop/read/lens/detect/show）+ `[preview] 实测显示 FPS=…show_max=…`。
+  **记牢：预览在独立进程，`[perf] FPS=` 是主循环速率，`[preview] 实测显示 FPS=` 才是眼睛看到的刷新率**，
+  二者必须分开看，否则会把“图传慢”误诊为“识别慢”。门禁 72 OK/0 FAIL。
+- **v9 更跟手的原因（10-10 定案）**：v9(`track-curve-v9`) 追踪**又猛又快**（GAIN 0.5/COARSE 0.9、
+  RPM 120·400、MAX_STEP 360、死区 2.0、**无输出低通/无限速/不等待运动**）；v12 起因现场抱怨
+  “过激/超调”逐版放缓（GAIN 0.3、RPM 60·150、MAX_STEP 80），v15 又加输出低通 τ=0.25+限速 120
+  + `AIM_WAIT_MOTION=True`（走走停停）。**“跟手 ↔ 柔和”是跷跷板，不是 bug**；回退方案见 B 轨 README
+  「v9→v17 追踪手感对照」。**未擅自改回**（需用户确认，避免重新超调）。
 
 - B 轨 v11（10-10）：**上电自检与视觉/标定彻底解耦** —— `CALIBRATE_AXIS="auto"` 时旧代码
   **只建 AutoCalibrate、不建 GimbalSelfTest**，导致"上电无动作、要等画面出现靶心"。

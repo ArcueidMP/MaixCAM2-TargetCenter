@@ -160,7 +160,7 @@ def test_tracking_filter_stops_reach_uart():
             yaw = ports[0]
             assert len(_motion_frames(yaw)) == 1, yaw.sent
             pulses = int.from_bytes(_motion_frames(yaw)[0][6:10], "big")
-            assert pulses <= 4, pulses
+            assert pulses <= entry.Config.AIM_START_PULSES, pulses
             # main 正常退出另外发一条 stop；退出前必须已因死区/失锁/换向发过 stop。
             assert [p[1] for p in yaw.sent].count(0xFE) == 2, yaw.sent
     from target_api import AimLoop
@@ -188,7 +188,7 @@ def test_tracking_filter_stops_reach_uart():
     loop.tracker = types.SimpleNamespace(track=lambda frame, now: next(results))
     loop.step(None, now=0)
     stopped = loop.step(None, now=0.02)
-    assert loop.link.sent == [("yaw", 0xFD, 4, entry.Config.ACC_TRACK), ("yaw", 0xFE)], loop.link.sent
+    assert loop.link.sent == [("yaw", 0xFD, entry.Config.AIM_START_PULSES, entry.Config.ACC_TRACK), ("yaw", 0xFE)], loop.link.sent
     assert stopped["aim_state"] == "SETTLE"
     print("PASS: main/API 大误差小步起动，死区/失锁/换向取消帧抵达电机链路")
 

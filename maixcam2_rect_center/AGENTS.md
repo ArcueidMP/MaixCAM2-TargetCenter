@@ -156,12 +156,14 @@
    "D:/Python311/python.exe" -B tools/check_app.py --manifest   # C1..C10 机检 + 打印包内清单（应 12 文件）
    "D:/Python311/python.exe" -B tools/test_performance.py       # 视觉回归（基线：29/30、max 0.803px、0 误检）
    "D:/Python311/python.exe" -B tools/test_target_api.py        # 对外 API 回归
-   "D:/Python311/python.exe" -B tools/test_gimbal_aim.py        # 云台协议/闭环/看门狗/标定/自检/低通（当前 PASS(28)）
+   "D:/Python311/python.exe" -B tools/test_gimbal_aim.py        # 云台协议/闭环/看门狗/标定/自检/低通（当前 PASS(29)）
    "D:/Python311/python.exe" -B tools/test_main_self_test.py    # 端到端跑 main()：上电自检优先 / FAULT 阻断
+   "D:/Python311/python.exe" -B tools/test_runtime_performance.py  # 显示隔离 + 实测显示帧率 + 搜索/串口有界
    ```
    改光斑（`laser_spot.py` / `config.LASER_*`）还要跑 `tools/test_laser.py`；
-  改视觉阈值（`MIN_*`/`MAX_*`/`SCORE_*` 类）**必须**确认 `test_performance` 无回归；
-   改主循环控制流（自检/标定/追踪顺序）**必须**跑 `tools/test_main_self_test.py`。
+   改视觉阈值（`MIN_*`/`MAX_*`/`SCORE_*` 类）**必须**确认 `test_performance` 无回归；
+   改主循环控制流（自检/标定/追踪顺序）**必须**跑 `tools/test_main_self_test.py`；
+   改显示/预览（`AsyncPreview`、`config.SHOW_*`）或搜索预算 **必须**跑 `tools/test_runtime_performance.py`。
 
 > 只有 `config.py` 需要现场改。修改前先想清楚是否真该动阈值 —— 优先调曝光/位置，别一上来放宽判据。
 

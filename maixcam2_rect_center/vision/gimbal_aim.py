@@ -197,10 +197,10 @@ class GimbalAim:
         last = self._output_time[axis]
         max_dt = max(0.001, float(getattr(self.cfg, "COMMAND_INTERVAL_S", 0.1)))
         if last is None:
-            fps = max(1.0, float(getattr(self.cfg, "CAMERA_FPS", 30)))
-            dt = min(max_dt, 1.0 / fps)
+            dt = max_dt
         else:
-            dt = min(max_dt, max(0.0, now - last))
+            # 以实际控制周期计算，不再把 0.5s 的间隔压成 0.1s 导致低帧率下永远小步爬行。
+            dt = min(max(0.25, max_dt), max(0.0, now - last))
         self._output_time[axis] = now
         if abs(requested) <= abs(previous):
             value = requested
@@ -209,6 +209,9 @@ class GimbalAim:
             magnitude = abs(previous) + alpha * (abs(requested) - abs(previous))
             if slew > 0:
                 magnitude = min(magnitude, abs(previous) + slew * dt)
+            start = float(getattr(self.cfg, "AIM_START_PULSES", 0.0))
+            if last is None and start > 0:
+                magnitude = min(magnitude, start)
             value = math.copysign(magnitude, requested)
         self._output[axis] = value
         return value
@@ -303,6 +306,10 @@ class GimbalAim:
                 return None
         else:
             self._jump[axis] = 0
+        # 等待只比较时刻，不 sleep/循环。只有准备发送追踪命令时才运行低通/控制律。
+        interval = float(getattr(cfg, "COMMAND_INTERVAL_S", 0.08))
+        if now - self.last_command_time[axis] < interval or now < self._motion_until[axis]:
+            return None
         sign = float(getattr(cfg, "DIR_SIGN_YAW" if axis == "yaw" else "DIR_SIGN_PITCH", 1))
         max_pulses = int(getattr(cfg, "MAX_STEP_PULSES", 360))
         if self.controller is not None:
@@ -319,8 +326,7 @@ class GimbalAim:
             self._cancel_motion(axis, now)
             self._clear_output(axis)
         output = self._filter_output(axis, output, now)
-        interval = float(getattr(cfg, "COMMAND_INTERVAL_S", 0.08))
-        if now - self.last_command_time[axis] < interval or now < self._motion_until[axis]:
+        if axis in self._pending_stops:
             return None
         pulses = min(max_pulses, int(round(abs(output))))
         if pulses <= 0:

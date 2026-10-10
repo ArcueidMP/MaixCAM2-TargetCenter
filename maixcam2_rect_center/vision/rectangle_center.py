@@ -27,19 +27,12 @@ def _side_lengths(q):
 
 
 def _gaussian_solve(a, b):
-    """带部分主元的高斯消元；消去行向量化，避免 64 次 Python 行循环。"""
-    m = np.column_stack((np.asarray(a, np.float64), np.asarray(b, np.float64)))
-    for col in range(len(m)):
-        pivot = col + int(np.argmax(np.abs(m[col:, col])))
-        if abs(m[pivot, col]) < 1e-10:
-            raise ValueError("degenerate quadrilateral")
-        if pivot != col:
-            m[[col, pivot]] = m[[pivot, col]]
-        m[col] /= m[col, col]
-        factors = m[:, col].copy()
-        factors[col] = 0.0
-        m -= factors[:, None] * m[col]
-    return m[:, -1]
+    """显式 8×8 方程交给 OpenCV 原生 LU，避免 ARM 上逐行 Python 消元。"""
+    ok, solution = cv2.solve(np.asarray(a, np.float64),
+                             np.asarray(b, np.float64).reshape(-1, 1), flags=cv2.DECOMP_LU)
+    if not ok:
+        raise ValueError("degenerate quadrilateral")
+    return solution[:, 0]
 
 
 def _homography(src, dst):
@@ -112,6 +105,11 @@ class RectangleCenterDetector:
         self._circle_cache = {}
         self._search_count = 0
         self._threshold_count = 0
+        self._search_work = None
+        self._search_roi = None
+        self._misses = 0
+        self._proposals = 0
+        self._profiles = {}
 
     def _valid_quad(self, q, shape, margin=1):
         h, w = shape
@@ -153,16 +151,20 @@ class RectangleCenterDetector:
             rect_to_image = _homography(physical_quad, q)
             t = self._t
             # 三个点覆盖黑带的中部，再在内边缘后采两个亮面点。
-            offsets = tape * np.array([0.20, 0.40, 0.60, 1.22, 1.45])
-            p = np.empty((4, len(t), 5, 2), np.float64)
-            p[0, :, :, 0] = (tape + t * (w - 2 * tape))[:, None]
-            p[0, :, :, 1] = offsets
-            p[1, :, :, 0] = w - offsets
-            p[1, :, :, 1] = (tape + t * (h - 2 * tape))[:, None]
-            p[2, :, :, 0] = (tape + (1 - t) * (w - 2 * tape))[:, None]
-            p[2, :, :, 1] = h - offsets
-            p[3, :, :, 0] = offsets
-            p[3, :, :, 1] = (tape + (1 - t) * (h - 2 * tape))[:, None]
+            key = (w, h, tape)
+            p = self._profiles.get(key)
+            if p is None:
+                offsets = tape * np.array([0.20, 0.40, 0.60, 1.22, 1.45])
+                p = np.empty((4, len(t), 5, 2), np.float64)
+                p[0, :, :, 0] = (tape + t * (w - 2 * tape))[:, None]
+                p[0, :, :, 1] = offsets
+                p[1, :, :, 0] = w - offsets
+                p[1, :, :, 1] = (tape + t * (h - 2 * tape))[:, None]
+                p[2, :, :, 0] = (tape + (1 - t) * (w - 2 * tape))[:, None]
+                p[2, :, :, 1] = h - offsets
+                p[3, :, :, 0] = offsets
+                p[3, :, :, 1] = (tape + (1 - t) * (h - 2 * tape))[:, None]
+                self._profiles[key] = p
             mapped = project_points(rect_to_image, p.reshape(-1, 2)).reshape(p.shape)
         except (ValueError, np.linalg.LinAlgError):
             return None
@@ -172,17 +174,20 @@ class RectangleCenterDetector:
             return None
         samples = _sample(gray, mapped).astype(np.float32)
         dark = np.max(samples[:, :, :3], axis=2)
-        bright = np.median(samples[:, :, 3:], axis=2)
+        # 两个数的中位数就是均值；避免进入 NumPy 通用中位数路径。
+        bright = (samples[:, :, 3] + samples[:, :, 4]) * 0.5
         delta = bright - dark
         coverage = ((delta >= self.cfg.MIN_EDGE_CONTRAST) &
                     (dark <= bright * self.cfg.MAX_DARK_BRIGHT_RATIO)).mean(axis=1)
         edge_contrast = np.median(delta, axis=1)
+        contrast = float(np.median(edge_contrast))
         # 至少三边的大部分采样成立，第四边也必须有证据，不接受凭亮中心猜框。
         if (np.count_nonzero(coverage >= self.cfg.MIN_EDGE_COVERAGE) < 3 or
                 coverage.min() < self.cfg.WEAK_EDGE_COVERAGE or
-                np.median(edge_contrast) < self.cfg.MIN_EDGE_CONTRAST):
+                contrast < self.cfg.MIN_EDGE_CONTRAST):
             return None
-        rows = [dict(dark=float(np.median(dark[i])), inside=float(np.median(bright[i])),
+        dark_median, bright_median = np.median(dark, axis=1), np.median(bright, axis=1)
+        rows = [dict(dark=float(dark_median[i]), inside=float(bright_median[i]),
                      contrast=float(edge_contrast[i]), coverage=float(coverage[i])) for i in range(4)]
         outer = project_points(rect_to_image, _rectangle(w, h)).astype(np.float32)
         if not self._valid_quad(outer, gray.shape):
@@ -190,9 +195,9 @@ class RectangleCenterDetector:
         return dict(quad=q, outer_quad=outer,
                     inner_quad=project_points(rect_to_image, _rectangle(w, h, tape)).astype(np.float32),
                     kind=kind, rect_to_image=rect_to_image, width_mm=w, height_mm=h,
-                    edge_profile=rows, contrast=float(np.median(edge_contrast)),
+                    edge_profile=rows, contrast=contrast,
                     min_contrast=float(edge_contrast.min()), coverage=coverage,
-                    score=float(np.median(edge_contrast) + 60 * coverage.mean()))
+                    score=float(contrast + 60 * coverage.mean()))
 
     def _refine(self, gray, q, kind, radius):
         """当前帧四条灰度窄带 -> 有方向的边缘跳变 -> fitLine -> 四角交点。"""
@@ -252,7 +257,10 @@ class RectangleCenterDetector:
         candidates = []
         # 先用廉价的包围框/面积筛选，仅拟合最大的少数轮廓。
         eligible = []
-        for i, cnt in enumerate(contours):
+        # 按轮廓原始长度先筛选，限制 Python 包围框/面积调用次数。
+        indices = sorted(range(len(contours)), key=lambda i: len(contours[i]), reverse=True)
+        for i in indices[:int(getattr(self.cfg, "MAX_CONTOURS", 128))]:
+            cnt = contours[i]
             x, y, cw, ch = cv2.boundingRect(cnt)
             if min(cw, ch) < 15 or cw * ch < w * h * self.cfg.MIN_AREA_RATIO:
                 continue
@@ -396,7 +404,76 @@ class RectangleCenterDetector:
                 break
         return best
 
-    def process(self, gray, timestamp=None):
+    def _search_step(self, gray, roi, deadline):
+        """每帧最多扫描一档阈值并验证少量候选；跨帧只保留几何，不保留旧图像。"""
+        work = self._search_work
+        if work is None:
+            self._search_roi = roi
+            work = self._search_work = dict(index=0, thresholds=None, pending=[], th=None)
+        roi = self._search_roi
+        stage = "roi_search" if roi is not None else "full_search"
+        limit = max(1, int(getattr(self.cfg, "SEARCH_MAX_PROPOSALS", 2)))
+        if not work["pending"]:
+            x, y, w, h = roi if roi is not None else (0, 0, gray.shape[1], gray.shape[0])
+            crop = gray[y:y + h, x:x + w]
+            scale = min(1.0, self.cfg.SEARCH_WIDTH / float(w))
+            sw, sh = max(32, int(round(w * scale))), max(24, int(round(h * scale)))
+            small = cv2.resize(crop, (sw, sh), interpolation=cv2.INTER_AREA) if scale < 1 else crop
+            sx, sy = w / float(sw), h / float(sh)
+            if work["thresholds"] is None:
+                otsu, _ = cv2.threshold(small, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+                thresholds = [self._locked_th] if self._locked_th is not None else []
+                for th in (int(otsu),) + tuple(self.cfg.DARK_THRESHOLDS):
+                    if not any(abs(th - t) < 6 for t in thresholds):
+                        thresholds.append(th)
+                if roi is not None:
+                    thresholds = thresholds[:2]  # ROI 快速失败后切全图，避免困在已移出目标的 ROI。
+                work["thresholds"] = thresholds
+            index, thresholds = work["index"], work["thresholds"]
+            if index > len(thresholds):
+                # ROI 无候选时下一帧切全图；全图一轮结束后下一帧重新算 Otsu。
+                self._search_work = None
+                self._track = None
+                return None, stage, False
+            self._search_count += 1
+            work["index"] += 1
+            offset, factor = np.array([x, y], np.float32), np.array([sx, sy], np.float32)
+            if index < len(thresholds):
+                th = work["th"] = thresholds[index]
+                self._threshold_count += 1
+                _, mask = cv2.threshold(small, th, 255, cv2.THRESH_BINARY_INV)
+                mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self._kernel)
+                work["pending"] = [(q * factor + offset, kind) for q, kind in self._candidate_quads(mask)]
+            else:
+                work["th"] = None
+                edges = cv2.Canny(small, self.cfg.CANNY_LOW, self.cfg.CANNY_HIGH)
+                contours = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)[-2]
+                contours = sorted(contours, key=cv2.contourArea, reverse=True)[:self.cfg.MAX_CANDIDATES]
+                for cnt in contours:
+                    if cv2.contourArea(cnt) < sw * sh * self.cfg.MIN_AREA_RATIO:
+                        continue
+                    ap = cv2.approxPolyDP(cnt, self.cfg.APPROX_EPSILON * cv2.arcLength(cnt, True), True)
+                    if len(ap) == 4 and cv2.isContourConvex(ap):
+                        q = _order_quad(ap) * factor + offset
+                        work["pending"].extend([(q, "inner"), (q, "outer")])
+            # 一次轮廓扫描也算一个不可拆操作；预算已用尽则本帧不再解几何。
+        while work["pending"] and self._proposals < limit and time.perf_counter() < deadline:
+            q, kind = work["pending"].pop(0)
+            self._proposals += 1
+            verified = self._verify(gray, q, kind)
+            if verified is None:
+                continue
+            refined = self._refine(gray, q, kind, self.cfg.REFINE_RADIUS)
+            if refined is not None:
+                precise = self._verify(gray, refined, kind)
+                if precise is not None:
+                    verified = precise
+            self._locked_th = work["th"]
+            self._search_work = None
+            return verified, stage, False
+        return None, stage, True
+
+    def process(self, gray, timestamp=None, exhaustive=False):
         started = time.perf_counter()
         g = np.asarray(gray)
         if g.ndim == 3 and g.shape[2] == 1:
@@ -404,7 +481,8 @@ class RectangleCenterDetector:
         if g.ndim != 2 or g.dtype != np.uint8:
             raise ValueError("process expects a uint8 grayscale image")
         self._frame += 1
-        self._search_count = self._threshold_count = 0
+        self._search_count = self._threshold_count = self._proposals = 0
+        pending = False
         candidate, stage = None, "search"
         if self._track is not None:
             q, kind = self._track["quad"], self._track["kind"]
@@ -412,23 +490,36 @@ class RectangleCenterDetector:
             if q is not None:
                 candidate = self._verify(g, q, kind)
                 stage = "track"
+        roi = None
         if candidate is None and self._track is not None:
             q = self._track["outer_quad"]
             lo, hi = q.min(axis=0), q.max(axis=0)
             pad = np.maximum((hi - lo) * self.cfg.ROI_PADDING, 24)
             lo = np.maximum(0, np.floor(lo - pad)).astype(int)
             hi = np.minimum([g.shape[1], g.shape[0]], np.ceil(hi + pad)).astype(int)
-            candidate = self._search(g, (int(lo[0]), int(lo[1]), int(hi[0] - lo[0]), int(hi[1] - lo[1])))
-            stage = "roi_search"
+            roi = (int(lo[0]), int(lo[1]), int(hi[0] - lo[0]), int(hi[1] - lo[1]))
+        if candidate is None and exhaustive:
+            if roi is not None:
+                candidate = self._search(g, roi)
+                stage = "roi_search"
+            if candidate is None:
+                candidate = self._search(g)
+                stage = "full_search"
+        elif candidate is None:
+            budget = max(0.1, float(getattr(self.cfg, "SEARCH_BUDGET_MS", 12))) / 1000.0
+            candidate, stage, pending = self._search_step(g, roi, started + budget)
         if candidate is None:
-            candidate = self._search(g)
-            stage = "full_search"
-        if candidate is None:
-            self._track = self._smooth = None
-            self._locked_th = None
-            self.last = dict(valid=False, stage="no_black_frame", search_count=self._search_count,
-                             thresholds=self._threshold_count, detector_ms=(time.perf_counter() - started) * 1000)
+            self._smooth = None
+            self._misses += 1
+            if self._misses > int(getattr(self.cfg, "TRACK_RETRY_FRAMES", 2)):
+                self._track = None
+            self.last = dict(valid=False, stage="search_pending" if pending else "no_black_frame",
+                             search_stage=stage, search_count=self._search_count,
+                             proposals=self._proposals, thresholds=self._threshold_count,
+                             detector_ms=(time.perf_counter() - started) * 1000)
             return self.last
+        self._misses = 0
+        self._search_work = None
         self._track = candidate
         w, h = candidate["width_mm"], candidate["height_mm"]
         matrix = candidate["rect_to_image"]
@@ -450,7 +541,8 @@ class RectangleCenterDetector:
                       outer_inferred=candidate["kind"] == "inner",
                       circle_points=project_points(matrix, self._circle_cache[key]),
                       stage=stage, threshold=self._locked_th, search_count=self._search_count,
-                      thresholds=self._threshold_count, detector_ms=(time.perf_counter() - started) * 1000)
+                       thresholds=self._threshold_count, proposals=self._proposals,
+                       detector_ms=(time.perf_counter() - started) * 1000)
         self.last = result
         return result
 
