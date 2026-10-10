@@ -8,18 +8,30 @@ class Config:
     LENS_CORR = True
     LENS_STRENGTH = 1.5
     SHOW = True
+    # ★★ 显示通道选择（决定 MaixVision 能不能看到画面）★★
+    #   False（默认）= **主进程内**直接 `display.Display().show()` —— 这是 v9/v15 的成熟路径，
+    #                  **MaixVision 一定能看到摄像头画面**；按 SHOW_FPS 限频，且图传变慢时
+    #                  节拍会**自动降速**（最低 SHOW_SLOW_MIN_FPS），不会把主循环拖死。
+    #   True          = 独立**子进程**显示（`AsyncPreview`，v16 引入）：主循环绝不被 show 阻塞，
+    #                  **但依赖子进程能成功建 `Display` 并把帧推给 MaixVision**。MaixVision 下
+    #                  由子进程建 Display 属于未验证用法：一旦子进程起不来 / 建 Display 失败，
+    #                  `ready` 永远不置位 → `can_submit()` 恒 False → **主循环一帧都不画** →
+    #                  预览面板永远"无数据"。**现场若看不到画面，先把这里设回 False。**
+    SHOW_ASYNC = False
     # 检测不跳帧；显示独立限频，减少 RGB 转换和 MaixVision 图像传输开销。
     SHOW_WIDTH = 320
     SHOW_FPS = 10
-    # Display.show 含 MaixVision 图传，网络超时可能阻塞 500ms；由独立进程显示。
+    # 同步显示在"图传变慢"时的自动最低帧率：show 越慢，节拍越慢（最多降到这个值），
+    # 保证主循环不被 0.5s 级的 show 拖死，同时画面仍然会更新。
+    SHOW_SLOW_MIN_FPS = 1.0
+    # Display.show 含 MaixVision 图传，网络超时可能阻塞 500ms。
     SHOW_SLOW_MS = 80.0
-    # ★ 慢帧的额外退避（秒）：**只补一点点**。旧值 2.0s 会让"图传一慢就睡 2 秒"，
-    #   预览直接塌到 ~0.4fps（现场"画面极其卡顿"的直接来源之一）。队列已是 maxsize=1
-    #   的"忙则丢帧"，本就不需要长退避；这里给一个小值即可，绝不长时间冻结画面。
+    # ★ 慢帧的额外退避（秒）：仅 `SHOW_ASYNC=True` 的子进程路径使用（只补一点点）。
+    #   旧值 2.0s 会让"图传一慢就睡 2 秒"，预览直接塌到 ~0.4fps（现场"画面极其卡顿"的来源之一）。
     SHOW_BACKOFF_S = 0.10
     # ★ 预览看门狗：累计慢帧（show > SHOW_SLOW_MS）达到该值时，在 [perf] 旁打印一次
     #   醒目提示，说明"画面卡顿来自 MaixVision 图传链路，不是算法"，并建议 SHOW=False。
-    #   预览在独立进程里，本项**不影响主循环帧率**；0 = 不提示。
+    #   0 = 不提示。
     SHOW_STALL_LIMIT = 30
     OPENCV_THREADS = 1
     LOG_INTERVAL = 2.0

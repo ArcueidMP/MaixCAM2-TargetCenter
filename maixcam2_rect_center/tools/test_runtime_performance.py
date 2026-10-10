@@ -16,7 +16,7 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from config import Config
-from main import AsyncPreview
+from main import AsyncPreview, SyncPreview
 from vision.gimbal_aim import GimbalAim
 from vision.rectangle_center import RectangleCenterDetector
 from vision.stepper_link import StepperLink
@@ -122,6 +122,78 @@ def test_preview_reports_real_fps_without_long_freeze(preview_class=AsyncPreview
         preview.close()
 
 
+def test_sync_preview_is_inprocess_and_adaptive():
+    """默认显示路径必须在**主进程内**直接 `display.Display().show()`
+    （这是"MaixVision 能看到画面"的充要条件），并且慢帧时自动降速而不是冻结/拖死主循环。
+
+    背景：v16 把显示挪进 spawn 子进程后，子进程一旦起不来 / 建 Display 失败，
+    `can_submit()` 恒 False → 主循环一帧都不画 → 预览面板永远"无数据"。本测试锁死
+    "默认走同步路径 + Display 建在主进程"。
+    """
+    import sys
+    import types
+    calls = []
+    state = {"slow": False}
+    fake_maix = types.ModuleType("maix")
+    fake_display = types.ModuleType("maix.display")
+    fake_image = types.ModuleType("maix.image")
+
+    class FakeDisplay:
+        def __init__(self):
+            calls.append("display")
+
+        def show(self, img):
+            calls.append("show")
+            if state["slow"]:
+                time.sleep(0.2)
+
+        def close(self):
+            calls.append("close")
+
+    fake_display.Display = FakeDisplay
+    fake_image.cv2image = lambda view, bgr=True, copy=True: view
+    fake_maix.display, fake_maix.image = fake_display, fake_image
+    names = ("maix", "maix.display", "maix.image")
+    saved = {k: sys.modules.get(k) for k in names}
+    sys.modules.update({"maix": fake_maix, "maix.display": fake_display, "maix.image": fake_image})
+    frame = np.zeros((40, 60, 3), np.uint8)
+    cfg = type("SyncCfg", (Config,),
+               dict(SHOW_FPS=20, SHOW_SLOW_MS=80.0, SHOW_SLOW_MIN_FPS=2.0))
+    try:
+        preview = SyncPreview(cfg)
+        assert calls.count("display") == 1, "Display 必须建在主进程（同步路径）"
+        t0 = time.perf_counter()
+        while time.perf_counter() - t0 < 0.8:
+            if preview.can_submit():
+                preview.submit(frame)
+            time.sleep(1.0 / 120)
+        fast_fps = preview.shown / max(1e-6, time.perf_counter() - t0)
+        assert preview.shown > 0 and calls.count("show") == preview.shown, "同步路径没有真正 show"
+        assert fast_fps > cfg.SHOW_FPS * 0.5, "同步预览帧率被节拍压得过低: %.1f" % fast_fps
+        print("PASS: 同步预览在主进程内 show，实测显示 FPS=%.1f（目标 %d）" % (fast_fps, cfg.SHOW_FPS))
+        preview.close()
+
+        state["slow"] = True
+        preview = SyncPreview(cfg)
+        t0 = time.perf_counter()
+        while time.perf_counter() - t0 < 1.5:
+            if preview.can_submit():
+                preview.submit(frame)
+            time.sleep(1.0 / 120)
+        slow_fps = preview.shown / max(1e-6, time.perf_counter() - t0)
+        assert slow_fps > 1.0, "慢帧把同步预览冻结了: %.2f fps" % slow_fps
+        assert preview.slow > 0 and preview.max_ms >= 150
+        print("PASS: 慢帧下同步预览自动降速但仍更新，实测 FPS=%.2f show_max=%.0fms"
+              % (slow_fps, preview.max_ms))
+        preview.close()
+    finally:
+        for k in names:
+            if saved[k] is None:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = saved[k]
+
+
 def test_uart_read_is_nonblocking_and_bounded():
     class Port:
         def __init__(self):
@@ -174,6 +246,7 @@ def compare_v15():
 def main():
     cv2.setNumThreads(Config.OPENCV_THREADS)
     test_slow_preview_isolation()
+    test_sync_preview_is_inprocess_and_adaptive()
     test_preview_reports_real_fps_without_long_freeze()
     test_search_work_is_bounded_and_current()
     test_uart_read_is_nonblocking_and_bounded()

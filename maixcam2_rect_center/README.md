@@ -1,11 +1,53 @@
 # MaixCAM2 黑框中心：四边精修、快速跟踪与双轴云台瞄准
 
-构建号 `2026-10-10-fps-instrument-v17`，应用版本 `1.4.0`。在 MaixVision 中打开本文件夹，选择“运行项目”。
+构建号 `2026-10-10-sync-display-v18`，应用版本 `1.4.0`。在 MaixVision 中打开本文件夹，选择“运行项目”。
 必须一起下发应用包内的 **12 个文件**（`app.yaml` / `main.py` / `config.py` / `target_api.py` /
 `assets/icon.png` / `vision/` 下 7 个 `.py`），不能只运行当前 `main.py`。
 
 > 只想临时试参数时，也可以先 `python tools/build_single.py` 生成 `dist/main_single.py`，
 > 再用「运行当前文件」—— 那是自包含的单文件版，语义与分模块完全一致。改了源码记得重新生成。
+
+## 2026-10-10 改动⑩：恢复「主进程内显示」——修 MaixVision 看不到画面（`-sync-display-v18`）
+
+**现场现象**：运行当前版本后，**MaixVision 看不到摄像头画面**（预览面板无数据/全黑）。
+
+**核查结论：是代码问题**（v16 引入的架构缺陷），不是算法或相机问题：
+
+```
+v16/v17: main 进程  --pickle-->  spawn 子进程  --Display.show-->  MaixVision
+                                ↑ 子进程若起不来 / 建 Display 失败 / 无法把帧推给 MaixVision
+                                  → ready 永不置位 → can_submit() 恒 False
+                                  → 主循环连 draw_result 都不调用 → 一帧都不显示
+```
+
+关键点：`AsyncPreview.can_submit()` 返回 `ready.is_set() and process.is_alive()`，而
+`ready` 只在子进程**成功创建 `Display` 之后**才置位。一旦子进程的 `Display()` 不成立，
+预览不是"卡"而是**彻底空白**，且主进程侧无任何报错 —— 与现场现象完全吻合。
+另外 `maix` 的原生显示上下文在子进程里能否把帧推给 MaixVision，属于未验证用法。
+
+**改法：默认回到「主进程内显示」的成熟路径**（v9/v15 用的就是它，MaixVision 一定可见）：
+
+- 新增 `SyncPreview`：主进程内直接 `display.Display().show()`，与 `AsyncPreview` 同接口；
+- 新增开关 **`Config.SHOW_ASYNC`（默认 `False` = 同步路径）**；想要"主循环完全不被 show 拖住"
+  才设 `True`（此时才走子进程，需自行确认能看到画面）；
+- 同步路径**按 `SHOW_FPS` 限频**，并新增 **`SHOW_SLOW_MIN_FPS`（默认 1.0）**：图传变慢时
+  节拍照 `×2` 自动降速（封顶到该下限），既保证画面在更新，又不让 0.5s 级的 show 拖死主循环；
+  变快后节拍自动回到目标帧率。
+- 启动日志新增一行，直接写明当前通道，便于现场判断：
+  `[preview] SHOW=True mode=sync-inprocess —— 看不到画面时先确认这里是 sync-inprocess…`
+- `[preview]` 运行日志统一报 `实测显示 FPS / shown / show_last / show_max / slow / mode`。
+
+**回归**：`tools/test_runtime_performance.py` 新增
+`test_sync_preview_is_inprocess_and_adaptive` —— 注入假 `maix` 模块，断言
+① `Display` 建在**主进程**（同步路径的充要条件）、② `show` 调用次数 == 显示帧数、
+③ 快速通道实测 ≈`SHOW_FPS`、④ 200ms 慢帧下仍 >1fps 且自动标 `slow`。
+
+> **排查口诀**：MaixVision 看不到画面时 —— ① 启动日志确认 `mode=sync-inprocess`；
+> ② 若确为 `sync` 仍无画面且**卡在 `SAMPLE_VO_StartChn`**，那是设备显示子系统（VO/fb0）
+> 卡死，**重启设备**（拔插 Type-C）即可，与本工程无关。
+
+- `BUILD_ID = 2026-10-10-sync-display-v18`；门禁 **72 OK / 0 FAIL**（应用包仍 12 文件）；
+  `test_runtime_performance` 6 项 PASS；其余回归无变化。
 
 ## 2026-10-10 改动⑨：显示帧率可测 + 预览不再长冻结（`-fps-instrument-v17`）
 

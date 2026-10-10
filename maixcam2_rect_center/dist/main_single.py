@@ -10,9 +10,9 @@ main_single.py · 25E 靶心识别（轨道 B）—— 单文件自包含版
 用途：在 MaixVision 里点「运行当前文件」即可运行（不必用「运行项目」）。
       行为与模块化工程完全一致，输出也就完全一致。
 
-生成时间：2026-10-10 14:21:40
-    config.py                    sha1=ffd634d35b20
-    main.py                      sha1=3bdb31bce3f4
+生成时间：2026-10-10 14:27:20
+    config.py                    sha1=00aaa5ba9ced
+    main.py                      sha1=662793fb69ae
     target_api.py                sha1=e334a5b938ac
     vision/gimbal_aim.py         sha1=9231e9b98ce5
     vision/gimbal_calibrate.py   sha1=819bd3980592
@@ -25,7 +25,7 @@ main_single.py · 25E 靶心识别（轨道 B）—— 单文件自包含版
 import sys as _sys
 import types as _types
 
-_SRC_SHA1 = {'config.py': 'ffd634d35b206ae609cc62bc52470fd4b14751ae', 'vision/rectangle_center.py': 'f779e749d2d853f982429c0a88a92b551bcbb46a', 'vision/laser_spot.py': 'd8d722904443201c539507baca6d69be668ade93', 'vision/gimbal_self_test.py': 'b21e1ea05d03c7cf760304a3b72d26ee4dae92a2', 'vision/gimbal_aim.py': '9231e9b98ce54a4015f7610256050a56cfb9a948', 'vision/stepper_link.py': 'c41fd48b7a2f45be83d8557f61ed35380ca3e006', 'vision/gimbal_calibrate.py': '819bd3980592796289004288d6e95fee5e9aa92f', 'target_api.py': 'e334a5b938ac1315d2111c16b90dd30467fc11f6', 'main.py': '3bdb31bce3f415762b58171a0c3108520690354c'}
+_SRC_SHA1 = {'config.py': '00aaa5ba9ced016cdceb23901dce5d99adc193e1', 'vision/rectangle_center.py': 'f779e749d2d853f982429c0a88a92b551bcbb46a', 'vision/laser_spot.py': 'd8d722904443201c539507baca6d69be668ade93', 'vision/gimbal_self_test.py': 'b21e1ea05d03c7cf760304a3b72d26ee4dae92a2', 'vision/gimbal_aim.py': '9231e9b98ce54a4015f7610256050a56cfb9a948', 'vision/stepper_link.py': 'c41fd48b7a2f45be83d8557f61ed35380ca3e006', 'vision/gimbal_calibrate.py': '819bd3980592796289004288d6e95fee5e9aa92f', 'target_api.py': 'e334a5b938ac1315d2111c16b90dd30467fc11f6', 'main.py': '662793fb69ae7ef28a4e4a0646b761de32acc2b0'}
 
 # --------------------------------------------------------------------------
 # ① 各模块源码原样嵌入，运行时装进 sys.modules（保持原 import 语义）
@@ -44,18 +44,30 @@ class Config:
     LENS_CORR = True
     LENS_STRENGTH = 1.5
     SHOW = True
+    # ★★ 显示通道选择（决定 MaixVision 能不能看到画面）★★
+    #   False（默认）= **主进程内**直接 `display.Display().show()` —— 这是 v9/v15 的成熟路径，
+    #                  **MaixVision 一定能看到摄像头画面**；按 SHOW_FPS 限频，且图传变慢时
+    #                  节拍会**自动降速**（最低 SHOW_SLOW_MIN_FPS），不会把主循环拖死。
+    #   True          = 独立**子进程**显示（`AsyncPreview`，v16 引入）：主循环绝不被 show 阻塞，
+    #                  **但依赖子进程能成功建 `Display` 并把帧推给 MaixVision**。MaixVision 下
+    #                  由子进程建 Display 属于未验证用法：一旦子进程起不来 / 建 Display 失败，
+    #                  `ready` 永远不置位 → `can_submit()` 恒 False → **主循环一帧都不画** →
+    #                  预览面板永远"无数据"。**现场若看不到画面，先把这里设回 False。**
+    SHOW_ASYNC = False
     # 检测不跳帧；显示独立限频，减少 RGB 转换和 MaixVision 图像传输开销。
     SHOW_WIDTH = 320
     SHOW_FPS = 10
-    # Display.show 含 MaixVision 图传，网络超时可能阻塞 500ms；由独立进程显示。
+    # 同步显示在"图传变慢"时的自动最低帧率：show 越慢，节拍越慢（最多降到这个值），
+    # 保证主循环不被 0.5s 级的 show 拖死，同时画面仍然会更新。
+    SHOW_SLOW_MIN_FPS = 1.0
+    # Display.show 含 MaixVision 图传，网络超时可能阻塞 500ms。
     SHOW_SLOW_MS = 80.0
-    # ★ 慢帧的额外退避（秒）：**只补一点点**。旧值 2.0s 会让"图传一慢就睡 2 秒"，
-    #   预览直接塌到 ~0.4fps（现场"画面极其卡顿"的直接来源之一）。队列已是 maxsize=1
-    #   的"忙则丢帧"，本就不需要长退避；这里给一个小值即可，绝不长时间冻结画面。
+    # ★ 慢帧的额外退避（秒）：仅 `SHOW_ASYNC=True` 的子进程路径使用（只补一点点）。
+    #   旧值 2.0s 会让"图传一慢就睡 2 秒"，预览直接塌到 ~0.4fps（现场"画面极其卡顿"的来源之一）。
     SHOW_BACKOFF_S = 0.10
     # ★ 预览看门狗：累计慢帧（show > SHOW_SLOW_MS）达到该值时，在 [perf] 旁打印一次
     #   醒目提示，说明"画面卡顿来自 MaixVision 图传链路，不是算法"，并建议 SHOW=False。
-    #   预览在独立进程里，本项**不影响主循环帧率**；0 = 不提示。
+    #   0 = 不提示。
     SHOW_STALL_LIMIT = 30
     OPENCV_THREADS = 1
     LOG_INTERVAL = 2.0
@@ -2856,7 +2868,7 @@ from vision.gimbal_aim import GimbalAim
 from vision.gimbal_self_test import GimbalSelfTest, probe_imu
 from vision.gimbal_calibrate import GimbalCalibrator, AutoCalibrate
 
-BUILD_ID = "2026-10-10-fps-instrument-v17"
+BUILD_ID = "2026-10-10-sync-display-v18"
 
 
 def _preview_loop(frames, ready, closing, elapsed, max_ms, shown, slow,
@@ -2950,6 +2962,71 @@ class AsyncPreview:
         self.frames.close()
 
 
+class SyncPreview:
+    """**主进程内**直接 `Display.show`（MaixVision 一定能看到画面），按帧率限频 + 慢帧自动降速。
+
+    与 `AsyncPreview` 同接口，用 `Config.SHOW_ASYNC` 切换。`show()` 是阻塞调用，无法被打断，
+    因此限频在主循环侧完成：`can_submit()` 只在"到点"时返回 True，`submit()` 里真正 show。
+    图传变慢时自动拉长节拍（最低 `SHOW_SLOW_MIN_FPS`），保证主循环不被 0.5s 级的 show 拖死。
+    """
+
+    def __init__(self, cfg):
+        from maix import display
+        self._display = display.Display()
+        self._base_period = 1.0 / max(1, cfg.SHOW_FPS)
+        self._period = self._base_period
+        self._min_period = 1.0 / max(0.1, float(getattr(cfg, "SHOW_SLOW_MIN_FPS", 1.0)))
+        self._slow_ms = float(cfg.SHOW_SLOW_MS)
+        self._next = 0.0
+        # 与 AsyncPreview 对齐的统计量（子进程版是 mp.Value，用 _stat() 统一读取）。
+        self.elapsed = 0.0
+        self.max_ms = 0.0
+        self.shown = 0
+        self.slow = 0
+
+    def can_submit(self):
+        return time.perf_counter() >= self._next
+
+    def submit(self, view):
+        from maix import image as maix_image
+        started = time.perf_counter()
+        try:
+            self._display.show(maix_image.cv2image(view, bgr=True, copy=True))
+        except Exception as exc:
+            print("[preview] show failed: %s" % exc, flush=True)
+        show_ms = (time.perf_counter() - started) * 1000.0
+        self.elapsed = show_ms
+        if show_ms > self.max_ms:
+            self.max_ms = show_ms
+        self.shown += 1
+        if show_ms > self._slow_ms:
+            self.slow += 1
+            # 慢帧：节拍翻倍（封顶到 _min_period），让主循环尽快脱身；只偶发打印，避免刷屏。
+            self._period = min(self._period * 2.0, self._min_period)
+            if self.slow == 1 or self.slow % 20 == 0:
+                print("[preview] ⚠ show=%.0fms 偏慢 -> 显示节拍自动降到 %.1ffps（MaixVision 图传瓶颈）"
+                      "；需要主循环完全不受显示影响可设 SHOW_ASYNC=True，不需要预览可设 SHOW=False"
+                      % (show_ms, 1.0 / self._period), flush=True)
+        elif show_ms < self._slow_ms * 0.5:
+            # 恢复：节拍逐步回到目标帧率。
+            self._period = max(self._base_period, self._period * 0.9)
+        # 下一次显示 = 现在 + (目标周期 − 本次 show 耗时)，实际帧率才真正贴近目标。
+        self._next = time.perf_counter() + max(0.0, self._period - show_ms / 1000.0)
+        return True
+
+    def close(self):
+        try:
+            self._display.close()
+        except Exception:
+            pass
+
+
+def _stat(preview, name):
+    """统一读取同步/异步预览的统计量（同步是 float，异步是 mp.Value）。"""
+    value = getattr(preview, name, 0)
+    return value.value if hasattr(value, "value") else value
+
+
 def _to_gray(img, image_module):
     a = image_module.image2cv(img, ensure_bgr=False, copy=False)
     if a.ndim == 2:
@@ -2978,16 +3055,25 @@ def _send_uart(uart, result):
 
 def main():
     # Imports stay inside main so the geometry module remains PC-testable.
-    from maix import app, camera, display, image
+    from maix import app, camera, image
 
     # 小图上的多线程调度常常比运算本身更贵，也避免 ARM 多核线程争用。
     cv2.setNumThreads(Config.OPENCV_THREADS)
 
+    # ★ 显示：默认"主进程内"路径（MaixVision 一定能看到画面）；SHOW_ASYNC=True 才用子进程隔离。
     preview = None
+    preview_mode = "off"
     if Config.SHOW:
         try:
-            preview = AsyncPreview(Config)
+            if getattr(Config, "SHOW_ASYNC", False):
+                preview = AsyncPreview(Config)
+                preview_mode = "async-process"
+            else:
+                preview = SyncPreview(Config)
+                preview_mode = "sync-inprocess"
         except Exception as exc:
+            preview = None
+            preview_mode = "off(init-failed: %s)" % exc
             print("[preview] disabled after init failure: %s" % exc)
 
     cam = camera.Camera(Config.CAMERA_W, Config.CAMERA_H,
@@ -3082,6 +3168,9 @@ def main():
     mean_dt = None
     print("[rect-center] %s search_width=%d display_width=%d display_fps=%d" %
           (BUILD_ID, Config.SEARCH_WIDTH, Config.SHOW_WIDTH, Config.SHOW_FPS))
+    print("[preview] SHOW=%s mode=%s —— 看不到画面时先确认这里是 sync-inprocess；"
+          "sync 路径在 MaixVision 一定能看到，async 依赖子进程建 Display"
+          % (Config.SHOW, preview_mode))
     print("[rect-center] 四边窄带跟踪 / 失锁后低分辨率搜索 / 72 点逆投影")
     print("[aim] 闭环口径=%s（raw_u/raw_v）离群拒收=%spx 死区=%.1fpx 限幅=%dp" %
           ("raw" if aim_use_raw else "smoothed", Config.JUMP_REJECT_PX,
@@ -3225,8 +3314,8 @@ def main():
             window_fps = count / window
             last_log = now
             laser_avg = laser_ms / laser_calls if laser_calls else 0.0
-            # 显示帧率是**实测**的（子进程真正 show 成功的帧数 / 窗口），与主循环帧率分开报。
-            shown_now = preview.shown.value if preview is not None else 0
+            # 显示帧率是**实测**的（真正 show 成功的帧数 / 窗口），与主循环帧率分开报。
+            shown_now = _stat(preview, "shown") if preview is not None else 0
             show_fps = (shown_now - shown_prev) / window
             shown_prev = shown_now
             print("[perf] %s valid=%s FPS=%.1f stage=%s frames=%d searches=%d "
@@ -3243,11 +3332,11 @@ def main():
             if link is not None:
                 print(link.status_line())
             if preview is not None:
-                slow = preview.slow.value
+                slow = _stat(preview, "slow")
                 print("[preview] 实测显示 FPS=%.1f shown=%d show_last=%.1fms show_max=%.1fms "
-                      "slow=%d ready=%s（独立进程，不计入主循环）" %
-                      (show_fps, shown_now, preview.elapsed.value, preview.max_ms.value,
-                       slow, preview.can_submit()))
+                      "slow=%d mode=%s" %
+                      (show_fps, shown_now, _stat(preview, "elapsed"),
+                       _stat(preview, "max_ms"), slow, preview_mode))
                 if getattr(Config, "SHOW_STALL_LIMIT", 0) and slow >= Config.SHOW_STALL_LIMIT:
                     print("[preview] ⚠ 显示通道持续缓慢（show 累计 %d 次 > %.0fms）："
                           "预览卡顿来自 MaixVision 图传链路，与本工程算法无关。"

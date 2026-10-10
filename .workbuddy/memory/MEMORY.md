@@ -9,7 +9,15 @@
 | 轨 | 目录 | BUILD_ID | 状态 |
 |---|---|---|---|
 | A（DeepSeek） | 根 | `2026-10-05-r7` | 性能治理 + 抗抖跟踪已完成 |
-| B（名义 GPT） | `maixcam2_rect_center/` | `2026-10-10-fps-instrument-v17` | 黑框检测 + 光斑(fixed) + 双轴云台闭环 + 自检后免标定直接追踪（见 `B轨云台调参手册.md`） |
+| B（名义 GPT） | `maixcam2_rect_center/` | `2026-10-10-sync-display-v18` | 黑框检测 + 光斑(fixed) + 双轴云台闭环 + 自检后免标定直接追踪（见 `B轨云台调参手册.md`） |
+
+- B 轨 v18（10-10）：**MaixVision 看不到画面 = 代码问题（v16 架构缺陷）已修**。v16 把 `Display()` 放进
+  **spawn 子进程**（`AsyncPreview`）；`can_submit()` = `ready 置位 and 子进程存活`，而 `ready` 只在子进程
+  **成功建 Display 后**才置位 → 子进程起不来/无法推流 → `can_submit()` 恒 False → **主循环一帧都不画**
+  （空白且无报错）。**默认改回「主进程内显示」**：新增 `SyncPreview` + 开关 `SHOW_ASYNC=False`；
+  `SHOW_FPS` 限频 + `SHOW_SLOW_MIN_FPS=1.0`（图传慢时节拍×2 自动降速，不拖死主循环）。
+  启动日志 `[preview] mode=sync-inprocess`；**排查：若是 sync 仍无画面且卡在 `SAMPLE_VO_StartChn`
+  → 设备 VO/fb0 卡死，重启设备，与本工程无关**。门禁 72 OK/0 FAIL。
 
 - B 轨 v17（10-10）：**帧率治理 + 诚实计量**。v16 的 `AsyncPreview`（spawn 子进程显示）保住了
   “主循环不被 `Display.show` 的 500ms 图传超时拖住”，但**板端帧率从没量过**（其测试自述 PC 耗时≠板端 FPS），
