@@ -20,6 +20,8 @@ exclude:
   - .gitattributes
   # 文档一律不进包：显式列出（打包器若不支持通配也能生效）+ *.md 兜底
   - README.md
+  - B轨代码技术解析与功能分析.md
+  - MaixCAM应用代码规范.md
   - "*.md"
   # 调试落盘图不进包（assets/icon.png 是图标，必须保留，故不能排 *.png）
   - screenshot*.png
