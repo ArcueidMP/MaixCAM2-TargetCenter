@@ -47,9 +47,11 @@ class Cfg:
     SELF_TEST_SETTLE_S = 0.35
     MOTOR_PULSES_PER_REV = 3200
     ACC_DEFAULT = 0
-    U1_PINS = {"A30": "UART1_TX", "A31": "UART1_RX"}
-    U2_PINS = {"B0": "UART2_TX", "B1": "UART2_RX"}
-    ADDR_YAW = ADDR_PITCH = 1
+    YAW_PINS = {"B0": "UART2_TX", "B1": "UART2_RX"}
+    PITCH_PINS = {"A28": "UART0_TX", "A29": "UART0_RX"}
+    ADDR_YAW, ADDR_PITCH = 2, 1
+    PINMAP_STRICT = False
+    FLUSH_RX_ON_START = True
     ENABLE_ACK_WATCHDOG = True
     E2_REENABLE = True
     E2_WINDOW_S = 2.0
@@ -255,11 +257,38 @@ def test_calibrator():
     assert off.state == "SKIPPED" and off.done
 
 
+def test_axis_mapping_config():
+    """锁定实测轴映射定案（AGENTS.md §2）——防止再次被静默改回 v3 旧值而张冠李戴。
+
+    v3 旧值（错）：yaw=ttyS1/UART1/A30A31/ID1、pitch=ttyS2/UART2/B0B1/ID2、DIR_SIGN=+1、ACC=0。
+    定案（对）：   yaw=ttyS2/UART2/B0B1/ID2、pitch=ttyS0/UART0/A28A29/ID1、DIR_SIGN=-1、ACC≠0。
+    """
+    from config import Config
+    # yaw = UART2 / B0,B1 / ttyS2 / ID2
+    assert Config.YAW_DEV == "/dev/ttyS2", Config.YAW_DEV
+    assert Config.YAW_PINS == {"B0": "UART2_TX", "B1": "UART2_RX"}, Config.YAW_PINS
+    assert Config.ADDR_YAW == 2, Config.ADDR_YAW
+    # pitch = UART0 / A28,A29 / ttyS0 / ID1
+    assert Config.PITCH_DEV == "/dev/ttyS0", Config.PITCH_DEV
+    assert Config.PITCH_PINS == {"A28": "UART0_TX", "A29": "UART0_RX"}, Config.PITCH_PINS
+    assert Config.ADDR_PITCH == 1, Config.ADDR_PITCH
+    # pinmap 必须显式下发；U0 是日志口，开机清 RX
+    assert Config.PINMAP_STRICT is False and Config.FLUSH_RX_ON_START is True
+    # 两轴正方向均为 CCW；闭环方向符号按几何推断取 -1（未经标定）
+    assert Config.YAW_POSITIVE_CCW is True and Config.PITCH_POSITIVE_CCW is True
+    assert Config.DIR_SIGN_YAW == -1 and Config.DIR_SIGN_PITCH == -1
+    # acc=0 是卡顿根源，必须给非 0 曲线档位
+    assert Config.ACC_DEFAULT != 0, Config.ACC_DEFAULT
+    # 未标定的软件畸变校正会引入畸变 -> 默认关闭
+    assert Config.LENS_CORR is False
+
+
 def main():
     tests = [test_protocol, test_aim_basic, test_clamp_and_jump_reject,
              test_coarse_fine_state, test_closed_loop_convergence,
              test_reversed_sign_diverges, test_ack_watchdog,
-             test_ack_timeout_gated, test_self_test, test_calibrator]
+             test_ack_timeout_gated, test_self_test, test_calibrator,
+             test_axis_mapping_config]
     for fn in tests:
         fn()
         print("  OK   %s" % fn.__name__)

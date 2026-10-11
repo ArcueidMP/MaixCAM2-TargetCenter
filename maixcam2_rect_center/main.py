@@ -26,7 +26,7 @@ from vision.gimbal_aim import GimbalAim
 from vision.gimbal_self_test import GimbalSelfTest, probe_imu
 from vision.gimbal_calibrate import GimbalCalibrator
 
-BUILD_ID = "2026-10-08-target-api-v3"
+BUILD_ID = "2026-10-11-v0.4.0"
 
 
 def _to_gray(img, image_module):
@@ -98,8 +98,9 @@ def main():
                 self_test = GimbalSelfTest(Config, link, time.perf_counter())
             else:
                 print("[gimbal] calibration mode axis=%s（本次只标定，不闭环）" % calibrator.axis)
-            print("[gimbal] enabled yaw=%s pitch=%s addr=%d/%d" %
-                  (Config.U1_DEV, Config.U2_DEV, Config.ADDR_YAW, Config.ADDR_PITCH))
+            print("[gimbal] enabled yaw=%s(ID%d) pitch=%s(ID%d) acc=%d" %
+                  (Config.YAW_DEV, Config.ADDR_YAW, Config.PITCH_DEV, Config.ADDR_PITCH,
+                   Config.ACC_DEFAULT))
         except Exception as exc:
             print("[gimbal] disabled after init failure: %s" % exc)
     detector = RectangleCenterDetector(Config)

@@ -5,7 +5,10 @@ class Config:
     CAMERA_FPS = 30
     CAMERA_BUFFERS = 2
     SKIP_FRAMES = 10
-    LENS_CORR = True
+    # 镜头畸变校正：默认关闭 —— 未按本镜头标定过的软件畸变校正会**引入**畸变
+    # （识别黑框时画面外凸/边缘拉伸，2026-10-10 实测定案）。确需把边缘直线拉直、
+    # 且已按本镜头标定 LENS_STRENGTH 时，再临时打开。
+    LENS_CORR = False
     LENS_STRENGTH = 1.5
     SHOW = True
     # 检测不跳帧；显示独立限频，减少 RGB 转换和 MaixVision 图像传输开销。
@@ -14,16 +17,28 @@ class Config:
     OPENCV_THREADS = 1
     LOG_INTERVAL = 2.0
     # ---- 双 ZDT 云台链路 -------------------------------------------------
-    # UART1 -> 1 号电机 yaw，UART2 -> 2 号电机 pitch。
-    # 首次上板请先把云台架空，并确认驱动器已设为 UART_FUN/115200/0x6B。
+    # ★ 实测轴映射定案（2026-10-09 实机测定，见 AGENTS.md §2；勿凭直觉改）：
+    #     yaw   = UART2 / B0,B1 / /dev/ttyS2 / 驱动器 ID=2
+    #     pitch = UART0 / A28,A29 / /dev/ttyS0 / 驱动器 ID=1
+    #   起因：最初以为 "U0=yaw、U2=pitch"，实机发现正好相反。地址跟着"电机"走，不跟着端口。
+    #   首次上板请先把云台架空，并确认驱动器已设为 UART_FUN/115200/0x6B。
     ENABLE_GIMBAL = True
-    U1_DEV, U1_BAUD = "/dev/ttyS1", 115200
-    U2_DEV, U2_BAUD = "/dev/ttyS2", 115200
-    U1_PINS = {"A30": "UART1_TX", "A31": "UART1_RX"}
-    U2_PINS = {"B0": "UART2_TX", "B1": "UART2_RX"}
-    ADDR_YAW, ADDR_PITCH = 1, 2
-    DIR_SIGN_YAW = 1       # 误差为正默认发 CCW；实测反向改为 -1
-    DIR_SIGN_PITCH = 1
+    YAW_DEV, YAW_BAUD = "/dev/ttyS2", 115200
+    YAW_PINS = {"B0": "UART2_TX", "B1": "UART2_RX"}
+    PITCH_DEV, PITCH_BAUD = "/dev/ttyS0", 115200
+    # ⚠ U0(A28/A29) 并非默认复用成 UART0，走空表会静默不通 —— 必须显式 pinmap；
+    #    且 ttyS0 还是系统日志口（开机有内核日志/终端回显），故下面 FLUSH_RX_ON_START=True。
+    PITCH_PINS = {"A28": "UART0_TX", "A29": "UART0_RX"}
+    ADDR_YAW, ADDR_PITCH = 2, 1
+    # pinmap 失败时：True=报错中止；False=只告警、仍尝试打开 UART（避免把真故障藏成"打不开"）。
+    PINMAP_STRICT = False
+    # 开机清空两条串口的 RX 缓冲（U0 是日志口，会混入内核启动日志/终端回显）。
+    FLUSH_RX_ON_START = True
+    # 闭环方向符号：两轴正方向均为 CCW（yaw CCW=左 / pitch CCW=上）。按几何推断取 -1
+    # （相机与激光同装在云台上 ⇒ 云台转过去时靶心在画面里反向移动）。
+    # ⚠ 未经标定：上电追踪若"越追越偏"（误差持续变大、云台一路跑向一侧），把对应那项改成 +1。
+    DIR_SIGN_YAW = -1
+    DIR_SIGN_PITCH = -1
     PULSE_PER_PX_YAW = 3.67       # 必须用实机开环标定替换
     PULSE_PER_PX_PITCH = 3.67     # 必须用实机开环标定替换
     GAIN_YAW = 0.5
@@ -31,7 +46,9 @@ class Config:
     DEADBAND_PX = 2.0
     MAX_STEP_PULSES = 360
     RPM_FINE = 300
-    ACC_DEFAULT = 0
+    # 曲线加减速档位（位置模式）：0 = 不用曲线、直接以设定速度瞬时启停（卡顿/冲击根源，勿用）；
+    # ≠0 时每 (256-acc)*50us 变 1RPM，acc 越小越柔（常用 20~80）。自检与闭环共用本值。
+    ACC_DEFAULT = 80
     COMMAND_INTERVAL_S = 0.08
 
     # 上电自检：度数对应的脉冲数必须按实际减速机构标定。
@@ -42,9 +59,9 @@ class Config:
     # 计算参考：3200 pulses/rev * 减速比 / 360；减速比未知时不要猜。
     YAW_PULSES_PER_DEG = 0.0
     PITCH_PULSES_PER_DEG = 0.0
-    # 以“yaw 向左 / pitch 仰起”为正方向；按文档两轴正方向均为 CW。
-    YAW_POSITIVE_CCW = False
-    PITCH_POSITIVE_CCW = False
+    # 两轴正方向均为 CCW：yaw CCW=左 / CW=右，pitch CCW=上(仰) / CW=下（见 AGENTS.md §2）。
+    YAW_POSITIVE_CCW = True
+    PITCH_POSITIVE_CCW = True
     SELF_TEST_RPM = 900
     SELF_TEST_SETTLE_S = 0.35
     MOTOR_PULSES_PER_REV = 3200
@@ -101,7 +118,7 @@ class Config:
 
     # 兼容旧版纯视觉 ASCII 输出；开启云台时默认关闭，避免同一串口混发两种协议。
     # ⚠ 本组只在 ENABLE_GIMBAL=False 的降级路径使用；ENABLE_GIMBAL=True 时电机走
-    #    U1_DEV/U2_DEV 两条串口，本条的 /dev/ttyS0 是系统日志口，切勿改成实际接线。
+    #    YAW_DEV/PITCH_DEV 两条串口，本条的 /dev/ttyS0 是系统日志口，切勿改成实际接线。
     ENABLE_UART = False
     UART_PORT = "/dev/ttyS0"
     UART_BAUD = 115200

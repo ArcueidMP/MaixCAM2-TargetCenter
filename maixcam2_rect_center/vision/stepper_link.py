@@ -58,6 +58,14 @@ def frame_status(frame):
     return int(frame[2]) if frame is not None and len(frame) >= 3 else None
 
 
+def _readback_pin(pinmap, pin):
+    """回读引脚当前实际功能（AGENTS.md §6.4：'某轴不通'的第一手证据）。失败返回 '?'。"""
+    try:
+        return pinmap.get_pin_function(pin)
+    except Exception:
+        return "?"
+
+
 class StepperLink:
     """两条独立 UART 链路；任一轴打开失败不会阻塞另一轴。"""
 
@@ -80,27 +88,59 @@ class StepperLink:
             self._stats["yaw"] = self._stats["pitch"] = False
             self._init_error = exc
             return
+        # ★ 实测轴映射定案（AGENTS.md §2）：yaw=UART2/B0B1/ttyS2/ID2，pitch=UART0/A28A29/ttyS0/ID1。
+        #   两轴都要显式 pinmap（U0 走空表会静默不通）；ID 跟着"电机"走，不跟着端口。
         pin_sets = {
-            "yaw": getattr(cfg, "U1_PINS", {"A30": "UART1_TX", "A31": "UART1_RX"}),
-            "pitch": getattr(cfg, "U2_PINS", {"B0": "UART2_TX", "B1": "UART2_RX"}),
+            "yaw": getattr(cfg, "YAW_PINS", {"B0": "UART2_TX", "B1": "UART2_RX"}),
+            "pitch": getattr(cfg, "PITCH_PINS", {"A28": "UART0_TX", "A29": "UART0_RX"}),
         }
-        devices = {"yaw": (getattr(cfg, "U1_DEV", "/dev/ttyS1"),
-                             getattr(cfg, "U1_BAUD", 115200)),
-                   "pitch": (getattr(cfg, "U2_DEV", "/dev/ttyS2"),
-                               getattr(cfg, "U2_BAUD", 115200))}
+        devices = {"yaw": (getattr(cfg, "YAW_DEV", "/dev/ttyS2"),
+                             getattr(cfg, "YAW_BAUD", 115200)),
+                   "pitch": (getattr(cfg, "PITCH_DEV", "/dev/ttyS0"),
+                               getattr(cfg, "PITCH_BAUD", 115200))}
+        strict = bool(getattr(cfg, "PINMAP_STRICT", False))
+        flush_rx = bool(getattr(cfg, "FLUSH_RX_ON_START", False))
         for axis in ("yaw", "pitch"):
             try:
                 for pin, func in pin_sets[axis].items():
-                    result = pinmap.set_pin_function(pin, func)
-                    if result is not None and hasattr(result, "value") and result.value != 0:
-                        raise RuntimeError("pinmap %s=%s failed: %s" % (pin, func, result))
+                    try:
+                        result = pinmap.set_pin_function(pin, func)
+                        failed = (result is not None and hasattr(result, "value")
+                                  and result.value != 0)
+                    except Exception as exc:              # 无该引脚 / 固件不支持
+                        result, failed = exc, True
+                    if failed:
+                        message = "pinmap %s=%s failed: %s" % (pin, func, result)
+                        if strict:
+                            raise RuntimeError(message)
+                        # 非严格模式：只告警，仍尝试打开 UART —— 否则真故障会被藏成"打不开"。
+                        print("[gimbal] WARN " + message)
+                    else:
+                        print("[gimbal] pinmap %s=%s ok (readback=%s)" %
+                              (pin, func, _readback_pin(pinmap, pin)))
                 self._ports[axis] = uart.UART(*devices[axis])
+                if flush_rx:
+                    # U0(pitch) 是系统日志口：开机先丢掉内核启动日志/终端回显等 RX 残留。
+                    self._flush_rx(axis)
             except Exception as exc:
                 self._stats[axis] = False
                 self._stats["err"] += 1
                 print("[gimbal] %s UART open failed: %s" % (axis, exc))
 
     # ------------------------------------------------------------- 发送
+    def _flush_rx(self, axis):
+        """清空该轴串口开机前的 RX 残留（U0=系统日志口，会混内核启动日志/终端回显）。"""
+        port = self._ports.get(axis)
+        if port is None:
+            return
+        try:
+            available = int(port.available(0))
+            if available > 0:
+                port.read(available)
+        except Exception:
+            pass
+        self._rxbuf[axis] = bytearray()
+
     def _write(self, axis, payload, now=None):
         port = self._ports.get(axis)
         if port is None:

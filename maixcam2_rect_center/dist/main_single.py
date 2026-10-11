@@ -10,22 +10,22 @@ main_single.py · 25E 靶心识别（轨道 B）—— 单文件自包含版
 用途：在 MaixVision 里点「运行当前文件」即可运行（不必用「运行项目」）。
       行为与模块化工程完全一致，输出也就完全一致。
 
-生成时间：2026-10-10 23:35:44
-    config.py                    sha1=3c6f77da9d88
-    main.py                      sha1=5d9529be6d4b
+生成时间：2026-10-11 16:40:26
+    config.py                    sha1=dea0a125e641
+    main.py                      sha1=5275ce6af80f
     target_api.py                sha1=9c5a71aa209b
     vision/gimbal_aim.py         sha1=0b0ae21ebd2e
     vision/gimbal_calibrate.py   sha1=9c4bb08a1b99
     vision/gimbal_self_test.py   sha1=b31ac16c287b
     vision/laser_spot.py         sha1=d8d722904443
     vision/rectangle_center.py   sha1=173cbdfeb6a4
-    vision/stepper_link.py       sha1=fad4937b9b8a
+    vision/stepper_link.py       sha1=825c01fa8f50
 """
 
 import sys as _sys
 import types as _types
 
-_SRC_SHA1 = {'config.py': '3c6f77da9d882deddd66ae2b4b175c160c949de7', 'vision/rectangle_center.py': '173cbdfeb6a4ea3ed2b36726a7cea5db62e9d954', 'vision/laser_spot.py': 'd8d722904443201c539507baca6d69be668ade93', 'vision/gimbal_self_test.py': 'b31ac16c287b150caeef26728146704a40ad3116', 'vision/gimbal_aim.py': '0b0ae21ebd2e6cce2d7839fccf03dc8ada5c02d3', 'vision/stepper_link.py': 'fad4937b9b8a6bf1ecffb0a22bd1419825c3f120', 'vision/gimbal_calibrate.py': '9c4bb08a1b99d6feaef77bc8cf3fc56655e87676', 'target_api.py': '9c5a71aa209bb2716f1c0c4ac2fadd3eec23241d', 'main.py': '5d9529be6d4b5ebca3f6c5b0e71f838b40e297ab'}
+_SRC_SHA1 = {'config.py': 'dea0a125e6417540ac257d5a49da3e11fb6e66fd', 'vision/rectangle_center.py': '173cbdfeb6a4ea3ed2b36726a7cea5db62e9d954', 'vision/laser_spot.py': 'd8d722904443201c539507baca6d69be668ade93', 'vision/gimbal_self_test.py': 'b31ac16c287b150caeef26728146704a40ad3116', 'vision/gimbal_aim.py': '0b0ae21ebd2e6cce2d7839fccf03dc8ada5c02d3', 'vision/stepper_link.py': '825c01fa8f5050d57e827df4fc98ac6920f90ba9', 'vision/gimbal_calibrate.py': '9c4bb08a1b99d6feaef77bc8cf3fc56655e87676', 'target_api.py': '9c5a71aa209bb2716f1c0c4ac2fadd3eec23241d', 'main.py': '5275ce6af80f07d8696e24a187736813dade5415'}
 
 # --------------------------------------------------------------------------
 # ① 各模块源码原样嵌入，运行时装进 sys.modules（保持原 import 语义）
@@ -41,7 +41,10 @@ class Config:
     CAMERA_FPS = 30
     CAMERA_BUFFERS = 2
     SKIP_FRAMES = 10
-    LENS_CORR = True
+    # 镜头畸变校正：默认关闭 —— 未按本镜头标定过的软件畸变校正会**引入**畸变
+    # （识别黑框时画面外凸/边缘拉伸，2026-10-10 实测定案）。确需把边缘直线拉直、
+    # 且已按本镜头标定 LENS_STRENGTH 时，再临时打开。
+    LENS_CORR = False
     LENS_STRENGTH = 1.5
     SHOW = True
     # 检测不跳帧；显示独立限频，减少 RGB 转换和 MaixVision 图像传输开销。
@@ -50,16 +53,28 @@ class Config:
     OPENCV_THREADS = 1
     LOG_INTERVAL = 2.0
     # ---- 双 ZDT 云台链路 -------------------------------------------------
-    # UART1 -> 1 号电机 yaw，UART2 -> 2 号电机 pitch。
-    # 首次上板请先把云台架空，并确认驱动器已设为 UART_FUN/115200/0x6B。
+    # ★ 实测轴映射定案（2026-10-09 实机测定，见 AGENTS.md §2；勿凭直觉改）：
+    #     yaw   = UART2 / B0,B1 / /dev/ttyS2 / 驱动器 ID=2
+    #     pitch = UART0 / A28,A29 / /dev/ttyS0 / 驱动器 ID=1
+    #   起因：最初以为 "U0=yaw、U2=pitch"，实机发现正好相反。地址跟着"电机"走，不跟着端口。
+    #   首次上板请先把云台架空，并确认驱动器已设为 UART_FUN/115200/0x6B。
     ENABLE_GIMBAL = True
-    U1_DEV, U1_BAUD = "/dev/ttyS1", 115200
-    U2_DEV, U2_BAUD = "/dev/ttyS2", 115200
-    U1_PINS = {"A30": "UART1_TX", "A31": "UART1_RX"}
-    U2_PINS = {"B0": "UART2_TX", "B1": "UART2_RX"}
-    ADDR_YAW, ADDR_PITCH = 1, 2
-    DIR_SIGN_YAW = 1       # 误差为正默认发 CCW；实测反向改为 -1
-    DIR_SIGN_PITCH = 1
+    YAW_DEV, YAW_BAUD = "/dev/ttyS2", 115200
+    YAW_PINS = {"B0": "UART2_TX", "B1": "UART2_RX"}
+    PITCH_DEV, PITCH_BAUD = "/dev/ttyS0", 115200
+    # ⚠ U0(A28/A29) 并非默认复用成 UART0，走空表会静默不通 —— 必须显式 pinmap；
+    #    且 ttyS0 还是系统日志口（开机有内核日志/终端回显），故下面 FLUSH_RX_ON_START=True。
+    PITCH_PINS = {"A28": "UART0_TX", "A29": "UART0_RX"}
+    ADDR_YAW, ADDR_PITCH = 2, 1
+    # pinmap 失败时：True=报错中止；False=只告警、仍尝试打开 UART（避免把真故障藏成"打不开"）。
+    PINMAP_STRICT = False
+    # 开机清空两条串口的 RX 缓冲（U0 是日志口，会混入内核启动日志/终端回显）。
+    FLUSH_RX_ON_START = True
+    # 闭环方向符号：两轴正方向均为 CCW（yaw CCW=左 / pitch CCW=上）。按几何推断取 -1
+    # （相机与激光同装在云台上 ⇒ 云台转过去时靶心在画面里反向移动）。
+    # ⚠ 未经标定：上电追踪若"越追越偏"（误差持续变大、云台一路跑向一侧），把对应那项改成 +1。
+    DIR_SIGN_YAW = -1
+    DIR_SIGN_PITCH = -1
     PULSE_PER_PX_YAW = 3.67       # 必须用实机开环标定替换
     PULSE_PER_PX_PITCH = 3.67     # 必须用实机开环标定替换
     GAIN_YAW = 0.5
@@ -67,7 +82,9 @@ class Config:
     DEADBAND_PX = 2.0
     MAX_STEP_PULSES = 360
     RPM_FINE = 300
-    ACC_DEFAULT = 0
+    # 曲线加减速档位（位置模式）：0 = 不用曲线、直接以设定速度瞬时启停（卡顿/冲击根源，勿用）；
+    # ≠0 时每 (256-acc)*50us 变 1RPM，acc 越小越柔（常用 20~80）。自检与闭环共用本值。
+    ACC_DEFAULT = 80
     COMMAND_INTERVAL_S = 0.08
 
     # 上电自检：度数对应的脉冲数必须按实际减速机构标定。
@@ -78,9 +95,9 @@ class Config:
     # 计算参考：3200 pulses/rev * 减速比 / 360；减速比未知时不要猜。
     YAW_PULSES_PER_DEG = 0.0
     PITCH_PULSES_PER_DEG = 0.0
-    # 以“yaw 向左 / pitch 仰起”为正方向；按文档两轴正方向均为 CW。
-    YAW_POSITIVE_CCW = False
-    PITCH_POSITIVE_CCW = False
+    # 两轴正方向均为 CCW：yaw CCW=左 / CW=右，pitch CCW=上(仰) / CW=下（见 AGENTS.md §2）。
+    YAW_POSITIVE_CCW = True
+    PITCH_POSITIVE_CCW = True
     SELF_TEST_RPM = 900
     SELF_TEST_SETTLE_S = 0.35
     MOTOR_PULSES_PER_REV = 3200
@@ -137,7 +154,7 @@ class Config:
 
     # 兼容旧版纯视觉 ASCII 输出；开启云台时默认关闭，避免同一串口混发两种协议。
     # ⚠ 本组只在 ENABLE_GIMBAL=False 的降级路径使用；ENABLE_GIMBAL=True 时电机走
-    #    U1_DEV/U2_DEV 两条串口，本条的 /dev/ttyS0 是系统日志口，切勿改成实际接线。
+    #    YAW_DEV/PITCH_DEV 两条串口，本条的 /dev/ttyS0 是系统日志口，切勿改成实际接线。
     ENABLE_UART = False
     UART_PORT = "/dev/ttyS0"
     UART_BAUD = 115200
@@ -1305,6 +1322,14 @@ def frame_status(frame):
     return int(frame[2]) if frame is not None and len(frame) >= 3 else None
 
 
+def _readback_pin(pinmap, pin):
+    """回读引脚当前实际功能（AGENTS.md §6.4：'某轴不通'的第一手证据）。失败返回 '?'。"""
+    try:
+        return pinmap.get_pin_function(pin)
+    except Exception:
+        return "?"
+
+
 class StepperLink:
     """两条独立 UART 链路；任一轴打开失败不会阻塞另一轴。"""
 
@@ -1327,27 +1352,59 @@ class StepperLink:
             self._stats["yaw"] = self._stats["pitch"] = False
             self._init_error = exc
             return
+        # ★ 实测轴映射定案（AGENTS.md §2）：yaw=UART2/B0B1/ttyS2/ID2，pitch=UART0/A28A29/ttyS0/ID1。
+        #   两轴都要显式 pinmap（U0 走空表会静默不通）；ID 跟着"电机"走，不跟着端口。
         pin_sets = {
-            "yaw": getattr(cfg, "U1_PINS", {"A30": "UART1_TX", "A31": "UART1_RX"}),
-            "pitch": getattr(cfg, "U2_PINS", {"B0": "UART2_TX", "B1": "UART2_RX"}),
+            "yaw": getattr(cfg, "YAW_PINS", {"B0": "UART2_TX", "B1": "UART2_RX"}),
+            "pitch": getattr(cfg, "PITCH_PINS", {"A28": "UART0_TX", "A29": "UART0_RX"}),
         }
-        devices = {"yaw": (getattr(cfg, "U1_DEV", "/dev/ttyS1"),
-                             getattr(cfg, "U1_BAUD", 115200)),
-                   "pitch": (getattr(cfg, "U2_DEV", "/dev/ttyS2"),
-                               getattr(cfg, "U2_BAUD", 115200))}
+        devices = {"yaw": (getattr(cfg, "YAW_DEV", "/dev/ttyS2"),
+                             getattr(cfg, "YAW_BAUD", 115200)),
+                   "pitch": (getattr(cfg, "PITCH_DEV", "/dev/ttyS0"),
+                               getattr(cfg, "PITCH_BAUD", 115200))}
+        strict = bool(getattr(cfg, "PINMAP_STRICT", False))
+        flush_rx = bool(getattr(cfg, "FLUSH_RX_ON_START", False))
         for axis in ("yaw", "pitch"):
             try:
                 for pin, func in pin_sets[axis].items():
-                    result = pinmap.set_pin_function(pin, func)
-                    if result is not None and hasattr(result, "value") and result.value != 0:
-                        raise RuntimeError("pinmap %s=%s failed: %s" % (pin, func, result))
+                    try:
+                        result = pinmap.set_pin_function(pin, func)
+                        failed = (result is not None and hasattr(result, "value")
+                                  and result.value != 0)
+                    except Exception as exc:              # 无该引脚 / 固件不支持
+                        result, failed = exc, True
+                    if failed:
+                        message = "pinmap %s=%s failed: %s" % (pin, func, result)
+                        if strict:
+                            raise RuntimeError(message)
+                        # 非严格模式：只告警，仍尝试打开 UART —— 否则真故障会被藏成"打不开"。
+                        print("[gimbal] WARN " + message)
+                    else:
+                        print("[gimbal] pinmap %s=%s ok (readback=%s)" %
+                              (pin, func, _readback_pin(pinmap, pin)))
                 self._ports[axis] = uart.UART(*devices[axis])
+                if flush_rx:
+                    # U0(pitch) 是系统日志口：开机先丢掉内核启动日志/终端回显等 RX 残留。
+                    self._flush_rx(axis)
             except Exception as exc:
                 self._stats[axis] = False
                 self._stats["err"] += 1
                 print("[gimbal] %s UART open failed: %s" % (axis, exc))
 
     # ------------------------------------------------------------- 发送
+    def _flush_rx(self, axis):
+        """清空该轴串口开机前的 RX 残留（U0=系统日志口，会混内核启动日志/终端回显）。"""
+        port = self._ports.get(axis)
+        if port is None:
+            return
+        try:
+            available = int(port.available(0))
+            if available > 0:
+                port.read(available)
+        except Exception:
+            pass
+        self._rxbuf[axis] = bytearray()
+
     def _write(self, axis, payload, now=None):
         port = self._ports.get(axis)
         if port is None:
@@ -1990,7 +2047,7 @@ from vision.gimbal_aim import GimbalAim
 from vision.gimbal_self_test import GimbalSelfTest, probe_imu
 from vision.gimbal_calibrate import GimbalCalibrator
 
-BUILD_ID = "2026-10-08-target-api-v3"
+BUILD_ID = "2026-10-11-v0.4.0"
 
 
 def _to_gray(img, image_module):
@@ -2062,8 +2119,9 @@ def main():
                 self_test = GimbalSelfTest(Config, link, time.perf_counter())
             else:
                 print("[gimbal] calibration mode axis=%s（本次只标定，不闭环）" % calibrator.axis)
-            print("[gimbal] enabled yaw=%s pitch=%s addr=%d/%d" %
-                  (Config.U1_DEV, Config.U2_DEV, Config.ADDR_YAW, Config.ADDR_PITCH))
+            print("[gimbal] enabled yaw=%s(ID%d) pitch=%s(ID%d) acc=%d" %
+                  (Config.YAW_DEV, Config.ADDR_YAW, Config.PITCH_DEV, Config.ADDR_PITCH,
+                   Config.ACC_DEFAULT))
         except Exception as exc:
             print("[gimbal] disabled after init failure: %s" % exc)
     detector = RectangleCenterDetector(Config)
