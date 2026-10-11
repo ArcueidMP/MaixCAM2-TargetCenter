@@ -9,7 +9,7 @@
 | 轨 | 目录 | BUILD_ID | 状态 |
 |---|---|---|---|
 | A（DeepSeek） | 根 | `2026-10-05-r7` | 性能治理 + 抗抖跟踪已完成 |
-| B（名义 GPT） | `maixcam2_rect_center/` | `2026-10-11-v0.4.0`（分支 `v0.4.0`） | v3 基线上**修正电机轴映射**并封 v0.4.0（10-11，commit `a06f81d`）；`main` 仍停在 v3 基线 —— 见下方 ★ |
+| B（名义 GPT） | `maixcam2_rect_center/` | `2026-10-11-v0.4.1`（分支 `v0.4.0`） | v0.4.0 修电机轴映射 → v0.4.1 上电自检改**屏幕按钮** + 画面**流转 MaixVision**（commit `6093827`）；`main` 仍停在 v3 基线 —— 见下方 ★ |
 
 - ★ **B 轨回退定案（10-10）**：**git 里不存在 v9 快照**（`track-curve-v9` 是被外部进程覆写的未入库中间态；
   提交从 `b32cd08(v3)` 直接跳到 `v14`）。用户改选「回退到 v9 前最后一个提交 = `b32cd08`」。
@@ -24,6 +24,13 @@
   新增 `PINMAP_STRICT=False`/`FLUSH_RX_ON_START=True`（`stepper_link` 实现 + 引脚回读）、`DIR_SIGN=-1/-1`、
   正方向 CCW、`ACC_DEFAULT 0→80`、`LENS_CORR=False`；`test_gimbal_aim` 加"轴映射锁定"用例。
   ⚠ 仅 `test_main_self_test.py` 仍红：它是 v11+/v15 期测试（v3 无 `SELF_TEST_PULSES`/`ACC_TRACK` 等），**改动前即失败**、未纳入本轮。
+
+- ★ **B 轨 v0.4.1（10-11，分支 `v0.4.0`，commit `6093827`）**：用户要求**取消"上电自检优先/自动跑"**，改为
+  **屏幕右上角可点击 `SELF-TEST` 按钮**（`config.ENABLE_TOUCH_BUTTON`；`main._Preview/_Touch`，画布=屏幕尺寸使触摸与按钮 1:1，
+  `touchscreen.read()` 按下沿触发）；并**把画面流转到 MaixVision**（主进程内 `display.show()`，日志 `[preview] mode=in-process`）。
+  自检用固定脉冲 `SELF_TEST_PULSES=400`（免标定）。**顺带修**：主循环 `link_fault` 曾用 `is not None` 判故障 →
+  `fault=False` 被误判、**开机第 1 帧即 FAULT**（回归坑，见 §8）。`test_main_self_test.py` 已**重写为新契约**（上电 0 运动帧 / 点击触发 / FAULT 阻断）。
+  ⚠ 待上板验证：按钮点击命中、MaixVision 预览可见。
 
 - B 轨 v20（10-10）：**帧率"虚假显示 + 过低"定案修复**。根因 = 屏幕叠加的 `FPS` 曾画的是
   **主循环速率**（`1/EMA(主循环dt)`），而显示被 `can_submit()` 节流、"多数帧只算不画"，
