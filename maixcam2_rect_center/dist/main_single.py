@@ -10,9 +10,9 @@ main_single.py · 25E 靶心识别（轨道 B）—— 单文件自包含版
 用途：在 MaixVision 里点「运行当前文件」即可运行（不必用「运行项目」）。
       行为与模块化工程完全一致，输出也就完全一致。
 
-生成时间：2026-10-12 00:32:30
+生成时间：2026-10-12 00:39:49
     config.py                    sha1=f295d9761c03
-    main.py                      sha1=44a42ab06410
+    main.py                      sha1=d024a52377dd
     target_api.py                sha1=9c5a71aa209b
     vision/aim_control.py        sha1=8c9ea2c1578c
     vision/camera_source.py      sha1=b398fedefe6e
@@ -31,7 +31,7 @@ main_single.py · 25E 靶心识别（轨道 B）—— 单文件自包含版
 import sys as _sys
 import types as _types
 
-_SRC_SHA1 = {'config.py': 'f295d9761c036475dbe0cfe4ac07617f40cab868', 'vision/rate_meter.py': '6f2a054c97a00470409a59de9dea42b0bff9c6ba', 'vision/camera_source.py': 'b398fedefe6eaf931d372abe00ba267f7d9697b5', 'vision/vision_worker.py': '79e9784fa9f1ab052404abbc3ec86b72312faf7d', 'vision/telemetry.py': '853ebdd16df1620eb09694d13b139a7b74d7e9f4', 'vision/preview.py': 'f266a0727870865fe66f719b93dd270e33dae3cd', 'vision/rectangle_center.py': '8aa5e868f9ea2a9a7d243ff4879e8295652d4c0f', 'vision/laser_spot.py': 'c131498c5ff980e594b1c8d5d2feda6195caee23', 'vision/gimbal_self_test.py': '17b72e0935bbb7786f7c936d17b55c291795990b', 'vision/gimbal_aim.py': '0b0ae21ebd2e6cce2d7839fccf03dc8ada5c02d3', 'vision/stepper_link.py': '29501ea53b740bb704bbb8da166b5b4b6eabfffb', 'vision/aim_control.py': '8c9ea2c1578cedec16b745f82878604ab43d6577', 'vision/gimbal_calibrate.py': '9c4bb08a1b99d6feaef77bc8cf3fc56655e87676', 'target_api.py': '9c5a71aa209bb2716f1c0c4ac2fadd3eec23241d', 'main.py': '44a42ab0641059e36aa46a1fef396e1370f67a41'}
+_SRC_SHA1 = {'config.py': 'f295d9761c036475dbe0cfe4ac07617f40cab868', 'vision/rate_meter.py': '6f2a054c97a00470409a59de9dea42b0bff9c6ba', 'vision/camera_source.py': 'b398fedefe6eaf931d372abe00ba267f7d9697b5', 'vision/vision_worker.py': '79e9784fa9f1ab052404abbc3ec86b72312faf7d', 'vision/telemetry.py': '853ebdd16df1620eb09694d13b139a7b74d7e9f4', 'vision/preview.py': 'f266a0727870865fe66f719b93dd270e33dae3cd', 'vision/rectangle_center.py': '8aa5e868f9ea2a9a7d243ff4879e8295652d4c0f', 'vision/laser_spot.py': 'c131498c5ff980e594b1c8d5d2feda6195caee23', 'vision/gimbal_self_test.py': '17b72e0935bbb7786f7c936d17b55c291795990b', 'vision/gimbal_aim.py': '0b0ae21ebd2e6cce2d7839fccf03dc8ada5c02d3', 'vision/stepper_link.py': '29501ea53b740bb704bbb8da166b5b4b6eabfffb', 'vision/aim_control.py': '8c9ea2c1578cedec16b745f82878604ab43d6577', 'vision/gimbal_calibrate.py': '9c4bb08a1b99d6feaef77bc8cf3fc56655e87676', 'target_api.py': '9c5a71aa209bb2716f1c0c4ac2fadd3eec23241d', 'main.py': 'd024a52377ddb42921c6aa721e387b24d1a16d42'}
 
 # --------------------------------------------------------------------------
 # ① 各模块源码原样嵌入，运行时装进 sys.modules（保持原 import 语义）
@@ -3205,7 +3205,7 @@ from vision.preview import (Preview, TouchButtons, display_result,
 from vision.aim_control import VisionControl, send_uart
 from vision.telemetry import format_perf_line, format_slow_loop, MAIN_LOOP_SLOW_MS
 
-BUILD_ID = "2026-10-12-modular-main-v0.4.6"
+BUILD_ID = "2026-10-12-modular-main-v0.5.0"
 
 # ---- 兼容别名（v0.4.6 模块化后保留旧私有名）--------------------------------
 # tools/test_runtime_performance.py 直接 `from main import (_FrameRate, _LatestVision,

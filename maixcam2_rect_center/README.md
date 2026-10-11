@@ -1,11 +1,35 @@
 # MaixCAM2 黑框中心：四边精修、快速跟踪与双轴云台瞄准
 
-构建号 `2026-10-12-modular-main-v0.4.6`，应用版本 `0.4.6`。在 MaixVision 中打开本文件夹，选择“运行项目”。
+构建号 `2026-10-12-modular-main-v0.5.0`，应用版本 `0.5.0`。在 MaixVision 中打开本文件夹，选择“运行项目”。
 必须一起下发应用包内的 **18 个文件**（`app.yaml` / `main.py` / `config.py` / `target_api.py` /
 `assets/icon.png` / `vision/` 下 13 个 `.py`），不能只运行当前 `main.py`。
 
 > 只想临时试参数时，也可以先 `python tools/build_single.py` 生成 `dist/main_single.py`，
 > 再用「运行当前文件」—— 那是自包含的单文件版，语义与分模块完全一致。改了源码记得重新生成。
+
+## 2026-10-12 版本（v0.5.0）：模块化里程碑 + 全量性能/功能复核
+
+**性质**：仅为**版本号里程碑**（`BUILD_ID` → `2026-10-12-modular-main-v0.5.0`、`app.yaml` → `0.5.0`），
+**源码行为零变更**（相对 v0.4.6 仅改版本字符串）。发布前对本版重跑全套性能与功能回归，结论如下。
+
+**性能（PC 基线，`D:/Python311`）**
+
+| 测试 | 结果 |
+|---|---|
+| `test_performance`（30 场景几何基线） | 检出 **29/30**（fixture#2 强反光属安全失败）、`max_center_error_px=0.803`、**0 误检**、稳态 `median 0.86ms / p95 1.18ms` |
+| `test_runtime_performance`（运行时 8 项） | **8/8 PASS**；开机 `show 探针 2.4ms`（健康区间 1~5ms）；`test_slow_show_does_not_block_main_loop`：故意 300ms show → 主循环最坏渲染 **0.22ms** |
+
+**黑框识别 / 追踪功能（可用性复核）**
+
+| 测试 | 结果 |
+|---|---|
+| `test_target_api`（`detect_black_frame` / `CenterTracker` / `AimLoop`） | 全通过；重捕获中心精度 < 2px、丢帧正确置 invalid、`reset()` 后可重锁 |
+| `test_images_e2e`（端到端图像） | 逐图 **13/16 通过**（3 例为安全失败/负样本正确拒绝）；**连续帧跟踪全程锁定=True**，8 帧最大误差 **0.646px** |
+| `test_gimbal_aim`（追踪/瞄准/协议/看门狗/标定） | **11/11 PASS** |
+| `test_main_self_test`（端到端跑真实 `main()`） | **4/4 PASS**（上电不自动自检、按钮触发 6 步、FAULT 阻断、`[perf]` 日志分支） |
+| `test_laser`（光斑偏差） | 全部通过（fixed 模式恒给标定位置、偏差口径正确） |
+
+门禁 `check_app --manifest` → 应用包 **18 文件 / OK=96 / WARN=2 / FAIL=0**；`build_single --check/--smoke` 通过。
 
 ## 2026-10-12 改动（v0.4.6）：入口 `main.py` 按功能模块化（923 行 → 296 行）
 
