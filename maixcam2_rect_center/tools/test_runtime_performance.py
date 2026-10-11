@@ -89,9 +89,16 @@ def test_bounded_search_and_current_evidence():
     for _ in range(25):
         t0 = time.perf_counter()
         out = det.process(noise)
-        samples.append((time.perf_counter() - t0) * 1000)
-        assert out["search_count"] <= 1 and out["thresholds"] <= 1, out
+        ms = (time.perf_counter() - t0) * 1000
+        samples.append(ms)
+        # 新契约（v0.5.1）：搜索为「单帧穷尽 + 时间预算兜底」，不再限制"每帧只扫 1 档阈值"。
+        #   · 每帧仍只发起一次搜索（search_count<=1）；
+        #   · 单帧内最多把全部阈值 + Canny 兜底走一遍（thresholds 有上限）；
+        #   · 单帧耗时受 SEARCH_BUDGET_MS 软预算约束（超时即停、跨帧续扫）。
+        assert out["search_count"] <= 1, out
+        assert out["thresholds"] <= len(Config.DARK_THRESHOLDS) + 2, out
         assert out["proposals"] <= Config.SEARCH_MAX_PROPOSALS and not out["valid"]
+        assert ms <= Config.SEARCH_BUDGET_MS + 60, ("单帧搜索超预算", ms, out)
     image, truth = scene([[180, 70], [445, 80], [475, 400], [150, 420]])
     det = RectangleCenterDetector(Config)
     with patch.object(det, "_verify", return_value=None): det.process(image)

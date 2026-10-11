@@ -161,9 +161,12 @@ class Config:
     DARK_THRESHOLDS = (25, 40, 55, 70, 85, 100, 120, 145)
     # 稳态只采样四边窄带；失锁时缩小图搜索，每档验证成功就立即停止。
     SEARCH_WIDTH = 320
-    # 合作式搜索：每帧至多做一次扫描或一次候选验证，时间预算是软预算。
+    # 搜索策略：**单帧穷尽** —— 一帧内按序试完全部阈值（末尾 Canny 兜底）直到找到；
+    # SEARCH_BUDGET_MS 是软预算，只在单帧扫超时时才把剩余进度留给下一帧（跨帧续扫，防极慢板卡死单帧）。
+    # ⚠ 历史：v0.4.3 曾改成"每帧只轮换 1 个阈值、只验 1 个候选"，实测丢锁后要 11+ 帧才重捕获
+    #   （大角度/移动场景肉眼即"丢框"）；v0.5.1 改回单帧穷尽。
     SEARCH_BUDGET_MS = 25.0
-    SEARCH_MAX_PROPOSALS = 1
+    SEARCH_MAX_PROPOSALS = 128   # 单帧验证候选数硬上限（安全阀，正常场景远用不到）
     SEARCH_GEOMETRY_STEPS = 8
     MAX_CONTOURS = 128
     LINE_MAX_PROPOSALS = 36

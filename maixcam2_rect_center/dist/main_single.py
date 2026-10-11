@@ -10,9 +10,9 @@ main_single.py · 25E 靶心识别（轨道 B）—— 单文件自包含版
 用途：在 MaixVision 里点「运行当前文件」即可运行（不必用「运行项目」）。
       行为与模块化工程完全一致，输出也就完全一致。
 
-生成时间：2026-10-12 00:39:49
-    config.py                    sha1=f295d9761c03
-    main.py                      sha1=d024a52377dd
+生成时间：2026-10-12 00:59:47
+    config.py                    sha1=8d425a42f18e
+    main.py                      sha1=255999abd926
     target_api.py                sha1=9c5a71aa209b
     vision/aim_control.py        sha1=8c9ea2c1578c
     vision/camera_source.py      sha1=b398fedefe6e
@@ -22,7 +22,7 @@ main_single.py · 25E 靶心识别（轨道 B）—— 单文件自包含版
     vision/laser_spot.py         sha1=c131498c5ff9
     vision/preview.py            sha1=f266a0727870
     vision/rate_meter.py         sha1=6f2a054c97a0
-    vision/rectangle_center.py   sha1=8aa5e868f9ea
+    vision/rectangle_center.py   sha1=d9bf88558441
     vision/stepper_link.py       sha1=29501ea53b74
     vision/telemetry.py          sha1=853ebdd16df1
     vision/vision_worker.py      sha1=79e9784fa9f1
@@ -31,7 +31,7 @@ main_single.py · 25E 靶心识别（轨道 B）—— 单文件自包含版
 import sys as _sys
 import types as _types
 
-_SRC_SHA1 = {'config.py': 'f295d9761c036475dbe0cfe4ac07617f40cab868', 'vision/rate_meter.py': '6f2a054c97a00470409a59de9dea42b0bff9c6ba', 'vision/camera_source.py': 'b398fedefe6eaf931d372abe00ba267f7d9697b5', 'vision/vision_worker.py': '79e9784fa9f1ab052404abbc3ec86b72312faf7d', 'vision/telemetry.py': '853ebdd16df1620eb09694d13b139a7b74d7e9f4', 'vision/preview.py': 'f266a0727870865fe66f719b93dd270e33dae3cd', 'vision/rectangle_center.py': '8aa5e868f9ea2a9a7d243ff4879e8295652d4c0f', 'vision/laser_spot.py': 'c131498c5ff980e594b1c8d5d2feda6195caee23', 'vision/gimbal_self_test.py': '17b72e0935bbb7786f7c936d17b55c291795990b', 'vision/gimbal_aim.py': '0b0ae21ebd2e6cce2d7839fccf03dc8ada5c02d3', 'vision/stepper_link.py': '29501ea53b740bb704bbb8da166b5b4b6eabfffb', 'vision/aim_control.py': '8c9ea2c1578cedec16b745f82878604ab43d6577', 'vision/gimbal_calibrate.py': '9c4bb08a1b99d6feaef77bc8cf3fc56655e87676', 'target_api.py': '9c5a71aa209bb2716f1c0c4ac2fadd3eec23241d', 'main.py': 'd024a52377ddb42921c6aa721e387b24d1a16d42'}
+_SRC_SHA1 = {'config.py': '8d425a42f18e7ee95b178125aa6036053a03aefd', 'vision/rate_meter.py': '6f2a054c97a00470409a59de9dea42b0bff9c6ba', 'vision/camera_source.py': 'b398fedefe6eaf931d372abe00ba267f7d9697b5', 'vision/vision_worker.py': '79e9784fa9f1ab052404abbc3ec86b72312faf7d', 'vision/telemetry.py': '853ebdd16df1620eb09694d13b139a7b74d7e9f4', 'vision/preview.py': 'f266a0727870865fe66f719b93dd270e33dae3cd', 'vision/rectangle_center.py': 'd9bf88558441ee37ec052084cafa3be0e5a7835a', 'vision/laser_spot.py': 'c131498c5ff980e594b1c8d5d2feda6195caee23', 'vision/gimbal_self_test.py': '17b72e0935bbb7786f7c936d17b55c291795990b', 'vision/gimbal_aim.py': '0b0ae21ebd2e6cce2d7839fccf03dc8ada5c02d3', 'vision/stepper_link.py': '29501ea53b740bb704bbb8da166b5b4b6eabfffb', 'vision/aim_control.py': '8c9ea2c1578cedec16b745f82878604ab43d6577', 'vision/gimbal_calibrate.py': '9c4bb08a1b99d6feaef77bc8cf3fc56655e87676', 'target_api.py': '9c5a71aa209bb2716f1c0c4ac2fadd3eec23241d', 'main.py': '255999abd92673b40e386d1575d9933cfa9abd8e'}
 
 # --------------------------------------------------------------------------
 # ① 各模块源码原样嵌入，运行时装进 sys.modules（保持原 import 语义）
@@ -203,9 +203,12 @@ class Config:
     DARK_THRESHOLDS = (25, 40, 55, 70, 85, 100, 120, 145)
     # 稳态只采样四边窄带；失锁时缩小图搜索，每档验证成功就立即停止。
     SEARCH_WIDTH = 320
-    # 合作式搜索：每帧至多做一次扫描或一次候选验证，时间预算是软预算。
+    # 搜索策略：**单帧穷尽** —— 一帧内按序试完全部阈值（末尾 Canny 兜底）直到找到；
+    # SEARCH_BUDGET_MS 是软预算，只在单帧扫超时时才把剩余进度留给下一帧（跨帧续扫，防极慢板卡死单帧）。
+    # ⚠ 历史：v0.4.3 曾改成"每帧只轮换 1 个阈值、只验 1 个候选"，实测丢锁后要 11+ 帧才重捕获
+    #   （大角度/移动场景肉眼即"丢框"）；v0.5.1 改回单帧穷尽。
     SEARCH_BUDGET_MS = 25.0
-    SEARCH_MAX_PROPOSALS = 1
+    SEARCH_MAX_PROPOSALS = 128   # 单帧验证候选数硬上限（安全阀，正常场景远用不到）
     SEARCH_GEOMETRY_STEPS = 8
     MAX_CONTOURS = 128
     LINE_MAX_PROPOSALS = 36
@@ -1313,15 +1316,16 @@ class RectangleCenterDetector:
         return sorted(candidates, key=lambda c: c[1] != "inner")
 
     def _search(self, gray, roi=None):
-        """在缩小图上找候选并验证；**合作式**：每帧只推进有限步，跨帧延续。
+        """在缩小图上按序穷尽阈值并验证；**单帧内尽量扫完**，超时才跨帧续扫。
 
         关键设计（性能与鲁棒性的平衡）：
           · 缩小到 SEARCH_WIDTH 宽再阈值化，全图扫描代价大幅下降；坐标末了乘回原分辨率。
-          · 阈值列表 = [上次成功阈值] + [Otsu] + DARK_THRESHOLDS；持续失败时**跨帧轮换**
-            （job["index"] 在 _search_jobs 里记进度），避免单帧把全部阈值跑一遍。
-          · SEARCH_MAX_PROPOSALS=1：每帧最多验证一个候选；时间预算 SEARCH_BUDGET_MS 是软预算
-            （至少验证一个，防止原子调用稍慢导致永远不推进）。
-          · 全部阈值候选耗尽后，才用 Canny 轮廓兜底（最贵，只在彻底找不到时用）。
+          · 阈值列表 = [上次成功阈值] + [Otsu] + DARK_THRESHOLDS，**在同一帧内按序尝试**，
+            直到找到为止；全部阈值试完再用 Canny 轮廓兜底（最贵，只在彻底找不到时用）。
+          · SEARCH_BUDGET_MS 是**软预算**：一帧内扫到超时才停手，并把进度（job["index"] /
+            job["pending"]）留给下一帧续扫 —— 既保证"丢锁后 1 帧内重捕获"，又防极慢板卡死单帧。
+          · ★ 恢复单帧穷尽（v0.5.1）：v0.4.3 曾改成"每帧只轮换 1 个阈值、只验 1 个候选"，
+            实测丢锁后要 11+ 帧才重捕获（板端更慢），大角度/移动场景肉眼即"丢框"。
         找到即锁定 _locked_th 并清空该 ROI 的待验证队列，下次直接复用。
         """
         self._search_count += 1
@@ -1337,41 +1341,50 @@ class RectangleCenterDetector:
         for th in (int(otsu),) + tuple(self.cfg.DARK_THRESHOLDS):
             if not any(abs(th - t) < 6 for t in thresholds):
                 thresholds.append(th)
-        # 持续失败时跨帧轮换阈值；只缓存候选几何，不保存旧图像或旧验证结果。
+        # 跨帧进度：只缓存候选几何与下一档下标，不保存旧图像或旧验证结果。
         key = tuple(roi) if roi is not None else "full"
         job = self._search_jobs.setdefault(key, dict(index=0, pending=[], threshold=None))
         if len(self._search_jobs) > 4:
             self._search_jobs = {key: job}                 # 最多只留 4 个 ROI 的进度
         pending = job["pending"]
-        if not pending:
-            index = job["index"] % (len(thresholds) + 1)   # 最后一档留作 Canny 兜底
-            job["index"] += 1
-            if index < len(thresholds):
-                th = thresholds[index]
-                job["threshold"] = th
-                self._threshold_count += 1
-                _, mask = cv2.threshold(small, th, 255, cv2.THRESH_BINARY_INV)   # 暗区为前景
-                mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self._kernel)     # 闭运算补断线
-                # 候选坐标从缩小图坐标乘回原图（+ROI 偏移）。
-                pending.extend((q * np.array([sx, sy], np.float32) + [x, y], kind)
-                               for q, kind in self._candidate_quads(mask))
-            else:
-                job["threshold"] = None
-                # Canny 兜底：边缘图直接找四边形轮廓，内/外框都试。
-                edges = cv2.Canny(small, self.cfg.CANNY_LOW, self.cfg.CANNY_HIGH)
-                contours = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)[-2]
-                for cnt in sorted(contours, key=cv2.contourArea, reverse=True)[:self.cfg.MAX_CANDIDATES]:
-                    if cv2.contourArea(cnt) < sw * sh * self.cfg.MIN_AREA_RATIO:
-                        continue
-                    ap = cv2.approxPolyDP(cnt, self.cfg.APPROX_EPSILON * cv2.arcLength(cnt, True), True)
-                    if len(ap) == 4 and cv2.isContourConvex(ap):
-                        q = _order_quad(ap) * [sx, sy] + [x, y]
-                        pending.extend(((q, "inner"), (q, "outer")))
-        # 逐个验证候选；每帧最多 SEARCH_MAX_PROPOSALS 个。
-        while pending and self._proposals < self.cfg.SEARCH_MAX_PROPOSALS:
-            # 至少验证一个候选，避免原子轮廓扫描稍慢导致永远没有进展。
-            if self._proposals and time.perf_counter() >= self._deadline:
-                break
+        while True:
+            if not pending:
+                # 取下一档阈值；下标超过 len 表示"全部阈值 + Canny 兜底"都已试过 → 本帧无果。
+                if job["index"] > len(thresholds):
+                    job["index"] = 0
+                    return None
+                # 软预算：本帧已建过至少一档阈值且已超时 → 停手，剩余留给下一帧续扫
+                # （至少保证第一档一定跑完，防止原子调用稍慢导致永远不推进）。
+                if self._threshold_count and time.perf_counter() >= self._deadline:
+                    return None
+                index = job["index"]
+                job["index"] += 1
+                if index < len(thresholds):
+                    th = thresholds[index]
+                    job["threshold"] = th
+                    self._threshold_count += 1
+                    _, mask = cv2.threshold(small, th, 255, cv2.THRESH_BINARY_INV)   # 暗区为前景
+                    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self._kernel)     # 闭运算补断线
+                    # 候选坐标从缩小图坐标乘回原图（+ROI 偏移）。
+                    pending.extend((q * np.array([sx, sy], np.float32) + [x, y], kind)
+                                   for q, kind in self._candidate_quads(mask))
+                else:
+                    job["threshold"] = None
+                    # Canny 兜底：边缘图直接找四边形轮廓，内/外框都试。
+                    edges = cv2.Canny(small, self.cfg.CANNY_LOW, self.cfg.CANNY_HIGH)
+                    contours = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)[-2]
+                    for cnt in sorted(contours, key=cv2.contourArea, reverse=True)[:self.cfg.MAX_CANDIDATES]:
+                        if cv2.contourArea(cnt) < sw * sh * self.cfg.MIN_AREA_RATIO:
+                            continue
+                        ap = cv2.approxPolyDP(cnt, self.cfg.APPROX_EPSILON * cv2.arcLength(cnt, True), True)
+                        if len(ap) == 4 and cv2.isContourConvex(ap):
+                            q = _order_quad(ap) * [sx, sy] + [x, y]
+                            pending.extend(((q, "inner"), (q, "outer")))
+                continue
+            # 有候选：至少验证一个；之后一旦超出软预算/硬上限就停手，剩余留给下一帧续扫。
+            if self._proposals and (self._proposals >= self.cfg.SEARCH_MAX_PROPOSALS or
+                                    time.perf_counter() >= self._deadline):
+                return None
             q, kind = pending.pop(0)
             self._proposals += 1
             verified = self._verify(gray, q, kind)         # 四边暗带验证
@@ -1386,7 +1399,6 @@ class RectangleCenterDetector:
             job["pending"] = []
             job["index"] = 0
             return verified
-        return None
 
     def _legacy_search(self, gray, roi=None):
         """保留可选线段恢复路径使用的完整搜索；常规帧不调用。"""
@@ -3205,7 +3217,7 @@ from vision.preview import (Preview, TouchButtons, display_result,
 from vision.aim_control import VisionControl, send_uart
 from vision.telemetry import format_perf_line, format_slow_loop, MAIN_LOOP_SLOW_MS
 
-BUILD_ID = "2026-10-12-modular-main-v0.5.0"
+BUILD_ID = "2026-10-12-eager-search-v0.5.1"
 
 # ---- 兼容别名（v0.4.6 模块化后保留旧私有名）--------------------------------
 # tools/test_runtime_performance.py 直接 `from main import (_FrameRate, _LatestVision,

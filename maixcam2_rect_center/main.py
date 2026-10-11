@@ -102,7 +102,7 @@ from vision.preview import (Preview, TouchButtons, display_result,
 from vision.aim_control import VisionControl, send_uart
 from vision.telemetry import format_perf_line, format_slow_loop, MAIN_LOOP_SLOW_MS
 
-BUILD_ID = "2026-10-12-modular-main-v0.5.0"
+BUILD_ID = "2026-10-12-eager-search-v0.5.1"
 
 # ---- 兼容别名（v0.4.6 模块化后保留旧私有名）--------------------------------
 # tools/test_runtime_performance.py 直接 `from main import (_FrameRate, _LatestVision,
