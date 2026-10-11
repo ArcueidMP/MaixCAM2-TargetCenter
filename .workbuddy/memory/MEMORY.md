@@ -9,9 +9,21 @@
 | 轨 | 目录 | BUILD_ID | 状态 |
 |---|---|---|---|
 | A（DeepSeek） | 根 | `2026-10-05-r7` | 性能治理 + 抗抖跟踪已完成 |
-| B（名义 GPT） | `maixcam2_rect_center/` | `2026-10-11-maixvision-off-v0.4.5` | v0.4.0 修轴映射 → v0.4.1 按钮自检+画面流转 → v0.4.3 显示移出主循环 → v0.4.4 锁定「板上 ~2fps」= MaixCDK 图传 500ms 忙等 + 探针 → v0.4.5 代码层掐断图传（默认全帧） |
+| B（名义 GPT） | `maixcam2_rect_center/` | `2026-10-12-modular-main-v0.4.6` | v0.4.0 修轴映射 → v0.4.1 按钮自检+画面流转 → v0.4.3 显示移出主循环 → v0.4.4 锁定「板上 ~2fps」= MaixCDK 图传 500ms 忙等 + 探针 → v0.4.5 代码层掐断图传（默认全帧）→ **v0.4.6 入口模块化（main 923→296 行）** |
 
-**B 轨 v0.4.5（10-11，当前）** —— **代码层掐断 MaixVision 图传，默认即全帧**（治 v0.4.4 锁定的根因）：
+**B 轨 v0.4.6（10-12，当前）** —— **入口 `main.py` 按功能模块化（923→296 行），零行为变更**：
+- 新增 `vision/{rate_meter,camera_source,vision_worker,preview,aim_control,telemetry}.py` 六模块；
+  `main.py` 只留 `BUILD_ID` + 装配 + 主循环 + 模块地图 docstring；实现下沉到从未被覆写的 `vision/`。
+- ★ **时钟注入**（唯一行为性调整）：组件构造可传 `clock`（默认标准库 `time`），`main()` 传自身 `time`
+  ⇒ `test_main_self_test` 的假时钟（`patch.object(entry,"time",Clock)`）能穿透子模块；不传则行为不变。
+- **旧私有名以别名保留** ⇒ `test_runtime_performance` / `test_main_self_test` **零改动**通过；日志逐字不变。
+- 构建：`build_single.MODULES` 9→15（`vision.aim_control` 须排 `gimbal_self_test` 之后）；包内 **12→18 文件**。
+- 门禁 `OK=96 FAIL=0`；回归全绿（main_self_test 4 / runtime 8 / target_api / laser / gimbal_aim 11 /
+  performance 29/30 max0.803 0误检 / images_e2e）。
+- 另：B 轨 `AGENTS §6.9` 已改写 —— **默认 `SHOW_ASYNC=True`（主进程内显示线程）**，v18「默认必须 False」
+  结论被推翻；⚠ 但 `Display()` 仍**不可**放子进程（历史 v16 坑，与显示线程无关）。
+
+**B 轨 v0.4.5（10-11）** —— **代码层掐断 MaixVision 图传，默认即全帧**（治 v0.4.4 锁定的根因）：
 - 源码级事实：`maixvision_mode()` == `getenv("MAIXVISION")=="1"`（`maix_image_trans.cpp`）；图传通道 `img_trans`
   在 **`Display()` 构造时**按它创建**一次**。`show()` 与 `display.send_to_maixvision()` 首件事**都是**
   `img_trans->send_image()` ⇒ **换 API 无用**（共用同一 500ms 忙等）；**只有建 Display 前让 MAIXVISION≠1**。

@@ -1,0 +1,583 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>B 轨 main.py 模块化重构方案 · 25Efork</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --panel:#ffffff; --ink:#1c2128; --ink2:#4a5560; --ink3:#6b7681;
+    --line:#e2e6eb; --line2:#eef1f4;
+    --blue:#1f5fa8; --blue-bg:#eaf2fc; --blue-line:#c6dcf5;
+    --green:#1c7a4a; --green-bg:#eaf7f0; --green-line:#c2e6d3;
+    --amber:#96650a; --amber-bg:#fdf5e3; --amber-line:#f0dcae;
+    --red:#a92c2c; --red-bg:#fdeeee; --red-line:#f2caca;
+    --mono:"Cascadia Mono","JetBrains Mono",Consolas,"Courier New",monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.72 -apple-system,"Segoe UI","Microsoft YaHei",system-ui,sans-serif;}
+  .wrap{max-width:1080px;margin:0 auto;padding:36px 24px 72px}
+  header.top{border-bottom:2px solid var(--line);padding-bottom:20px;margin-bottom:28px}
+  .kicker{font-size:12.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--blue);font-weight:700}
+  h1{font-size:28px;line-height:1.32;margin:10px 0 12px;letter-spacing:-.2px}
+  .meta{display:flex;flex-wrap:wrap;gap:8px 10px;font-size:12.5px;color:var(--ink2)}
+  .meta span{background:var(--panel);border:1px solid var(--line);border-radius:999px;padding:3px 11px}
+  h2{font-size:20px;margin:40px 0 14px;padding-left:11px;border-left:4px solid var(--blue)}
+  h3{font-size:16px;margin:26px 0 10px;color:var(--ink)}
+  p{margin:10px 0}
+  ul,ol{margin:10px 0;padding-left:22px}
+  li{margin:5px 0}
+  code{font-family:var(--mono);font-size:13px;background:#eef1f4;border:1px solid var(--line2);
+    border-radius:4px;padding:1px 5px}
+  pre{font-family:var(--mono);font-size:12.5px;line-height:1.62;background:#fbfcfd;
+    border:1px solid var(--line);border-radius:8px;padding:14px 16px;overflow-x:auto;color:#243040}
+  pre.tree{background:#fdfdfe}
+  table{width:100%;border-collapse:collapse;margin:14px 0;font-size:13.5px;background:var(--panel);
+    border:1px solid var(--line);border-radius:8px;overflow:hidden}
+  th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line2);vertical-align:top}
+  th{background:#f4f6f8;font-weight:700;color:var(--ink2);font-size:12.5px;letter-spacing:.02em}
+  tr:last-child td{border-bottom:none}
+  td.num,th.num{text-align:right;font-family:var(--mono);font-size:12.5px;white-space:nowrap}
+  .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(248px,1fr));gap:12px;margin:16px 0}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 15px}
+  .card .t{font-family:var(--mono);font-size:13px;font-weight:700;color:var(--blue);margin-bottom:6px}
+  .card .d{font-size:13px;color:var(--ink2)}
+  .card .a{margin-top:9px;font-size:12.5px;color:var(--ink3);font-family:var(--mono)}
+  .box{border-radius:10px;padding:14px 16px;margin:16px 0;border:1px solid var(--line);background:var(--panel)}
+  .box .h{font-weight:700;margin-bottom:6px;font-size:14px}
+  .box.info{background:var(--blue-bg);border-color:var(--blue-line)} .box.info .h{color:var(--blue)}
+  .box.ok{background:var(--green-bg);border-color:var(--green-line)} .box.ok .h{color:var(--green)}
+  .box.warn{background:var(--amber-bg);border-color:var(--amber-line)} .box.warn .h{color:var(--amber)}
+  .box.risk{background:var(--red-bg);border-color:var(--red-line)} .box.risk .h{color:var(--red)}
+  .badge{display:inline-block;font-family:var(--mono);font-size:11.5px;font-weight:700;
+    border-radius:5px;padding:1px 7px;border:1px solid transparent;white-space:nowrap}
+  .b-ok{background:var(--green-bg);color:var(--green);border-color:var(--green-line)}
+  .b-warn{background:var(--amber-bg);color:var(--amber);border-color:var(--amber-line)}
+  .b-fail{background:var(--red-bg);color:var(--red);border-color:var(--red-line)}
+  .b-info{background:var(--blue-bg);color:var(--blue);border-color:var(--blue-line)}
+  .steps{counter-reset:s;list-style:none;padding:0;margin:16px 0}
+  .steps>li{counter-increment:s;position:relative;padding:12px 14px 12px 54px;background:var(--panel);
+    border:1px solid var(--line);border-radius:10px;margin-bottom:10px}
+  .steps>li::before{content:counter(s);position:absolute;left:14px;top:12px;width:26px;height:26px;
+    border-radius:50%;background:var(--blue);color:#fff;font-weight:700;font-size:13px;
+    display:flex;align-items:center;justify-content:center}
+  .steps .st{font-weight:700;margin-bottom:4px}
+  .steps .cmds{margin-top:8px}
+  footer{margin-top:48px;padding-top:18px;border-top:1px solid var(--line);font-size:12.5px;color:var(--ink3)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media (max-width:760px){.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<div style="background:var(--green-bg);border:1px solid var(--green-line);border-radius:10px;padding:14px 16px;margin-bottom:24px">
+  <div style="font-weight:700;color:var(--green);margin-bottom:6px">★ 本方案已于 2026-10-12 执行完毕（B 轨 v0.4.6）</div>
+  <div style="font-size:13.5px;color:var(--ink2)">
+    <code>main.py</code> 已由 923 行瘦身至 <strong>296 行</strong>；新增 6 个 <code>vision/</code> 模块
+    （<code>rate_meter</code> / <code>camera_source</code> / <code>vision_worker</code> / <code>preview</code> /
+    <code>aim_control</code> / <code>telemetry</code>）。门禁 <strong>OK=96 / FAIL=0</strong>（包内 18 文件），
+    <code>build_single --check/--smoke</code> 通过，全部回归绿（main_self_test 4 · runtime_performance 8 ·
+    target_api · laser · gimbal_aim 11 · performance 30 检出 29 / max 0.803px / 0 误检 · images_e2e）。
+    执行结果见 B 轨 <code>README.md</code> 的 v0.4.6 节；<strong>下文为当时的方案原文（保留备查）</strong>，
+    其中「前置条件」一节所述并发写入风险已排除（开工前 5 分钟心跳 sha1 恒定）。
+  </div>
+</div>
+<header class="top">
+  <div class="kicker">25Efork · 轨道 B（maixcam2_rect_center）· 重构方案</div>
+  <h1>把 main.py 拆成「薄入口 + 单一职责组件」<br>—— 模块化重构方案（待执行，本文不含代码改动）</h1>
+  <div class="meta">
+    <span>基线 BUILD_ID：<code>2026-10-11-display-thread-v0.4.3</code></span>
+    <span>main.py 当前 843 行 / 46.8 KB（sha1 <code>136addd1</code>）</span>
+    <span>目标 ≤ 240 行</span>
+    <span>方案日期：2026-10-11</span>
+    <span>状态：<span class="badge b-warn">已定稿 · 未执行</span></span>
+  </div>
+</header>
+
+<div class="box ok">
+  <div class="h">结论（TL;DR）</div>
+  <p style="margin:0">把 <code>main.py</code> 里 6 个「运行时组件」整体外迁到 <code>vision/</code> 下各自成文件，<code>main.py</code> 只保留
+  <strong>BUILD_ID + 装配 + 主循环</strong>（约 230 行）。这是<strong>等价搬迁</strong>：<u>不改算法、不改参数、不改日志字符串、不改串口帧</u>，
+  因此运行行为逐字不变；收益全部落在<strong>可审查性</strong>与<strong>抗覆写损失面</strong>上。
+  另有 3 项前置条件必须先满足（见 §9），否则此方案不应开工。</p>
+</div>
+
+<h2>1 · 现状诊断</h2>
+
+<p>你对 <code>main.py</code> 的复杂度判断是准确的，而且有量化证据。先看当前入口的职责构成：</p>
+
+<table>
+  <thead><tr><th>行区间</th><th>符号</th><th class="num">行数</th><th>职责</th><th>被谁依赖</th></tr></thead>
+  <tbody>
+    <tr><td class="num">1–53</td><td>模块 docstring</td><td class="num">53</td><td>三条时间轴总纲（取帧/识别/显示链路说明）</td><td>—</td></tr>
+    <tr><td class="num">55–83</td><td>import + BUILD_ID</td><td class="num">29</td><td>依赖聚合 + 构建号</td><td>板端日志核对</td></tr>
+    <tr><td class="num">86–122</td><td><code>_FrameRate</code></td><td class="num">37</td><td>滑动窗口帧率计（含 low1 卡顿指标）</td><td>preview / worker / 主循环</td></tr>
+    <tr><td class="num">125–211</td><td><code>_LatestVision</code></td><td class="num">87</td><td>识别线程 + 「最新帧」双槽位</td><td>主循环</td></tr>
+    <tr><td class="num">214–462</td><td><code>_Preview</code></td><td class="num">249</td><td>显示线程 + 画布池 + 按钮 + letterbox</td><td>主循环</td></tr>
+    <tr><td class="num">467–502</td><td><code>_Touch</code></td><td class="num">36</td><td>触摸按下沿 → 按钮命中</td><td>主循环</td></tr>
+    <tr><td class="num">505–525</td><td><code>_to_gray</code></td><td class="num">21</td><td>MaixPy 帧 → 灰度 ndarray（零拷贝）</td><td>主循环</td></tr>
+    <tr><td class="num">528–536</td><td><code>_send_uart</code></td><td class="num">9</td><td>旧版 ASCII 降级输出</td><td><code>_VisionControl</code></td></tr>
+    <tr><td class="num">539–650</td><td><code>_VisionControl</code></td><td class="num">112</td><td>闭环调度中枢（FAULT→自检→标定→追踪）</td><td>识别线程</td></tr>
+    <tr><td class="num">653–665</td><td><code>_display_result</code></td><td class="num">13</td><td>结果过期降级（waiting/stale）</td><td>主循环 / 回归测试</td></tr>
+    <tr><td class="num">668–843</td><td><code>main()</code></td><td class="num">176</td><td>装配（相机/云台/显示/线程）+ 主循环 + 日志</td><td>入口</td></tr>
+  </tbody>
+</table>
+
+<p>问题不在「行数多」本身，而在这三点：</p>
+<ol>
+  <li><strong>职责混居</strong>：一个文件里同时住了「视频采集」「线程模型」「显示驱动」「闭环调度」「遥测日志」五类东西。改动追踪手感（<code>_control</code>）要打开的文件，与改动按钮渲染（<code>_Preview._draw_buttons</code>）是同一个 —— 审查无法按功能切分。</li>
+  <li><strong>入口即热路径</strong>：<code>main.py</code> 同时是「最常被改的文件」和「最大最密的文件」，任何一次改动都要重新理解 800 行上下文。</li>
+  <li><strong>并发覆写代价被放大</strong>（<u>本轮实测复现的硬事实</u>）：本工程两轨共用一个工作树，<code>main.py</code> 是唯一会被外部进程<strong>整份覆写</strong>的文件（<code>AGENTS.md §5.1</code> 已记录 4 次事故）。本次调研的 <strong>12 分钟窗口内实测到 3 次快照</strong>：
+    <table style="margin:10px 0 0">
+      <thead><tr><th>时刻</th><th class="num">行数</th><th>BUILD_ID</th><th>sha1（前 8 位）</th><th>观察到的变化</th></tr></thead>
+      <tbody>
+        <tr><td class="num">22:50</td><td class="num">718</td><td><code>2026-10-11-live-preview-v0.4.2</code></td><td><code>—</code></td><td>首次读取：显示仍是主循环内<strong>同步</strong> show</td></tr>
+        <tr><td class="num">22:51:51</td><td class="num">841</td><td><code>2026-10-11-display-thread-v0.4.3</code></td><td><code>7aa35373</code></td><td>3 分钟后：多出 <code>_Preview._show_loop</code> 显示线程 + 画布池</td></tr>
+        <tr><td class="num">22:55:29</td><td class="num">843</td><td><code>2026-10-11-display-thread-v0.4.3</code></td><td><code>136addd1</code></td><td>再 4 分钟：<code>_Touch</code> / <code>_to_gray</code> 附近 +2 行</td></tr>
+      </tbody>
+    </table>
+    <p style="margin:10px 0 0">文件越大，一次覆写能抹掉的工作越多；<code>vision/*</code> 则<strong>从未被覆写</strong>——这正是把实现下沉到 <code>vision/</code> 的直接理由。</p></li>
+</ol>
+
+<h3>门禁实况（本次调研期间两次实测，状态已变）</h3>
+<table>
+  <thead><tr><th>检查</th><th>22:52 实测</th><th>23:02 实测</th><th>说明</th></tr></thead>
+  <tbody>
+    <tr><td><code>check_app.py</code></td>
+      <td><span class="badge b-fail">71 OK / 2 WARN / 1 FAIL</span></td>
+      <td><span class="badge b-ok">72 OK / 2 WARN / 0 FAIL</span></td>
+      <td>C8 曾因 <code>dist</code> 停留在 <code>v0.4.2</code>（与源码 <code>v0.4.3</code> 不一致）而 FAIL；<strong>10 分钟内由另一写作者重建 dist 后自行转绿</strong></td></tr>
+    <tr><td><code>build_single --check</code></td>
+      <td><span class="badge b-fail">已过期（config/main 有改动）</span></td>
+      <td><span class="badge b-ok">指纹一致（9 源文件）</span></td>
+      <td>单文件版现已与源码同步</td></tr>
+    <tr><td>包内清单</td>
+      <td colspan="2" style="text-align:center"><span class="badge b-info">12 文件 / ≈162.9 KB</span></td>
+      <td><code>main.py</code> 占 46.8 KB，是第二大的 <code>rectangle_center.py</code>（41.8 KB）的 <strong>1.12 倍</strong></td></tr>
+    <tr><td>2 项 WARN</td>
+      <td colspan="2" style="text-align:center"><span class="badge b-warn">历史残留</span></td>
+      <td>exclude 里 <code>B轨代码技术解析与功能分析.md</code>、<code>MaixCAM应用代码规范.md</code> 指向不存在的文件（与本重构无关，顺带可清）</td></tr>
+    <tr><td>git 工作树</td>
+      <td colspan="2" style="text-align:center"><span class="badge b-ok">已提交</span></td>
+      <td>23:02 时 10 个文件仅 <code>git add</code>、<code>HEAD</code> 仍为 <code>72a011d</code>；<strong>23:05 已由写入方完成提交</strong>：
+      <code>HEAD=dd13748</code>（B 轨 v0.4.2 / v0.4.3 源码一条线）+ <code>ab7be1f</code>（<code>docs:</code> 根目录分析页 HTML 入库）—— <strong>回滚点已落地</strong></td></tr>
+  </tbody>
+</table>
+
+<h2>2 · 目标与非目标</h2>
+
+<div class="grid2">
+  <div class="box ok">
+    <div class="h">目标</div>
+    <ul style="margin:0">
+      <li><strong>可审查粒度</strong>：改哪块功能就只打开哪个文件；单文件上限从 843 行降到最大约 250 行。</li>
+      <li><strong>入口变薄</strong>：<code>main.py</code> 只表达「谁被装配、以什么顺序跑」，不表达实现。</li>
+      <li><strong>抗覆写</strong>：整份覆写的损失面从 46.8 KB 缩到约 14 KB（<strong>-70%</strong>）；实现代码落到从未被覆写的 <code>vision/</code> 下。</li>
+      <li><strong>对外复用</strong>：显示层/识别线程/闭环调度都成为可被 <code>target_api.py</code> 或其它小问直接引用的组件。</li>
+    </ul>
+  </div>
+  <div class="box warn">
+    <div class="h">非目标（本轮明确不做）</div>
+    <ul style="margin:0">
+      <li><strong>不改运行时行为</strong>：日志字符串、串口帧、状态机时序、参数取值逐字不变。</li>
+      <li><strong>不追求性能提升</strong>：等价搬迁不会提升帧率。若要做热路径优化，须按项目铁律单独立项 + A/B 实测（见 §8）。</li>
+      <li><strong>不动算法与云台逻辑</strong>：<code>rectangle_center.py</code> / <code>gimbal_*.py</code> / <code>stepper_link.py</code> / <code>config.py</code> 一行不改。</li>
+      <li><strong>不动测试断言</strong>：两个入口测试必须<strong>零改动</strong>通过（兼容策略见 §6）。</li>
+    </ul>
+  </div>
+</div>
+
+<h2>3 · 模块划分</h2>
+
+<p>拆分口径：<strong>按「时间轴 / 职责」切，而不是按「类」切</strong>。三条时间轴（主循环 A、识别线程 B、显示线程 C）各归其位，因此类名可去掉下划线前缀、成为公开 API。</p>
+
+<div class="cards">
+  <div class="card">
+    <div class="t">vision/rate_meter.py</div>
+    <div class="d">滑动窗口帧率计。<strong>被三处复用</strong>（capture / detect / disp 三种口径），是唯一的纯计算、零硬件依赖组件。</div>
+    <div class="a">公开：FrameRate<br>迁出：_FrameRate（86–122）</div>
+  </div>
+  <div class="card">
+    <div class="t">vision/camera_source.py</div>
+    <div class="d">相机打开/关帧/取帧 + MaixPy 帧 → 灰度 ndarray 的零拷贝转换；总线宽兜底逻辑收在这里。</div>
+    <div class="a">公开：CameraSource, to_gray<br>迁出：_to_gray（503–523）</div>
+  </div>
+  <div class="card">
+    <div class="t">vision/vision_worker.py</div>
+    <div class="d">识别线程 + 「最新帧槽 / 最新结果槽」双槽位模型，丢帧不积压。<strong>时间轴 B 的全部实现</strong>。</div>
+    <div class="a">公开：LatestFrameWorker<br>迁出：_LatestVision（125–211）</div>
+  </div>
+  <div class="card">
+    <div class="t">vision/preview.py</div>
+    <div class="d">显示线程 + 画布池 + 屏幕按钮 + letterbox 合帧。<strong>时间轴 C 的全部实现</strong>，也是隔离原则的落点（显示失败不影响识别/闭环）。</div>
+    <div class="a">公开：Preview, TouchButtons, select_display_result, build_view<br>迁出：_Preview（214–462）、_Touch（465–500）、_display_result（653–665）</div>
+  </div>
+  <div class="card">
+    <div class="t">vision/aim_control.py</div>
+    <div class="d">闭环调度中枢：FAULT → 按钮自检 → 标定 → 追踪的<strong>优先级顺序</strong>，以及旧版 ASCII 串口降级输出。顺序不可调换，集中一处最利于审查。</div>
+    <div class="a">公开：VisionControl, send_uart_ascii<br>迁出：_VisionControl（539–650）、_send_uart（528–536）</div>
+  </div>
+  <div class="card">
+    <div class="t">vision/telemetry.py</div>
+    <div class="d">周期日志的组装：三路帧率 + 分相耗时（read/draw/loop）+ show 统计 + 两条慢速告警。<strong>纯字符串装配，无副作用</strong>。</div>
+    <div class="a">公开：PerfLogger, SlowWarn<br>迁出：main() 内 784–820 的日志段</div>
+  </div>
+</div>
+
+<h3>目录结构：前 / 后</h3>
+<div class="grid2">
+<pre class="tree"><strong>改前</strong>
+maixcam2_rect_center/
+├─ app.yaml
+├─ main.py            <span style="color:#a92c2c">843 行 · 46.8 KB</span>
+├─ config.py
+├─ target_api.py
+├─ assets/icon.png
+└─ vision/
+   ├─ __init__.py
+   ├─ rectangle_center.py    702 行
+   ├─ laser_spot.py          234 行
+   ├─ gimbal_aim.py          178 行
+   ├─ gimbal_calibrate.py    155 行
+   ├─ gimbal_self_test.py    148 行
+   └─ stepper_link.py        285 行</pre>
+<pre class="tree"><strong>改后</strong>
+maixcam2_rect_center/
+├─ app.yaml
+├─ main.py            <span style="color:#1c7a4a">≈230 行 · ≈14 KB（装配+主循环）</span>
+├─ config.py
+├─ target_api.py
+├─ assets/icon.png
+└─ vision/
+   ├─ __init__.py
+   ├─ rectangle_center.py
+   ├─ laser_spot.py
+   ├─ <span style="color:#1f5fa8">rate_meter.py</span>          <span style="color:#1f5fa8">← 新</span>
+   ├─ <span style="color:#1f5fa8">camera_source.py</span>       <span style="color:#1f5fa8">← 新</span>
+   ├─ <span style="color:#1f5fa8">vision_worker.py</span>       <span style="color:#1f5fa8">← 新</span>
+   ├─ <span style="color:#1f5fa8">preview.py</span>             <span style="color:#1f5fa8">← 新</span>
+   ├─ <span style="color:#1f5fa8">aim_control.py</span>         <span style="color:#1f5fa8">← 新</span>
+   ├─ <span style="color:#1f5fa8">telemetry.py</span>           <span style="color:#1f5fa8">← 新</span>
+   ├─ gimbal_aim.py
+   ├─ gimbal_calibrate.py
+   ├─ gimbal_self_test.py
+   └─ stepper_link.py</pre>
+</div>
+
+<h2>4 · 迁移映射表（逐符号，含行号）</h2>
+
+<p>下表是执行的<strong>唯一权威清单</strong>：左边是 <code>main.py</code>（v0.4.3, 843 行, sha1 <code>136addd1</code>）的现有符号，右边是目标文件与新名字。搬迁方式是<strong>原样剪切</strong>（类体/函数体逐字不动，只改头部 import 与 docstring）。</p>
+<p style="font-size:13px;color:var(--ink3);margin-top:-2px">⚠ 该文件仍在被并发覆写，行号随时可能漂移；开工前请先 <code>grep -n "^class \|^def "</code> 复核一次，<strong>以符号名为准</strong>。</p>
+
+<table>
+  <thead><tr><th>现位置</th><th>现符号</th><th>去向</th><th>新名字</th><th>备注</th></tr></thead>
+  <tbody>
+    <tr><td class="num">86–122</td><td><code>_FrameRate</code></td><td><code>vision/rate_meter.py</code></td><td><code>FrameRate</code></td><td>无内部依赖，可最先迁</td></tr>
+    <tr><td class="num">125–211</td><td><code>_LatestVision</code></td><td><code>vision/vision_worker.py</code></td><td><code>LatestFrameWorker</code></td><td>依赖 <code>FrameRate</code></td></tr>
+    <tr><td class="num">214–462</td><td><code>_Preview</code></td><td rowspan="3"><code>vision/preview.py</code></td><td><code>Preview</code></td><td>依赖 <code>FrameRate</code>；<code>from maix import display</code> 保持方法内延迟导入</td></tr>
+    <tr><td class="num">467–502</td><td><code>_Touch</code></td><td><code>TouchButtons</code></td><td>与 <code>Preview</code> 同属 UI 输入输出，合一个文件</td></tr>
+    <tr><td class="num">653–665</td><td><code>_display_result</code></td><td><code>select_display_result</code></td><td>被回归测试直接调用，<strong>必须保留同名导出</strong></td></tr>
+    <tr><td class="num">505–525</td><td><code>_to_gray</code></td><td><code>vision/camera_source.py</code></td><td><code>to_gray</code></td><td>相机装配也一并收进 <code>CameraSource</code></td></tr>
+    <tr><td class="num">528–536</td><td><code>_send_uart</code></td><td rowspan="2"><code>vision/aim_control.py</code></td><td><code>send_uart_ascii</code></td><td>只被 <code>VisionControl</code> 调用，随它走</td></tr>
+    <tr><td class="num">539–650</td><td><code>_VisionControl</code></td><td><code>VisionControl</code></td><td>依赖 <code>GimbalSelfTest</code> / 检测器 / 光斑</td></tr>
+    <tr><td class="num">784–820</td><td>main() 内日志段</td><td><code>vision/telemetry.py</code></td><td><code>PerfLogger</code></td><td>见下方「日志字符串冻结」</td></tr>
+    <tr><td class="num">668–843</td><td><code>main()</code></td><td><code>main.py</code>（原地瘦身）</td><td><code>main()</code></td><td>相机/云台装配留在入口（§6 有理由）</td></tr>
+    <tr><td class="num">1–53</td><td>模块 docstring</td><td>分散</td><td>—</td><td>总纲精简后留在 <code>main.py</code>；三条时间轴各自的说明下沉到对应模块</td></tr>
+  </tbody>
+</table>
+
+<div class="box risk">
+  <div class="h">日志字符串冻结（不可协商）</div>
+  <p style="margin:0">下列字符串被 <code>tools/test_main_self_test.py</code> 与 <code>tools/test_runtime_performance.py</code>
+  <strong>逐字断言</strong>，搬迁时必须原样保留（含中文与全角括号）：</p>
+  <pre style="margin:10px 0 0">"[ui] 上电自检已改为屏幕按钮"            # 主循环启动横幅 → 留在 main.py
+"[ui] 收到点击 -> 启动上电自检（%d 步）"   # → vision/aim_control.py
+"[preview] mode=%s screen=%dx%d ..."     # → vision/preview.py
+"[self-test] complete"                   # → vision/gimbal_self_test.py（不动）
+"link:%s"                                # 故障原因串 → vision/aim_control.py</pre>
+</div>
+
+<h2>5 · 接口契约（新模块公开签名）</h2>
+
+<pre><span style="color:#6b7681"># vision/rate_meter.py</span>
+class FrameRate:
+    def record(self, now: float) -&gt; None
+    def values(self, now: float) -&gt; tuple[float, float]      <span style="color:#6b7681"># (fps, low1)</span>
+
+<span style="color:#6b7681"># vision/camera_source.py</span>
+class CameraSource:
+    def __init__(self, cfg)          <span style="color:#6b7681"># 内部 from maix import camera, image</span>
+    def read(self) -&gt; tuple[Any, Any]      <span style="color:#6b7681"># (maix_img, gray_ndarray)，None 帧返回 (None, None)</span>
+    def close(self) -&gt; None
+def to_gray(img, image_module) -&gt; "np.ndarray"
+
+<span style="color:#6b7681"># vision/vision_worker.py</span>
+class LatestFrameWorker:
+    def __init__(self, callback, idle=None, asynchronous=True)
+    def submit(self, gray, captured_at) -&gt; None
+    def snapshot(self, now) -&gt; tuple[Any, float, float]      <span style="color:#6b7681"># (latest, fps, low1)</span>
+    def close(self) -&gt; None
+    <span style="color:#6b7681"># 属性：error / dropped / rate / thread</span>
+
+<span style="color:#6b7681"># vision/preview.py</span>
+class Preview:
+    def __init__(self, cfg)
+    def add_button(self, name, x0, y0, x1, y1) -&gt; None
+    def hit(self, x, y) -&gt; "str | None"
+    def due(self, now) -&gt; bool
+    def render(self, view, now, status="") -&gt; None
+    def take_show_stats(self) -&gt; tuple[float, float, float, int]
+    def close(self) -&gt; None
+    <span style="color:#6b7681"># 属性：enabled / width / height / render_width / render_height</span>
+    <span style="color:#6b7681">#       shown / dropped / fps / low1 / rate</span>
+def build_view(gray, result, laser_state, cfg, render_width, vision_fps, age) -&gt; "np.ndarray"
+def select_display_result(snapshot, now, max_age) -&gt; tuple[Any, Any, float]
+
+class TouchButtons:
+    def __init__(self, cfg)
+    def poll(self, preview) -&gt; "str | None"
+
+<span style="color:#6b7681"># vision/aim_control.py</span>
+class VisionControl:
+    def __init__(self, cfg, link, aim, calibrator, uart)
+    def process(self, gray, captured_at) -&gt; dict
+    def idle(self) -&gt; None
+    def status(self) -&gt; str
+    <span style="color:#6b7681"># 属性：request_test（threading.Event）/ self_test / detector / laser</span>
+def send_uart_ascii(uart, result) -&gt; None
+
+<span style="color:#6b7681"># vision/telemetry.py</span>
+class PerfLogger:
+    def __init__(self, cfg, build_id)
+    def tick(self, *, now, capture_rate, preview, worker, snapshot, result, age,
+             read_ms, draw_ms, loop_ms, aim) -&gt; None   <span style="color:#6b7681"># 到点才打印，内部自持 last_log</span></pre>
+
+<div class="box info">
+  <div class="h">新增 <code>build_view()</code> 的理由</div>
+  <p style="margin:0">现在主循环第 ⑦ 步（768–779 行）依次调 <code>draw_result</code> → <code>draw_laser_overlay</code> → <code>cv2.putText</code>，
+  共 12 行、依赖 <code>PANEL_H</code> 与两个绘制函数。把它收成 <code>build_view()</code> 后，主循环只剩
+  <code>view = build_view(...)</code> 一行，且 <code>main.py</code> 不再需要 import 任何绘制符号。
+  <strong>参数与绘制顺序完全不变</strong>，属等价搬迁。</p>
+</div>
+
+<h2>6 · 兼容与测试策略</h2>
+
+<h3>6.1 旧私有名别名（保证测试零改动）</h3>
+<p><code>tools/test_runtime_performance.py:14</code> 直接 <code>from main import _FrameRate, _LatestVision, _Preview, _VisionControl, _display_result</code>。
+重构后 <code>main.py</code> 保留一段<strong>兼容别名</strong>，即可让该测试一行不改：</p>
+<pre><span style="color:#6b7681"># main.py —— 兼容别名（旧私有名 → 新模块公开名）</span>
+from vision.rate_meter    import FrameRate            as _FrameRate
+from vision.vision_worker import LatestFrameWorker    as _LatestVision
+from vision.preview       import (Preview             as _Preview,
+                                  TouchButtons        as _Touch,
+                                  select_display_result as _display_result)
+from vision.aim_control   import VisionControl        as _VisionControl
+from vision.camera_source import to_gray              as _to_gray
+from vision.aim_control   import send_uart_ascii      as _send_uart</pre>
+<p>别名代价约 10 行，收益是：<strong>旧测试、旧文档、旧的排查习惯（<code>[perf]</code> 里提到的类名）都继续成立</strong>。等确认稳定后再决定是否清理。</p>
+
+<h3>6.2 为什么「相机 / 云台装配」必须留在 main.py</h3>
+<p><code>tools/test_main_self_test.py</code> 用 <code>patch.object(entry, "probe_imu", ...)</code> 打桩到 <strong><code>main</code> 模块的命名空间</strong>。
+若把云台初始化搬进 <code>vision/gimbal_boot.py</code>，该 patch 就会失效（<code>gimbal_boot</code> 里的 <code>probe_imu</code> 不受影响，会调用真实实现）。
+因此：<strong>云台装配保留在 <code>main.py</code>，抽成模块级私有函数 <code>_init_gimbal(cfg)</code></strong>（仍属入口职责，约 45 行），
+<code>main()</code> 只调用它。<code>entry.time</code> / <code>entry.Config</code> 的 patch 同样因为主循环仍在 <code>main.py</code> 而继续生效。</p>
+
+<h3>6.3 已识别的时序风险（必须实跑验证，不能只靠推理）</h3>
+<div class="box warn">
+  <div class="h">风险点：<code>Clock</code> 打桩只覆盖 <code>main.time</code></div>
+  <p><code>test_main_self_test.py</code> 把 <code>entry.time</code> 替换成每次 +0.02s 的假钟。搬迁后
+  <code>VisionControl.process</code> 内部的 <code>time.perf_counter()</code> 来自 <code>vision/aim_control.py</code>，<strong>不受假钟影响</strong>，
+  于是 <code>fresh = now - captured_at &lt;= RESULT_MAX_AGE_S</code> 会恒为 <code>False</code>（真实时钟 vs 假钟起点 0）。</p>
+  <p style="margin-bottom:0">推理结论：这<strong>不影响三条断言的成立</strong> —— 自检由 <code>request_test</code> 事件触发，与视觉新鲜度无关；
+  上电不来自检时本就不发运动帧。所以预期 <span class="badge b-ok">三条用例全过</span>，
+  但<strong>必须以 <code>V3</code> 步骤实跑为准</strong>；若失败，修法是给 <code>VisionControl</code> 注入 clock（而非改断言）。</p>
+</div>
+
+<h3>6.4 全量回归矩阵（重构后必须全绿）</h3>
+<table>
+  <thead><tr><th>测试</th><th>是否需改动</th><th>关注点</th></tr></thead>
+  <tbody>
+    <tr><td><code>test_main_self_test.py</code></td><td><span class="badge b-ok">零改动</span></td><td>上电 0 运动帧 / 点击后 yaw×3 + pitch×3 / FAULT 阻断</td></tr>
+    <tr><td><code>test_runtime_performance.py</code></td><td><span class="badge b-ok">零改动</span></td><td>靠 §6.1 别名；6 条用例含显示隔离与实测 FPS</td></tr>
+    <tr><td><code>test_performance.py</code></td><td><span class="badge b-ok">零改动</span></td><td>视觉基线 29/30、max 0.803px、0 误检</td></tr>
+    <tr><td><code>test_target_api.py</code></td><td><span class="badge b-ok">零改动</span></td><td>对外 API 回归</td></tr>
+    <tr><td><code>test_gimbal_aim.py</code></td><td><span class="badge b-ok">零改动</span></td><td>不 import main，仅确认无连带影响</td></tr>
+    <tr><td><code>test_laser.py</code></td><td><span class="badge b-ok">零改动</span></td><td><code>laser_spot.py</code> 本轮不动，作对照</td></tr>
+    <tr><td><code>check_app.py --manifest</code></td><td><span class="badge b-warn">包内 12 → 18 文件</span></td><td>预期 0 FAIL；C9 的 2 项历史 WARN 可顺带清理</td></tr>
+    <tr><td><code>build_single.py --smoke</code></td><td><span class="badge b-warn">需同步 MODULES</span></td><td>核对 6 个新模块是否全部嵌入</td></tr>
+  </tbody>
+</table>
+
+<h2>7 · 构建与交付口径的连带改动</h2>
+
+<h3>7.1 <code>tools/build_single.py</code> 的 <code>MODULES</code>（顺序即执行顺序，被依赖者在前）</h3>
+<pre>MODULES = (
+    ("config",                    "config.py"),
+    ("vision.rectangle_center",   "vision/rectangle_center.py"),
+    ("vision.laser_spot",         "vision/laser_spot.py"),
+    ("vision.rate_meter",         "vision/rate_meter.py"),          <span style="color:#1f5fa8"># 新</span>
+    ("vision.camera_source",      "vision/camera_source.py"),       <span style="color:#1f5fa8"># 新（依赖 rate_meter 无关，独立）</span>
+    ("vision.preview",            "vision/preview.py"),             <span style="color:#1f5fa8"># 新（须在 rate_meter 之后）</span>
+    ("vision.vision_worker",      "vision/vision_worker.py"),       <span style="color:#1f5fa8"># 新（须在 rate_meter 之后）</span>
+    ("vision.gimbal_self_test",   "vision/gimbal_self_test.py"),
+    ("vision.gimbal_aim",         "vision/gimbal_aim.py"),
+    ("vision.stepper_link",       "vision/stepper_link.py"),
+    ("vision.aim_control",        "vision/aim_control.py"),         <span style="color:#1f5fa8"># 新（须在 gimbal_self_test 之后）</span>
+    ("vision.gimbal_calibrate",   "vision/gimbal_calibrate.py"),
+    ("target_api",                "target_api.py"),
+)</pre>
+<div class="box info">
+  <div class="h">顺序约束的唯一硬点</div>
+  <p style="margin:0"><code>aim_control.py</code> 在模块级 <code>import vision.gimbal_self_test</code>（要 <code>GimbalSelfTest</code>），
+  故它必须排在 <code>gimbal_self_test</code> <strong>之后</strong>。其余新模块只依赖 <code>rate_meter</code>，位置灵活。
+  单文件版是「按序 exec 进 <code>sys.modules</code>」，顺序错了会 <code>ImportError</code>（<code>--smoke</code> 会当场抓到）。</p>
+</div>
+
+<h3>7.2 需要同步表述的文档与清单</h3>
+<table>
+  <thead><tr><th>文件</th><th>现有表述</th><th>改为</th></tr></thead>
+  <tbody>
+    <tr><td><code>maixcam2_rect_center/AGENTS.md §0</code></td><td>应用包 = 12 文件（vision/ 下 7 个 .py）</td><td>18 文件（vision/ 下 13 个 .py）</td></tr>
+    <tr><td><code>maixcam2_rect_center/AGENTS.md §3′</code></td><td>MODULES 清单说明</td><td>补 6 个新模块名与顺序</td></tr>
+    <tr><td><code>maixcam2_rect_center/app.yaml</code></td><td><code>version: 0.4.2</code></td><td><code>0.4.4</code>（与 BUILD_ID 同步）</td></tr>
+    <tr><td>根 <code>AGENTS.md §2</code> 目录地图</td><td>B 轨 <code>vision/</code> 文件列举</td><td>补 6 个新模块</td></tr>
+    <tr><td><code>README.md</code>（B 轨）</td><td>v16–v18 的 <code>SyncPreview</code>/<code>AsyncPreview</code> 历史叙述</td><td>补一句「显示层已独立为 <code>vision/preview.py</code>」</td></tr>
+  </tbody>
+</table>
+
+<h3>7.3 BUILD_ID 与版本</h3>
+<pre>BUILD_ID = "2026-10-11-modular-runtime-v0.4.4"   <span style="color:#6b7681"># main.py 顶部；板端日志逐字核对</span>
+app.yaml:  version: 0.4.4</pre>
+
+<h2>8 · 后续可选优化（须单独立项 + A/B 实测，<u>不在本轮</u>）</h2>
+<p>本项目铁律：性能结论必须同进程交错 A/B。以下三条只是「模块化之后变得便宜」的候选，<strong>不得夹带进本轮重构</strong>：</p>
+<ul>
+  <li><strong><code>FrameRate.values()</code> 去 numpy 化</strong>：主循环每帧调用一次，内部有 <code>np.diff</code> / <code>np.sort</code> / <code>np.append</code> 三次分配。改纯 Python 可省分配，但相对 <code>read</code>/<code>show</code> 量级可忽略 —— 收益须实测，<code>test_runtime_performance.test_real_fps</code> 可兜底。</li>
+  <li><strong><code>[perf]</code> 增列 p95</strong>：<code>read</code>/<code>draw</code>/<code>loop</code> 目前只报均值，偶发长停顿看不见（<code>low1</code> 只覆盖帧率，不覆盖分相）。加 p95 是纯日志改动，无行为风险。</li>
+  <li><strong><code>CameraSource</code> 暴露 <code>read_gray()</code></strong>：把「取帧 + 转灰度」合成一次调用，省掉主循环里 <code>_to_gray(img, image)</code> 对 <code>image</code> 模块的显式透传。</li>
+</ul>
+
+<h2>9 · 前置条件（先满足这三条，再开工）</h2>
+<div class="box risk">
+  <div class="h">★ 前置条件 1 — 确认并发写入者已停手（<span class="badge b-warn">待确认</span>）</div>
+  <p style="margin:0">本次调研的 12 分钟内实测到 <code>main.py</code> 被<strong>整份覆写两次</strong>（718 → 841 → 843 行，见 §1 快照表），BUILD_ID 从 <code>v0.4.2</code> 跳到 <code>v0.4.3</code>。
+  截至 <strong>23:03</strong>，文件已静止约 <strong>7 分钟</strong>（<code>mtime=22:55:29</code>，<code>sha1=136addd1</code> 复测不变），但<u>不能据此断定对方收工</u>。
+  开工前必须确认另一处（另一个会话 / IDE 未保存标签页 / MaixVision）<strong>已停止写 B 轨</strong>。
+  判据：连续两次间隔 ≥5 分钟的 <code>sha1sum main.py</code> 与 <code>mtime</code> 均不变。</p>
+</div>
+<div class="box risk">
+  <div class="h">★ 前置条件 2 — 把 v0.4.3 一轮真正提交（<span class="badge b-ok">已满足</span>）</div>
+  <p style="margin:0">dist 已重建（<code>build_single --check</code> 指纹一致）、门禁已转绿（<strong>72 OK / 0 FAIL</strong>），
+  且 <strong>23:05 已由写入方完成提交</strong>：<code>HEAD=dd13748</code>（B 轨 v0.4.2 / v0.4.3 源码）+ <code>ab7be1f</code>（<code>docs:</code> 根目录分析页 HTML）。
+  <strong>回滚点已落地</strong> —— 重构若出问题，可整体回到 <code>dd13748</code>。</p>
+</div>
+<div class="box risk">
+  <div class="h">★ 前置条件 3 — 确认 <code>SHOW_ASYNC</code> 的语义（文档与实现已对齐，但值需拍板）</div>
+  <p style="margin:0"><code>config.SHOW_ASYNC = True</code>（显示线程），而 <code>AGENTS.md §6.9</code> 仍写「默认必须走 <code>SHOW_ASYNC=False</code> 的主进程内路径」
+  —— 该条是 v18 的老结论，<strong>已被 v0.4.3 推翻</strong>，需你确认上板默认走哪条，随后同步 <code>AGENTS.md</code>。此项不影响重构本身，但影响上板默认路径。</p>
+</div>
+
+<h2>10 · 执行路线图</h2>
+
+<ol class="steps">
+  <li>
+    <div class="st">固化基线（前置条件 1、2）</div>
+    <div><span class="badge b-ok">已完成</span> 重建单文件 + 门禁转绿（72 OK / 0 FAIL）+ <strong>v0.4.3 已提交</strong>（<code>HEAD=dd13748</code>）。
+      <span class="badge b-warn">待办</span> 只剩「确认并发写入者已停手」（见前置条件 1）。
+      <u>此步之前不得改任何源码</u>。</div>
+    <div class="cmds"><pre>"D:/Python311/python.exe" -B tools/build_single.py --check   <span style="color:#6b7681"># 已一致</span>
+"D:/Python311/python.exe" -B tools/check_app.py --manifest    <span style="color:#6b7681"># 已 0 FAIL</span>
+git log --oneline -1                                          <span style="color:#6b7681"># 期望 dd13748（回滚点）</span></pre></div>
+  </li>
+  <li>
+    <div class="st">建立 6 个新模块（纯搬迁，一次一个）</div>
+    <div>按 §4 映射表逐个文件剪切：<code>rate_meter</code> → <code>camera_source</code> → <code>preview</code> → <code>vision_worker</code> → <code>aim_control</code> → <code>telemetry</code>。
+    每迁一个就 <code>python -c "import vision.xxx"</code> 验语法，<u>不批量改</u>。</div>
+  </li>
+  <li>
+    <div class="st">瘦身 main.py 并加兼容别名</div>
+    <div>删掉已迁出的定义，加入 §6.1 别名与 §7.3 的 <code>BUILD_ID</code>；<code>_init_gimbal()</code> 抽为模块级私有函数；主循环改用 <code>build_view()</code> 与 <code>PerfLogger</code>。</div>
+  </li>
+  <li>
+    <div class="st">☑ V1 — 编译与静态门禁</div>
+    <div class="cmds"><pre>"D:/Python311/python.exe" -B tools/check_app.py --manifest      <span style="color:#6b7681"># 应 18 文件 / 0 FAIL</span></pre></div>
+  </li>
+  <li>
+    <div class="st">☑ V2 — 重建单文件并自检</div>
+    <div class="cmds"><pre>"D:/Python311/python.exe" -B tools/build_single.py
+"D:/Python311/python.exe" -B tools/build_single.py --smoke   <span style="color:#6b7681"># 6 个新模块须全部就位</span></pre></div>
+  </li>
+  <li>
+    <div class="st">☑ V3 — 三项入口/运行时回归（<u>本轮最关键</u>）</div>
+    <div class="cmds"><pre>"D:/Python311/python.exe" -B tools/test_main_self_test.py
+"D:/Python311/python.exe" -B tools/test_runtime_performance.py
+"D:/Python311/python.exe" -B tools/test_target_api.py</pre>
+    <div>若 <code>test_main_self_test</code> 出现 §6.3 预判的假钟问题 → 给 <code>VisionControl</code> 注入 clock，<strong>不改断言</strong>。</div></div>
+  </li>
+  <li>
+    <div class="st">☑ V4 — 视觉基线与云台协议不回归</div>
+    <div class="cmds"><pre>"D:/Python311/python.exe" -B tools/test_performance.py       <span style="color:#6b7681"># 29/30、max 0.803px、0 误检</span>
+"D:/Python311/python.exe" -B tools/test_gimbal_aim.py</pre></div>
+  </li>
+  <li>
+    <div class="st">同步文档与清单（§7.2）</div>
+    <div>更新 B 轨 <code>AGENTS.md</code>（12→18 文件、MODULES、§6.9 修正）、根 <code>AGENTS.md</code> 目录地图、B 轨 <code>README.md</code>；顺带清掉 2 项 C9 历史 WARN。</div>
+  </li>
+  <li>
+    <div class="st">提交重构（gpt: 前缀）</div>
+    <div class="cmds"><pre>"D:/Python311/python.exe" -B tools/git_round.py -m "gpt: main.py 模块化重构 —— 6 个运行时组件外迁 vision/（rate_meter/camera_source/vision_worker/preview/aim_control/telemetry），入口 843→~230 行；保留旧私有名别名，两个入口测试零改动通过"</pre></div>
+  </li>
+  <li>
+    <div class="st">留痕</div>
+    <div>往 <code>.workbuddy/memory/2026-10-11.md</code> 追加本轮结论（模块边界 + 前置条件踩到的并发覆写事实）。</div>
+  </li>
+</ol>
+
+<h2>11 · 风险登记与回滚</h2>
+<table>
+  <thead><tr><th>风险</th><th>概率</th><th>影响</th><th>对策</th></tr></thead>
+  <tbody>
+    <tr><td><strong>main.py 第二次被整份覆写</strong></td><td><span class="badge b-fail">已实测发生</span></td><td>重构成果被清空；或半新半旧无法判断</td>
+      <td>前置条件 1（确认停手）；每完成一小步即 <code>build_single --check</code>；重构完成立即提交</td></tr>
+    <tr><td>假钟打桩导致的时序偏移（§6.3）</td><td><span class="badge b-warn">中</span></td><td><code>test_main_self_test</code> 可能变红</td>
+      <td>V3 实跑；失败则给 <code>VisionControl</code> 注入 clock（不改断言、不改行为）</td></tr>
+    <tr><td>单文件版模块顺序错</td><td><span class="badge b-info">低</span></td><td>「运行当前文件」ImportError</td>
+      <td>§7.1 已排定顺序；<code>--smoke</code> 会当场抓</td></tr>
+    <tr><td>搬迁中手滑改动实现</td><td><span class="badge b-info">低</span></td><td>行为漂移、难以定位</td>
+      <td>逐字剪切；V4 视觉基线 + V3 帧率回归作为守门；<code>git diff</code> 应只见「移动」不见「改写」</td></tr>
+    <tr><td>包内文件数变化引发清单失配</td><td><span class="badge b-info">低</span></td><td>文档与门禁口径不一致</td>
+      <td>§7.2 同步四处表述；以 <code>--manifest</code> 打印为准</td></tr>
+  </tbody>
+</table>
+
+<div class="box info">
+  <div class="h">回滚路径</div>
+  <pre style="margin:0">git log --oneline -10 -- maixcam2_rect_center/main.py       <span style="color:#6b7681"># 找到「固化基线」那一次提交</span>
+git checkout &lt;sha&gt; -- maixcam2_rect_center/                 <span style="color:#6b7681"># 整体回到重构前</span>
+git revert &lt;重构提交sha&gt;                                     <span style="color:#6b7681"># 或：保留历史地撤销重构</span>
+"D:/Python311/python.exe" -B tools/build_single.py --check   <span style="color:#6b7681"># 恢复后必跑（C8 探针）</span></pre>
+</div>
+
+<h2>12 · 验收定义（DoD）</h2>
+<ul>
+  <li><code>main.py</code> ≤ 240 行，且<strong>不含</strong>任何线程循环、绘制代码、帧率统计实现。</li>
+  <li>6 个新模块各自只含一个职责，单文件 ≤ 260 行。</li>
+  <li><code>check_app.py --manifest</code> → <strong>18 文件 / 0 FAIL</strong>。</li>
+  <li><code>build_single.py --check</code> 与 <code>--smoke</code> 均通过（BUILD_ID 一致、6 模块就位）。</li>
+  <li>7 项回归测试全绿，其中 <code>test_main_self_test.py</code> 与 <code>test_runtime_performance.py</code> <strong>文件内容零改动</strong>。</li>
+  <li>日志字符串与串口帧行为经 V3/V4 逐字核对无变化。</li>
+  <li>已 <code>git commit</code>（<code>gpt:</code> 前缀），并写入当日 memory。</li>
+</ul>
+
+<footer>
+  25Efork · 轨道 B（<code>maixcam2_rect_center/</code>）· 单文件方案页，无外部依赖，可直接打印或离线查阅。<br>
+  基线：<code>BUILD_ID=2026-10-11-display-thread-v0.4.3</code>（main.py 843 行 / sha1 <code>136addd1</code>）· 方案定稿 2026-10-11 · 本页不含任何代码改动。<br>
+  事实核验时刻：2026-10-11 23:02–23:05（门禁 72 OK / 0 FAIL、<code>build_single --check</code> 指纹一致、v0.4.3 已提交至 <code>dd13748</code>）。
+  如需本页入库：<code>git add B轨main模块化重构方案.html</code>（同 <code>ab7be1f</code> 的 <code>docs:</code> 口径）。
+</footer>
+
+</div>
+</body>
+</html>
