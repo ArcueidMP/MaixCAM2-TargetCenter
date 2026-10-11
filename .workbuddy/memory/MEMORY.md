@@ -9,7 +9,18 @@
 | 轨 | 目录 | BUILD_ID | 状态 |
 |---|---|---|---|
 | A（DeepSeek） | 根 | `2026-10-05-r7` | 性能治理 + 抗抖跟踪已完成 |
-| B（名义 GPT） | `maixcam2_rect_center/` | `2026-10-12-modular-main-v0.5.0` | v0.4.x 修轴映射/按钮自检/显示线程/掐断图传 → v0.4.6 入口模块化（main 923→296 行）→ **v0.5.0 里程碑（仅改版本号，全量性能/功能复核对齐基线：30/29·0.803px·0误检·median0.86ms；识别+追踪可用）** |
+| B（名义 GPT） | `maixcam2_rect_center/` | `2026-10-12-eager-search-v0.5.1` | v0.4.x 修轴映射/按钮自检/显示线程/掐断图传 → v0.4.6 入口模块化（main 923→296 行）→ v0.5.0 里程碑 → **v0.5.1 恢复「单帧穷尽搜索」（修丢锁后 11 帧才重捕获）** |
+
+**B 轨 v0.5.1（10-12，当前）** —— **恢复「单帧穷尽搜索」，修掉丢锁后 11 帧才重捕获**（用户实报"角度大就丢/移动会丢/中心抖动"）：
+- **根因**：v0.4.3（`26eea20`）把 `_search` 改"合作式"——每帧只轮换 **1 个阈值**、只验 **1 个候选**
+  （`SEARCH_MAX_PROPOSALS=1`），旧的完整搜索被改名 `_legacy_search` 后**成死代码**。
+  A/B 实证：检出/精度**完全一致**（29/30、0.803px），但**重捕获帧 max 由 1 → 11**（板端更慢）。
+- **改法**：`_search` 一帧内按序穷尽全部阈值（末尾 Canny 兜底）直到找到；保留 `SEARCH_BUDGET_MS` **软预算**
+  （超时才跨帧续扫，防极慢板卡死单帧）；`config.SEARCH_MAX_PROPOSALS` 1→128（仅安全阀）。
+- **验证**：重捕获 **11→1**；`test_images_e2e` **13/16→16/16**；`test_performance` 29/30·0.803px·0误检·
+  median **0.843ms**（无退化）；`test_runtime_performance`(8，含**改写后的** `test_bounded_search_and_current_evidence`
+  ——契约由"每帧≤1 阈值"改为"单帧穷尽+时间预算") 全绿；`target_api`/`laser`/`gimbal_aim`(11)/`main_self_test`(4) 全绿。
+- **帧率**：搜索**不参与稳态**（锁定走 `track`）⇒ 稳态帧率**不变**；只有"丢锁→重捕获"那 1~2 帧变重（≤25ms 预算）。
 
 **B 轨模块化（v0.4.6，10-12）** —— 入口 `main.py` 按功能模块化，零行为变更：
 - 新增 `vision/{rate_meter,camera_source,vision_worker,preview,aim_control,telemetry}.py` 六模块；
