@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A 轨黑框方案对比 · 能否用 Canny 二值化方案识别并追踪</title>
+<style>
+  :root{
+    --bg:#f7f8fa; --card:#ffffff; --ink:#1f2733; --ink2:#4a5563; --ink3:#78828f;
+    --line:#e3e7ec; --line2:#eef1f4;
+    --blue:#2563eb; --blue-bg:#eef4ff;
+    --green:#0f8a4d; --green-bg:#e9f7ef;
+    --amber:#a15c00; --amber-bg:#fff6e6;
+    --red:#a92c2c; --red-bg:#fdeeee;
+    --purple:#6d28d9; --purple-bg:#f3edff;
+    --mono:'SFMono-Regular',Consolas,'Liberation Mono',Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:15px/1.72 -apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Hiragino Sans GB','Microsoft YaHei',sans-serif;}
+  .wrap{max-width:1080px;margin:0 auto;padding:34px 22px 80px}
+  header.top{background:linear-gradient(135deg,#ffffff,#f2f6ff);border:1px solid var(--line);
+    border-radius:16px;padding:26px 28px;box-shadow:0 1px 2px rgba(20,30,50,.04)}
+  h1{margin:0 0 8px;font-size:25px;letter-spacing:.2px}
+  .sub{color:var(--ink2);font-size:14px}
+  .meta{margin-top:14px;display:flex;flex-wrap:wrap;gap:8px}
+  .meta span{background:#fff;border:1px solid var(--line);border-radius:999px;padding:3px 11px;
+    font-size:12.5px;color:var(--ink2)}
+  h2{margin:38px 0 12px;font-size:19px;border-left:4px solid var(--blue);padding-left:11px}
+  h3{margin:24px 0 8px;font-size:15.5px;color:var(--ink)}
+  p{margin:9px 0;color:var(--ink2)}
+  code{font-family:var(--mono);font-size:12.5px;background:#f1f4f8;border:1px solid var(--line2);
+    border-radius:4px;padding:1px 5px;color:#2b3a4d}
+  table{width:100%;border-collapse:collapse;margin:14px 0;background:var(--card);
+    border:1px solid var(--line);border-radius:10px;overflow:hidden;font-size:13.5px}
+  th,td{padding:9px 12px;text-align:left;border-bottom:1px solid var(--line2);vertical-align:top}
+  th{background:#f3f6fa;font-weight:600;color:var(--ink);white-space:nowrap}
+  tr:last-child td{border-bottom:none}
+  td.num{font-family:var(--mono);font-size:12.5px;white-space:nowrap}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:14px 0}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(238px,1fr));gap:13px;margin:14px 0}
+  .kpi{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:15px 16px}
+  .kpi .t{font-size:12.5px;color:var(--ink3);margin-bottom:6px}
+  .kpi .v{font-size:19px;font-weight:650;letter-spacing:.2px}
+  .kpi .d{font-size:12.5px;color:var(--ink3);margin-top:5px}
+  .badge{display:inline-block;border-radius:5px;padding:1.5px 8px;font-size:12px;font-weight:600;white-space:nowrap}
+  .b-ok{background:var(--green-bg);color:var(--green)}
+  .b-warn{background:var(--amber-bg);color:var(--amber)}
+  .b-fail{background:var(--red-bg);color:var(--red)}
+  .b-info{background:var(--blue-bg);color:var(--blue)}
+  .b-plain{background:var(--purple-bg);color:var(--purple)}
+  .callout{border-left:4px solid var(--blue);background:var(--blue-bg);
+    border-radius:0 10px 10px 0;padding:14px 18px;margin:16px 0}
+  .callout.warn{border-color:#e0a800;background:var(--amber-bg)}
+  .callout.bad{border-color:#d64545;background:var(--red-bg)}
+  .callout.ok{border-color:#22a06b;background:var(--green-bg)}
+  .callout .h{font-weight:650;margin-bottom:4px}
+  pre{background:#f6f8fb;border:1px solid var(--line);border-radius:9px;padding:13px 15px;
+    overflow-x:auto;font-family:var(--mono);font-size:12.5px;color:#2b3a4d;line-height:1.62}
+  ul{margin:8px 0 8px 20px;color:var(--ink2)} li{margin:5px 0}
+  .flow{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px 18px;margin:14px 0}
+  .flow .row{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:7px 0}
+  .step{background:#f4f7fb;border:1px solid var(--line);border-radius:8px;padding:6px 11px;font-size:13px}
+  .step.k{background:var(--blue-bg);border-color:#c7dbff;color:#17429b;font-weight:600}
+  .step.r{background:var(--red-bg);border-color:#f3cccc;color:#8f2626}
+  .arrow{color:var(--ink3);font-size:14px}
+  .foot{margin-top:44px;padding-top:16px;border-top:1px solid var(--line);font-size:12.5px;color:var(--ink3)}
+  .tag{font-size:11.5px;color:var(--ink3);font-family:var(--mono)}
+  details{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 16px;margin:12px 0}
+  summary{cursor:pointer;font-weight:600;font-size:14px}
+  .ok-mark{color:var(--green);font-weight:700}
+  .no-mark{color:var(--red);font-weight:700}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <h1>黑框识别方案对比 · 能否用「Canny + 二值化」识别并追踪靶心</h1>
+  <div class="sub">A 轨工作区文档（含 <code>reference/upstream_2025E</code> 与 <code>tools/exp_alt_pipeline.py</code>）所说的"之前方案"，与两轨现行实现的差异；并用<b>同图实测</b>回答可行性。</div>
+  <div class="meta">
+    <span>核查时刻 2026-10-12 01:2x</span>
+    <span>A 轨 <code>2026-10-05-r7</code></span>
+    <span>B 轨 <code>2026-10-12-motion-predict-v0.5.2</code></span>
+    <span>本页不含任何代码改动（除一个已删除的临时实验脚本）</span>
+  </div>
+</header>
+
+<div class="callout ok">
+  <div class="h">先给结论（三句话）</div>
+  <p style="margin:4px 0"><b>① 能。</b>在 B 轨同一批 30 张 fixture 上，把候选生成器换成"纯 Canny"，检出率、中心误差、追踪表现与现行方案<b>基本等价</b>（29/30、0 误检、<code>track</code> 12/13）。</p>
+  <p style="margin:4px 0"><b>② 但换过去不会更稳。</b>因为<b>中心精度由"亚像素精修"决定，不由边缘算子决定</b>——A 轨实测 Canny 0.7496px vs 二值化 0.8285px（同量级），而 <code>fitLine</code> 精修把同一张图从 0.83px 压到 <b>0.061px</b>（13.6×）。</p>
+  <p style="margin:4px 0"><b>③ 你其实已经在用这个方案。</b>B 轨现实现 = <b>二值化多阈值主检索 + Canny 兜底 + 窄带精修</b>；"Canny + 单应 + 圆映射"这条路线，就是 A 轨文档里被命名为"另一条技术路线"的那条，也正是 B 轨的现行路线。</p>
+</div>
+
+<h2>一、「之前方案」指的是什么 —— 出处在这三处</h2>
+
+<p>A 轨工作区里，"Canny 路线"不是 A 轨自己的历史版本（A 轨从首个提交起就是二值化路线），而是被<b>单独归档、并被定量评估过</b>的两份外部来源：</p>
+
+<table>
+  <thead><tr><th>出处</th><th>内容</th><th>性质</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>reference/upstream_2025E/<br>树莓派视觉/c1.py</code></td>
+      <td><b>Canny(50,150)</b> → 鱼眼去畸变 → <code>bilateralFilter</code> → <code>approxPolyDP</code> → 直角/长宽比三重筛选 → <b>优先取最小面积矩形</b> → 透视变换正视图 → 中心反投影回原图</td>
+      <td><span class="badge b-plain">他人开源参考（树莓派）</span></td>
+    </tr>
+    <tr>
+      <td><code>tools/exp_alt_pipeline.py</code><br>（脚本头注释）</td>
+      <td>被明确标注为<b>"另一条技术路线（用户提出）"</b>：① Canny + 多边形逼近定四角 ② 沿四边采样内外灰度差区分内外框 ③ <b>8×8 线性方程组解单应</b> ④ 正视面 1px=1mm 建系 ⑤ <b>72 等分圆</b>逐点逆变换回原图</td>
+      <td><span class="badge b-info">备选路线（已定量评估）</span></td>
+    </tr>
+    <tr>
+      <td><code>reference/upstream_2025E/<br>视觉项目复盘报告.md</code> §4</td>
+      <td>把上游范式概括为"<b>传统几何视觉</b>：Canny 边缘 → 找轮廓 → 四边形筛选（面积/直角/A4 长宽比）→ 透视变换求正视图中心再反投影"，并记明<b>去畸变是识别能成立的前置条件</b>（广角镜头下"矩形"是弯的）。</td>
+      <td><span class="badge b-plain">复盘文档</span></td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="callout">
+  <div class="h">关键：这条"Canny 路线"与 B 轨现行方案，其实是同一族</div>
+  <p style="margin:4px 0">把 <code>exp_alt_pipeline.py</code> 头注释里的五步，与 B 轨 <code>vision/rectangle_center.py</code> 的模块 docstring 对照：<b>Canny 兜底 / 内外框分离 / 8×8 单应 / 毫米坐标 / 72 点圆</b> —— 逐条对得上。所以"能不能用 Canny 二值化方案"的答案，本质上等同于"B 轨现在的方案行不行"。</p>
+</div>
+
+<h2>二、三套方案横向对比（"现在和之前差在哪"）</h2>
+
+<table>
+  <thead>
+    <tr><th>环节</th><th>"之前方案"（Canny 路线 / 上游）</th><th>A 轨现行</th><th>B 轨现行（v0.5.2）</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>前景/边缘算子</td><td><b>Canny(50,150)</b>（单纯边缘，无二值化）</td><td><b>固定阈值 95 + Otsu</b> 二值化 + 形态学开/闭</td><td><b>二值化多档阈值</b>(<code>DARK_THRESHOLDS</code> 8 档 + Otsu) <b>+ Canny 兜底</b></td></tr>
+    <tr><td>候选生成</td><td>边缘图 → 轮廓 → <code>approxPolyDP</code></td><td>二值轮廓树 <code>RETR_CCOMP</code> → <b>环 / 亮面双族</b></td><td>二值轮廓树 <code>RETR_TREE</code> → 内/外框；全阈值试完才走 Canny 轮廓</td></tr>
+    <tr><td>选优判据</td><td>面积区间 + 四角 ≥70° + A4 长宽比 ±0.4，多个合格时<b>取最小面积</b></td><td><b>结构分</b>（旋转/透视不变）：fill/rim/aspect/ring + 对比度因子</td><td><b>四边灰度剖面</b>覆盖率 + 中位对比度（胶带暗带 vs 内侧亮面）</td></tr>
+    <tr><td>内/外框分离</td><td>沿边采样内外灰度差</td><td><code>RETR_CCOMP</code> 层级一次性给出外轮廓与内孔</td><td><code>RETR_TREE</code> 深度奇偶定 kind，一次 <code>findContours</code> 同时给内外</td></tr>
+    <tr><td>角点精度</td><td><code>approxPolyDP</code> 顶点（≈±1px）</td><td><b><code>fitLine</code> 亚像素</b>（每边拟合直线求交）</td><td><b>窄带灰度梯度 + <code>fitLine</code> Huber</b> 亚像素</td></tr>
+    <tr><td>靶心求解</td><td>透视变换 → 正视图中心 → 逆映射</td><td><b>对角线交点</b>（射影不变量，<b>不解单应</b>）</td><td><b>显式 8×8 单应</b> → 矩形中心投影 + 72 点圆（可视化/校验）</td></tr>
+    <tr><td>镜头去畸变</td><td><span class="no-mark">必须</span>（<code>cv2.fisheye</code>，否则矩形是弯的）</td><td><span class="ok-mark">不需要</span>（交点法对畸变不敏感）</td><td><code>LENS_CORR=False</code> 默认关（B 轨 v19 定案）</td></tr>
+    <tr><td>稳态跟踪</td><td><span class="no-mark">无</span>（每帧重新全图检测）</td><td><b>常数速度卡尔曼</b> + 自适应过程噪声 + 新息门限</td><td><b>四边窄带精修</b> + 运动预测外推（v0.5.2）</td></tr>
+    <tr><td>时序平滑</td><td><span class="no-mark">无</span>（检测失败即 None）</td><td><b>One Euro 滤波</b></td><td>一阶低通 <code>CENTER_ALPHA=0.70</code>（仅显示口径）</td></tr>
+    <tr><td>失败兜底</td><td>无</td><td>缩小图粗定位 → ROI 全分辨率重解；阈值自标定</td><td>多阈值穷尽 → Canny 兜底；<code>roi_search</code> → <code>full_search</code> 三级降级</td></tr>
+  </tbody>
+</table>
+
+<div class="flow">
+  <div class="row"><span class="step k">"之前方案"</span><span class="arrow">→</span>
+    <span class="step">Canny 边缘</span><span class="arrow">→</span>
+    <span class="step">approxPolyDP 四角</span><span class="arrow">→</span>
+    <span class="step">透视 warp 正视图</span><span class="arrow">→</span>
+    <span class="step">取中心</span><span class="arrow">→</span>
+    <span class="step">逆映射回原图</span>
+  </div>
+  <div class="row"><span class="step k">B 轨现行</span><span class="arrow">→</span>
+    <span class="step">二值化检索(8档阈值+Otsu)</span><span class="arrow">→</span>
+    <span class="step r">Canny 兜底</span><span class="arrow">→</span>
+    <span class="step">四边剖面验证</span><span class="arrow">→</span>
+    <span class="step">窄带梯度 fitLine 精修</span><span class="arrow">→</span>
+    <span class="step">8×8 单应取中心</span>
+  </div>
+  <div class="row"><span class="step k">A 轨现行</span><span class="arrow">→</span>
+    <span class="step">二值化(固定95/Otsu)</span><span class="arrow">→</span>
+    <span class="step">轮廓树双族结构打分</span><span class="arrow">→</span>
+    <span class="step">fitLine 精修</span><span class="arrow">→</span>
+    <span class="step">对角线交点</span>
+  </div>
+  <p style="margin:10px 0 0;font-size:13px">三者的差异集中在<b>前半段（怎么产生候选）</b>；<b>后半段（怎么把角点变准）</b> 三套都收敛到同一件事：<b>亚像素边缘拟合</b>。</p>
+</div>
+
+<h2>三、A 轨对「Canny 路线」的定量判决（本次原样复跑）</h2>
+
+<p>我直接跑了 A 轨的 <code>tools/exp_alt_pipeline.py</code>（同机、同合成图、真值已知），输出与 A 轨文档所记<b>逐字一致</b>：</p>
+
+<h3>3.1 检测算子对"中心"的贡献：几乎相同</h3>
+<table>
+  <thead><tr><th>检测路线</th><th>中心误差</th><th>角点平均误差</th><th>判定</th></tr></thead>
+  <tbody>
+    <tr><td>二值化（阈值 + 轮廓，未精修）</td><td class="num">0.8285 px</td><td class="num">1.5161 px</td><td rowspan="2" style="vertical-align:middle"><span class="badge b-warn">同量级</span><br><span class="tag">换算子带不来中心精度</span></td></tr>
+    <tr><td><b>Canny + approxPolyDP</b>（最优 eps=0.005）</td><td class="num">0.7496 px</td><td class="num">1.0000 px</td></tr>
+  </tbody>
+</table>
+
+<h3>3.2 真正把精度压下去的是"亚像素精修"</h3>
+<table>
+  <thead><tr><th>方案</th><th>角点均值</th><th>中心误差</th><th>相对提升</th></tr></thead>
+  <tbody>
+    <tr><td>极值顶点（无精修）</td><td class="num">1.5161 px</td><td class="num">0.8285 px</td><td class="num">基准</td></tr>
+    <tr><td><b>二值轮廓 <code>fitLine</code>（A 轨现行）</b></td><td class="num">0.7302 px</td><td class="num"><b>0.0610 px</b></td><td class="num"><b>13.6×</b></td></tr>
+    <tr><td>灰度梯度剖面（Canny 路线的精修）</td><td class="num">0.3755 px</td><td class="num">0.0137 px</td><td class="num">60×</td></tr>
+    <tr><td><code>fitLine</code> → 梯度剖面（两级）</td><td class="num">0.3755 px</td><td class="num">0.0185 px</td><td class="num">45×</td></tr>
+  </tbody>
+</table>
+<div class="callout"><div class="h">这一条是整个对比里最重要的</div>
+<p style="margin:4px 0">两种检测算子（Canny / 二值化）对"中心"的贡献都是 ~0.73–0.83px，<b>谁换谁都没差</b>；把中心压到 0.06px 及以下的是<b>沿边取灰度、拟合直线、求交点</b>这一步。B 轨的 <code>_refine</code> 与 A 轨的 <code>refine_corners_subpixel</code> 都是这个思路。</p></div>
+
+<h3>3.3 Canny 路线的其余环节，A 轨也逐项量过</h3>
+<table>
+  <thead><tr><th>环节</th><th>实测</th><th>结论</th></tr></thead>
+  <tbody>
+    <tr><td>耗时</td><td class="num">二值化 2.62 ms / Canny 2.34 ms</td><td><span class="badge b-ok">Canny 略快</span> 检测耗时不是瓶颈</td></tr>
+    <tr><td>内存（<b>全分辨率 1280×720</b>）</td><td class="num">Canny 瞬时峰值 +3~4 MB</td><td><span class="badge b-warn">A 轨据此否决</span> Sobel 需 2 张 CV_16S 梯度图 + 幅值图</td></tr>
+    <tr><td>8×8 单应数值稳定性</td><td class="num">条件数 4.55e5 → 归一化后 3.078</td><td>原始像素坐标直接解<b>病态</b>；必须归一化后再解</td></tr>
+    <tr><td>角点噪声 σ=1.0px 时的中心</td><td class="num">4 点 0.9872 px / 8 点最小二乘 0.6794 px</td><td>多点冗余可降噪，但<b>不如精修直接</b></td></tr>
+    <tr><td>72 点圆往返自洽性</td><td class="num">误差 8.6e-14 mm</td><td>数学自洽，<b>但对中心定位无增益</b>（中心=矩形中心投影）</td></tr>
+    <tr><td>畸变 k1=−0.15 时</td><td class="num">4 点 1.5785 px / 8 点 1.4032 px</td><td>单应表达不了畸变，多点略优</td></tr>
+  </tbody>
+</table>
+
+<h2>四、我在 B 轨数据上的独立实测（本次新增）</h2>
+
+<p>上面是 A 轨的合成图。为把结论落到<b>你正在调的这条轨</b>上，我写了一个"<b>只换候选生成器</b>"的对照脚本：<code>_verify</code> / <code>_refine</code> / 单应 / 中心计算<b>全部复用 B 轨现实现</b>，唯一变量是"候选从 Canny 边缘来"还是"从二值化掩膜来"。</p>
+
+<h3>4.1 检测能力与误检（30 fixture + 5 负样本）</h3>
+<table>
+  <thead><tr><th>候选生成器</th><th>检出</th><th>失败样本</th><th>最大中心误差</th><th>误检</th><th>首次捕获中位耗时</th></tr></thead>
+  <tbody>
+    <tr><td>现行（二值化 + Canny 兜底）</td><td class="num">29 / 30</td><td class="num">#2（强反光）</td><td class="num">0.803 px</td><td class="num">0 / 5</td><td class="num">1.8 ms</td></tr>
+    <tr><td><b>纯 Canny 候选</b></td><td class="num">29 / 30</td><td class="num">#2（强反光）</td><td class="num">0.691 px</td><td class="num">0 / 5</td><td class="num">2.0 ms</td></tr>
+  </tbody>
+</table>
+<p style="font-size:13px">→ <b>检出率、误检率完全相同</b>；中心误差同量级（Canny 在这张合成图上略好 0.11px，与 A 轨观察到的 Canny 略好一致，但都在 1px 内、对实际瞄准无差别）。#2 强反光是两套方案的<b>共同安全失败</b>，不是某一方的缺陷。</p>
+
+<h3>4.2 追踪（捕获后走窄带精修）</h3>
+<table>
+  <thead><tr><th>方案</th><th>运动序列 <code>track</code> 命中</th><th>最大中心误差</th></tr></thead>
+  <tbody>
+    <tr><td>现行（二值化捕获）</td><td class="num">12 / 13</td><td class="num">0.418 px</td></tr>
+    <tr><td>纯 Canny 捕获</td><td class="num">12 / 13</td><td class="num">0.640 px</td></tr>
+  </tbody>
+</table>
+<div class="callout warn"><div class="h">追踪与"Canny / 二值化"无关</div>
+<p style="margin:4px 0">两者 <code>track</code> 命中数完全一样（12/13）——因为 <b>B 轨的追踪走的是 <code>_refine</code>（四条灰度窄带 → 有向梯度 → fitLine），全程不调用 Canny、也不做二值化</b>。Canny / 二值化只决定"<b>怎么重新捕获</b>"，不决定"<b>怎么跟</b>"。</p></div>
+
+<h3>4.3 检索耗时（缩小图，320 宽）</h3>
+<table>
+  <thead><tr><th>检索方式</th><th>单帧耗时</th><th>备注</th></tr></thead>
+  <tbody>
+    <tr><td>二值化掩膜检索</td><td class="num">1.62 ms</td><td>按阈值档位重复 <code>threshold</code> + <code>morphologyEx</code></td></tr>
+    <tr><td><b>纯 Canny 检索</b></td><td class="num">1.82 ms</td><td>只跑一次梯度，但 <code>approxPolyDP</code> 次数多</td></tr>
+  </tbody>
+</table>
+<div class="callout ok"><div class="h">一个对"内存担忧"的重要澄清</div>
+<p style="margin:4px 0">A 轨否决 Canny 的理由是"全分辨率 1280×720 多 3~4 MB 瞬时缓冲"。但 <b>B 轨的 Canny 跑在缩小图上</b>（<code>SEARCH_WIDTH=320</code>，即约 320×240）：瞬时缓冲 ≈ 2×320×240×2B + 320×240 ≈ <b>0.46 MB</b>。所以 A 轨那条内存顾虑<b>在 B 轨的架构下不成立</b>——这也解释了 B 轨为什么能放心把 Canny 当兜底。</p></div>
+
+<h2>五、逐条回答"能不能用"</h2>
+
+<table>
+  <thead><tr><th>问</th><th>答</th><th>依据</th></tr></thead>
+  <tbody>
+    <tr><td>Canny 方案能否<b>识别</b>黑框？</td><td><span class="badge b-ok">能</span> 29/30、0 误检，与现行同</td><td>A 轨 <code>exp_alt_pipeline</code> + 本次 B 轨同图实测</td></tr>
+    <tr><td>Canny 方案能否<b>追踪</b>中心？</td><td><span class="badge b-ok">能</span>，但追踪本身不走 Canny</td><td>追踪 = 窄带灰度精修，与捕获算子解耦</td></tr>
+    <tr><td>换成纯 Canny 会<b>更准</b>吗？</td><td><span class="badge b-fail">不会</span> 中心误差同量级；准确度由精修决定</td><td>0.83px vs 0.75px；<code>fitLine</code> 才是 13.6×</td></tr>
+    <tr><td>换成纯 Canny 会<b>更稳</b>吗？</td><td><span class="badge b-warn">不会</span>；你之前的"不稳"根因已被定位为<b>搜索调度</b>，与算子无关</td><td>B 轨 v0.5.1/v0.5.2 已修（重捕获 11 帧→1 帧；track 36px/帧 0/5→4/5）</td></tr>
+    <tr><td>会不会<b>更省</b>？</td><td><span class="badge b-warn">不会</span>；耗时相当（1.6 vs 1.8 ms），内存因跑在缩小图上都可忽略</td><td>本次实测</td></tr>
+    <tr><td>那"二值化"在 B 轨还<b>在用</b>吗？</td><td><span class="badge b-ok">在用，而且是主检索</span>；Canny 只在所有阈值都失败后才兜底</td><td><code>rectangle_center.py::_search</code> 顺序</td></tr>
+  </tbody>
+</table>
+
+<h2>六、给你的建议（按优先级）</h2>
+
+<div class="grid">
+  <div class="kpi">
+    <div class="t">建议 1 · 不要为"更稳"而换算子</div>
+    <div class="v" style="font-size:15px">维持现行混合方案</div>
+    <div class="d">二值化主检索 + Canny 兜底已经是"两套都留着"的最优形态；换纯 Canny 是等价搬迁、不产生收益，却会丢掉多阈值那 8 档兜底。</div>
+  </div>
+  <div class="kpi">
+    <div class="t">建议 2 · 真要动，就动"捕获速度"</div>
+    <div class="v" style="font-size:15px">调参而非换路</div>
+    <div class="d">若板上仍嫌重捕获慢/快移跟不住：调 <code>PREDICT_MAX_PX</code>（现 60）、必要时开 <code>SEARCH_SPLIT_FRAMES</code>；别碰 <code>TRACK_RADIUS</code>（实测加大反而伤慢速稳定性）。</div>
+  </div>
+  <div class="kpi">
+    <div class="t">建议 3 · 想把 Canny 用得更值</div>
+    <div class="v" style="font-size:15px">让它当"兜底"而不是"主力"</div>
+    <div class="d">Canny 擅长抓"二值化切不出来"的弱对比/反光断裂边缘。#2 强反光两套都失败——可考虑的是"阈值失败后把 Canny 从最后一档提到第 2、3 档"，而不是全换。</div>
+  </div>
+  <div class="kpi">
+    <div class="t">建议 4 · 交叉验证已完成</div>
+    <div class="v" style="font-size:15px">两轨路线互相印证</div>
+    <div class="d">A 轨"二值化+打分+fitLine+对角线交点" 与 B 轨"Canny兜底+剖面验证+单应+72点圆" 在 PC 回归下精度同档；可互相抄的成熟点在各自 README。</div>
+  </div>
+</div>
+
+<div class="callout bad">
+  <div class="h">一个必须澄清的概念（避免走弯路）</div>
+  <p style="margin:4px 0">"用 Canny 二值化方案<b>追踪</b>"这个说法里，Canny/二值化与追踪<b>不是同一层</b>：它们是 <b>捕获（acquisition）</b> 算子，负责"在整幅图里找到框在哪"；<b>追踪（tracking）</b> 是另一套机制——沿上一帧的四边做窄带灰度精修 + 运动预测。所以"换成 Canny 追踪"并不存在这个选项；换了算子，追踪部分一行都不会变（实测 <code>track</code> 命中数完全相同即为例证）。</p>
+</div>
+
+<h2>七、附：证据与环境</h2>
+<details>
+  <summary>复跑命令与原始输出（可自行复现）</summary>
+  <pre>A 轨技术路线对照（同机原样复跑，与文档一致）
+"D:/Python311/python.exe" -B tools/exp_alt_pipeline.py
+  A2  阈值+轮廓(极值顶点,未精修): 中心误差 0.8285 px   角点平均 1.5161 px
+      Canny+逼近(最优eps=0.005): 中心误差 0.7496 px   角点平均 1.0000 px
+  A3  阈值+形态学+轮廓  2.62 ms/帧      Canny+轮廓+逼近 2.34 ms/帧
+  B   极值顶点 0.8285px | 二值轮廓 fitLine 中心 0.0610px | 灰度梯度剖面 中心 0.0137px
+  C   8x8 条件数 4.550e+05 → 归一化 3.078
+
+B 轨同图 A/B（本次新增，脚本跑完即删）
+"D:/Python311/python.exe" -B tools/_tmp_canny_vs_bin.py
+  现行(二值化+Canny兜底)  检出 29/30 失败=[2] max_center=0.803px 误检 0/5  1.8ms
+  纯 Canny 候选           检出 29/30 失败=[2] max_center=0.691px 误检 0/5  2.0ms
+  运动序列 track: 现行 12/13 max 0.418px ；纯 Canny 12/13 max 0.640px
+  检索单帧: 二值化掩膜 1.62 ms ；纯 Canny 1.82 ms</pre>
+</details>
+
+<table>
+  <thead><tr><th>证据来源</th><th>路径</th></tr></thead>
+  <tbody>
+    <tr><td>A 轨备选路线评估脚本</td><td><code>tools/exp_alt_pipeline.py</code></td></tr>
+    <tr><td>A 轨深度分析报告</td><td><code>视觉项目代码分析报告.md</code>（§5.2、§6.2、§9.3）</td></tr>
+    <tr><td>上游 Canny 实现</td><td><code>reference/upstream_2025E/树莓派视觉/c1.py</code>、<code>视觉项目复盘报告.md</code></td></tr>
+    <tr><td>B 轨现行检测链</td><td><code>maixcam2_rect_center/vision/rectangle_center.py</code>（<code>_search</code>/<code>_verify</code>/<code>_refine</code>）</td></tr>
+  </tbody>
+</table>
+
+<div class="foot">
+  本页为只读调研产物，未改动任何源码；对照实验用的临时脚本 <code>tools/_tmp_canny_vs_bin.py</code> 已在跑完后删除。<br>
+  A 轨 <code>2026-10-05-r7</code> · B 轨 <code>2026-10-12-motion-predict-v0.5.2</code> · 核查 2026-10-12。
+</div>
+
+</div>
+</body>
+</html>
