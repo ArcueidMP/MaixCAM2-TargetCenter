@@ -1,11 +1,50 @@
 # MaixCAM2 黑框中心：四边精修、快速跟踪与双轴云台瞄准
 
-构建号 `2026-10-11-maixvision-off-v0.4.5`，应用版本 `0.4.5`。在 MaixVision 中打开本文件夹，选择“运行项目”。
-必须一起下发应用包内的 **12 个文件**（`app.yaml` / `main.py` / `config.py` / `target_api.py` /
-`assets/icon.png` / `vision/` 下 7 个 `.py`），不能只运行当前 `main.py`。
+构建号 `2026-10-12-modular-main-v0.4.6`，应用版本 `0.4.6`。在 MaixVision 中打开本文件夹，选择“运行项目”。
+必须一起下发应用包内的 **18 个文件**（`app.yaml` / `main.py` / `config.py` / `target_api.py` /
+`assets/icon.png` / `vision/` 下 13 个 `.py`），不能只运行当前 `main.py`。
 
 > 只想临时试参数时，也可以先 `python tools/build_single.py` 生成 `dist/main_single.py`，
 > 再用「运行当前文件」—— 那是自包含的单文件版，语义与分模块完全一致。改了源码记得重新生成。
+
+## 2026-10-12 改动（v0.4.6）：入口 `main.py` 按功能模块化（923 行 → 296 行）
+
+**动机**：入口 `main.py` 曾同时承担识别线程、显示线程、闭环调度、相机、帧率计、日志组装等全部职责，
+880+ 行挤在一个文件里 —— 审查某一块功能要通读全文，且它正是被外部进程**整份覆写**的高发文件，
+损失面最大。把各功能拆成独立模块后：**改哪块只开哪个文件**、可分别审查、且实现下沉到
+从未被覆写过的 `vision/` 下（整份覆写的损失面缩小约 70%）。
+
+**拆分结果**（类体/函数体**逐字搬迁**，只改头部 import）：
+
+| 新模块 | 承接内容 | 公开 API |
+|---|---|---|
+| `vision/rate_meter.py` | `_FrameRate` | `FrameRate` |
+| `vision/camera_source.py` | `_to_gray` | `to_gray` |
+| `vision/vision_worker.py` | `_LatestVision`（识别线程 + 最新帧槽） | `LatestFrameWorker` |
+| `vision/preview.py` | `_Preview` + `_Touch` + `_display_result` + 图传策略 | `Preview` / `TouchButtons` / `display_result` / `apply_maixvision_stream_policy` |
+| `vision/aim_control.py` | `_VisionControl` + `_send_uart`（闭环调度中枢） | `VisionControl` / `send_uart` |
+| `vision/telemetry.py` | `[perf]` 日志组装 | `format_perf_line` / `format_slow_loop` |
+
+`main.py` 只保留：BUILD_ID + 装配（相机/云台/显示/线程）+ 主循环（时间轴 A）+ 模块地图 docstring。
+
+**两条硬保证**
+
+- **日志字符串逐字不变**（`[ui] 上电自检已改为屏幕按钮`、`[perf]` 字段、`[preview]` 各行等），
+  串口帧与时序不变 —— 板端日志与拆分前逐字一致。
+- **旧私有名以别名保留**（`_FrameRate` / `_LatestVision` / `_Preview` / `_Touch` / `_VisionControl` /
+  `_display_result` / `_to_gray` / `_apply_maixvision_stream_policy`）⇒ `tools/test_runtime_performance.py`
+  与 `tools/test_main_self_test.py` **零改动**通过。
+
+★ **时钟注入（唯一的行为性调整）**：各组件构造可传 `clock`（默认标准库 `time`）。`main()` 传入自身模块的
+`time`，使 `test_main_self_test.py` 用 `patch.object(entry, "time", Clock)` 注入的**假时钟**能穿透到子模块
+—— 否则自检在真实时间轴下 600 次迭代跑不完 6 步、端到端用例会挂。不传时行为与拆分前完全一致。
+
+**验证**：`check_app --manifest` → 应用包 **18 文件 / OK=96 / 0 FAIL**；`build_single --check/--smoke` 通过；
+`test_main_self_test`(4) · `test_runtime_performance`(8) · `test_target_api` · `test_laser` ·
+`test_gimbal_aim`(11) · `test_performance`（30 检出 29、max 0.803px、0 误检，与拆分前一致）· `test_images_e2e` 全绿。
+
+**构建口径**：`tools/build_single.py` 的 `MODULES` 由 9 → 15 项（新增 6），`vision.aim_control` 排在
+`vision.gimbal_self_test` 之后（单文件版按序 exec，被依赖者必须在前）。
 
 ## 2026-10-11 改动（v0.4.5）：代码层掐断 MaixVision 图传——默认即全帧
 

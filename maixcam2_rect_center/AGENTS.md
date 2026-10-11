@@ -21,8 +21,11 @@
 输出 `(u, v)`；另带**激光光斑读数面板**与**双轴 ZDT 云台闭环瞄准**，对外提供 `target_api.py`。
 
 - 应用入口：`main.py`（自带 `app.yaml`，`id = maixcam2_rect_center`，`app_id` 与 A 轨不同）。
-- 应用包 = **12 文件**（`app.yaml` / `main.py` / `config.py` / `target_api.py` / `assets/icon.png` /
-  `vision/` 下 7 个 `.py`）；`tools/` `dist/` `*.md` 不进包。
+  **v0.4.6 起入口已按功能模块化**：`main.py` 只留 BUILD_ID + 装配 + 主循环；识别线程、显示层、
+  闭环调度、相机、帧率计、日志组装各自成 `vision/` 下的独立模块
+  （`rate_meter` / `camera_source` / `vision_worker` / `preview` / `aim_control` / `telemetry`）。
+- 应用包 = **18 文件**（`app.yaml` / `main.py` / `config.py` / `target_api.py` / `assets/icon.png` /
+  `vision/` 下 13 个 `.py`）；`tools/` `dist/` `*.md` 不进包。
 
 ---
 
@@ -35,6 +38,8 @@
    日志与串口，误判"改了没用"。**同一时刻只调试一条。**
 4. **`main.py` 是唯一反复被整份覆写的文件**（见 §5）—— 本项目两轨共用一个工作树、并发写盘，
    **不要与其它进程/会话/编辑器同时写 `maixcam2_rect_center/main.py`**。
+   v0.4.6 模块化后 `main.py` 由 923 行降到约 296 行，实现下沉到从未被覆写的 `vision/` 下，
+   整份覆写的损失面缩小约 70% —— 但入口仍是覆写高发区，改完**立刻** `build_single.py` + 门禁。
 5. **确需跨轨改动**（根 AGENTS.md / 根 README.md 等公共文档）时，**先说清意图、只做最小改动**，
    并在提交信息里点明（前缀用 `repo:`）。
 
@@ -128,7 +133,8 @@
      → 追踪（闭环每 COMMAND_INTERVAL_S 发一帧，走 ACC_TRACK 曲线）
 ```
 
-- **自检与视觉/标定彻底解耦**（`main.py:110–127`、主循环 `main.py:220–225`）：
+- **自检与视觉/标定彻底解耦**（调度在 `vision/aim_control.py` 的 `VisionControl._control`，
+  主循环在 `main.py`）：
   无论画面里有没有靶心，上电都会先走完 4 步固定脉冲自检。
 - **标定不再阻塞**：`CALIBRATE_VISUAL_TIMEOUT_S = 3.0`（`config.py:209`）—— 连续 3s 收不到有效
   `dx/dy` 就立即失败并**交还主流程**，不会干等 20s（现场"抬头后黑框出视野 → 卡住"就是这么来的）。
@@ -150,7 +156,7 @@
 
 ## 4. 改完**必须**做的三件事（对齐根 AGENTS.md §3′）
 
-1. **提升 `main.py` 顶部 `BUILD_ID`**（当前 `2026-10-10-smooth-track-v15`，格式 `YYYY-MM-DD-<slug>-vN`）。
+1. **提升 `main.py` 顶部 `BUILD_ID`**（当前 `2026-10-12-modular-main-v0.4.6`，格式 `YYYY-MM-DD-<slug>-vN`）。
    板端会打印 `[rect-center] <BUILD_ID> ...`，**与本地逐字一致才算跑的是新代码**；
    不更新就无法判断是否生效。**改了 `main.py`/`config.py`/`vision/*`/`target_api.py` 任一个都要做。**
 2. **重新生成单文件版**（`dist/` 不进应用包，但"运行当前文件"要用它）：
@@ -162,7 +168,7 @@
    ⚠ **新增/改名 `vision/*.py` 或根级模块后，必须同步 `tools/build_single.py` 的 `MODULES` 清单**。
 3. **跑门禁**（一律在 `maixcam2_rect_center/` 下、用 `"D:/Python311/python.exe"`）：
    ```bash
-   "D:/Python311/python.exe" -B tools/check_app.py --manifest   # C1..C10 机检 + 打印包内清单（应 12 文件）
+   "D:/Python311/python.exe" -B tools/check_app.py --manifest   # C1..C10 机检 + 打印包内清单（应 18 文件）
    "D:/Python311/python.exe" -B tools/test_performance.py       # 视觉回归（基线：29/30、max 0.803px、0 误检）
    "D:/Python311/python.exe" -B tools/test_target_api.py        # 对外 API 回归
    "D:/Python311/python.exe" -B tools/test_gimbal_aim.py        # 云台协议/闭环/看门狗/标定/自检/低通（当前 PASS(29)）
@@ -257,16 +263,19 @@ dist 与 `main.py` 的 `BUILD_ID` 是否一致），确认没有半新半旧。
 8. **调试抓屏会迅速堆爆工作区**（`tools/e2e_report/*.png` 实测数小时内 4.7M→9.6M）→
    定期跑 `"D:/Python311/python.exe" -B tools/clean_artifacts.py`（扫描）/ `--apply`（删除），
    目标保持 B 轨目录 **≤5MB**。该脚本只删可再生/已忽略产物，**保留 `negative_e*.png` 测试固件**。
-9. **`Display()` 放进子进程 = MaixVision 可能完全看不到画面**（`SHOW_ASYNC=True` 的未验证用法：
-   子进程起不来就 `can_submit()` 恒 False，一帧都不画且无报错）。默认必须走 `SHOW_ASYNC=False`
-   的主进程内路径；排查先看启动日志 `[preview] mode=sync-inprocess`。
+9. **显示线程必须在主进程内、且与"子进程"严格区分**：v0.4.3 起默认 `SHOW_ASYNC=True`，把 `show()`
+   移到**主进程内的 daemon 线程**（`vision/preview.py` 的 `Preview._show_loop`），主循环只投递不等待
+   —— 已实测生效（启动日志 `[preview] mode=display-thread`），**v18 的"默认必须走 `SHOW_ASYNC=False`"
+   结论已被推翻**。⚠ 但**不要把 `Display()` 放进子进程**：子进程起不来就 `can_submit()` 恒 False，
+   一帧都不画且无报错（历史 v16 的坑，与本条无关）。若 MaixVision 看不到画面：先看 `[preview] mode=`，
+   必要时临时 `SHOW_ASYNC=False` 退回主进程内同步 show 以排除显示线程因素。
 
 ---
 
 ## 7. 完成定义（DoD）
 
 - **改完源码**：`BUILD_ID` 已更新 → `dist/main_single.py` 已重生成 → 门禁全绿
-  （`check_app --manifest` 应为 **12 文件 / 0 FAIL**）→ **按精确路径提交**（`gpt:` 前缀）。
+  （`check_app --manifest` 应为 **18 文件 / 0 FAIL**）→ **按精确路径提交**（`gpt:` 前缀）。
 - **上板**：日志 `[rect-center] <BUILD_ID>` 与本地一致；上电应看到 **4 步自检**（pitch 上→下、yaw 左→右），
   之后（若 `CALIBRATE_AXIS="auto"`）标定、然后进入追踪；追踪起停应柔和、停下时激光不晃。
 - **留痕**：往 `../.workbuddy/memory/YYYY-MM-DD.md` **追加**一行本轮做了什么、怎么验证的

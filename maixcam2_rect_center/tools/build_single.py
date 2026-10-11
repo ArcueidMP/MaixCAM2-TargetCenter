@@ -45,13 +45,24 @@ OUT_DIR = os.path.join(ROOT, "dist")
 OUT_PY = os.path.join(OUT_DIR, "main_single.py")
 
 # 需要打进单文件的模块：(模块名, 相对路径) —— 顺序即执行顺序，被依赖的在前
+# v0.4.6：入口 main.py 按功能拆分为独立模块，此处同步新增 6 项。
+#   · rate_meter / camera_source / vision_worker / preview 依赖少、可直接排在前面；
+#   · vision_worker、preview 依赖 rate_meter ⇒ rate_meter 必须在它们之前；
+#   · ★ vision.aim_control 依赖 rectangle_center / laser_spot / gimbal_self_test
+#     ⇒ 必须排在**这三者之后**（单文件版按序 exec，被依赖者须在前）。
 MODULES = (
     ("config", "config.py"),
+    ("vision.rate_meter", "vision/rate_meter.py"),
+    ("vision.camera_source", "vision/camera_source.py"),
+    ("vision.vision_worker", "vision/vision_worker.py"),
+    ("vision.telemetry", "vision/telemetry.py"),
+    ("vision.preview", "vision/preview.py"),
     ("vision.rectangle_center", "vision/rectangle_center.py"),
     ("vision.laser_spot", "vision/laser_spot.py"),
     ("vision.gimbal_self_test", "vision/gimbal_self_test.py"),
     ("vision.gimbal_aim", "vision/gimbal_aim.py"),
     ("vision.stepper_link", "vision/stepper_link.py"),
+    ("vision.aim_control", "vision/aim_control.py"),
     ("vision.gimbal_calibrate", "vision/gimbal_calibrate.py"),
     ("target_api", "target_api.py"),
 )
