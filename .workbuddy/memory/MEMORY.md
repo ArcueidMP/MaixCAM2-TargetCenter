@@ -9,22 +9,25 @@
 | 轨 | 目录 | BUILD_ID | 状态 |
 |---|---|---|---|
 | A（DeepSeek） | 根 | `2026-10-05-r7` | 性能治理 + 抗抖跟踪已完成 |
-| B（名义 GPT） | `maixcam2_rect_center/` | `2026-10-11-show-probe-v0.4.4` | v0.4.0 修轴映射 → v0.4.1 按钮自检+画面流转 → v0.4.3 显示移出主循环 → v0.4.4 锁定「板上 ~2fps」= MaixCDK 图传 500ms 忙等 + 开机探针 |
+| B（名义 GPT） | `maixcam2_rect_center/` | `2026-10-11-maixvision-off-v0.4.5` | v0.4.0 修轴映射 → v0.4.1 按钮自检+画面流转 → v0.4.3 显示移出主循环 → v0.4.4 锁定「板上 ~2fps」= MaixCDK 图传 500ms 忙等 + 探针 → v0.4.5 代码层掐断图传（默认全帧） |
 
-**B 轨 v0.4.4（10-11，当前）** —— 板上恒 ~2.5fps 的**根因已源码级锁定**：
-- **症状**：`capture=2.5 disp=1.9 detect_fps=0 | read=106.9 loop=321.2ms | show avg=505.8 p95=508.4 max=509.1ms`。
-- **根因**：show 的 avg/p95/max 挤在 505~509ms = **固定超时**，不是算力。MaixCDK `vision/src/maix_image_trans.cpp`
-  的 `send_image()`：`if(!handle->init){ while(!init){ if(ticks-t>500) return NOT_READY; } }` ——
-  **MaixVision 模式下图传 websocket 未连上时，每次 show() 忙等 500ms 且空转 CPU**；
-  而 `Display::show()` 首件事就是 `if(img_trans) img_trans->send_image(img)`，`img_trans` 仅在
-  `maixvision_mode()`（用 MaixVision 运行代码）时才创建。⇒ 1.9 次/秒 × 500ms ≈ **烧掉 ~95% 一个核** →
-  相机 read 被抢到 107~175ms、识别线程饿死。**本地屏本身官方只要 1~5ms**。
-- **改法**：`_Preview` 构造时做 `show()` 计时探针（`_probe_show()`，≥300ms 打根因 + 对策）；
-  周期性 `show slow` 改 `warn_slow_once()`（只打一次、点名 MaixVision 图传）。
-- **给用户的三条真解**：① **从设备本地启动应用**（不经 MaixVision 运行）⇒ `maixvision_mode()` 假 ⇒
-  show ≈1~5ms ⇒ 跑满帧率（日志 `/maixapp/tmp/last_run.log`）；② 让 MaixVision 画面预览真正连上（异步入队）；③ `SHOW=False`。
-- ⚠ **两条被证伪的直觉（别再走）**：降 `SHOW_FPS` 无效；「关掉预览丢帧」也无效 —— 丢帧是 show 慢的**结果**。
-- **已排除**：`touchscreen.read()` 非阻塞（FIONBIO + 直读 input event）；`Camera.skip_frames(n)` 是一次性预热（非每帧跳帧）。
+**B 轨 v0.4.5（10-11，当前）** —— **代码层掐断 MaixVision 图传，默认即全帧**（治 v0.4.4 锁定的根因）：
+- 源码级事实：`maixvision_mode()` == `getenv("MAIXVISION")=="1"`（`maix_image_trans.cpp`）；图传通道 `img_trans`
+  在 **`Display()` 构造时**按它创建**一次**。`show()` 与 `display.send_to_maixvision()` 首件事**都是**
+  `img_trans->send_image()` ⇒ **换 API 无用**（共用同一 500ms 忙等）；**只有建 Display 前让 MAIXVISION≠1**。
+- **改法**：`Config.DISABLE_MAIXVISION_STREAM=True`（默认）⇒ `main()` 开头 `_apply_maixvision_stream_policy()`
+  把 `os.environ["MAIXVISION"]="0"`（=putenv，C 侧 getenv 立即生效）⇒ 不建图传 ⇒ show 1~5ms 全帧。
+  启动日志多 `[preview] 已禁用 MaixVision 图传…` 与 `…maixvision=off`。探针对策改为①②③。
+- 代价：MaixVision **画面预览**无图（终端日志照常）；要看画面则设 `=False` 且确保预览已连上。本地启动无副作用。
+
+**B 轨 v0.4.4（10-11）** —— 板上恒 ~2.5fps 的**根因源码级锁定**（细节见 README）：
+- 症状 `capture=2.5 disp=1.9 detect_fps=0 | read=106.9 loop=321.2ms | show avg/p95/max≈505.8/508.4/509.1ms`。
+- 根因：show 三值挤在 505~509ms = **固定超时**（非算力）＝ 图传 websocket 未连上时 `send_image()`
+  `while(!init){if(ticks-t>500)return NOT_READY;}` **忙等 500ms 空转 CPU**；1.9 次/秒 ≈ 烧掉 ~95% 一个核
+  → 相机 read 被抢到 107~175ms、识别线程饿死。**本地屏官方只要 1~5ms**。
+- 加 `_probe_show()` 开机计时探针 + `warn_slow_once()`（只打一次）。
+- ⚠ 两条被证伪的直觉：降 `SHOW_FPS` 无效；「关掉预览丢帧」也无效（丢帧是 show 慢的**结果**）。
+- 已排除：`touchscreen.read()` 非阻塞；`Camera.skip_frames(n)` 是一次性预热（非每帧跳帧）。
 
 **B 轨 v0.4.3（10-11）** —— 修「画面只有 1.5 帧」：
 - **根因**：`Display.show()` 仍在主循环同步调用，`cam.read→submit→绘制→show` 串行 ⇒ show 慢多少整条链就慢多少，
