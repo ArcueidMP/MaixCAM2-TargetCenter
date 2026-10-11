@@ -14,6 +14,9 @@ class Config:
     # 检测不跳帧；显示独立限频，减少 RGB 转换和 MaixVision 图像传输开销。
     SHOW_WIDTH = 480
     SHOW_FPS = 15
+    # ---- 屏幕交互：把「上电自检」做成屏幕上的可点击按钮（不再上电自动跑）----
+    # True=在显示画布右上角画 SELF-TEST 按钮，点一下才触发自检；无显示/无触摸屏时自动禁用。
+    ENABLE_TOUCH_BUTTON = True
     OPENCV_THREADS = 1
     LOG_INTERVAL = 2.0
     # ---- 双 ZDT 云台链路 -------------------------------------------------
@@ -56,7 +59,9 @@ class Config:
     GIMBAL_SELF_TEST = True
     SELF_TEST_YAW_DEG = 15.0
     SELF_TEST_PITCH_DEG = 30.0
-    # 计算参考：3200 pulses/rev * 减速比 / 360；减速比未知时不要猜。
+    # 固定脉冲自检幅度（AGENTS.md §3.2）：>0 时**不依赖**"脉冲/度"标定即可动作，
+    # 因此屏幕按钮点了就能跑（推荐）。置 0 才回退到按 SELF_TEST_*_DEG × PULSES_PER_DEG 换算角度。
+    SELF_TEST_PULSES = 400
     YAW_PULSES_PER_DEG = 0.0
     PITCH_PULSES_PER_DEG = 0.0
     # 两轴正方向均为 CCW：yaw CCW=左 / CW=右，pitch CCW=上(仰) / CW=下（见 AGENTS.md §2）。

@@ -1,16 +1,14 @@
-"""端到端跑真实 main()：验证「上电先自检（固定脉冲、不等黑框）→ 再标定/追踪」的顺序。
+"""端到端跑真实 main()：验证「上电自检改为屏幕按钮」的新契约（v0.4.1）。
 
-为什么必须有这条用例（2026-10-10）：
-`CALIBRATE_AXIS="auto"` 时旧代码在初始化阶段**只创建 AutoCalibrate、从不创建
-GimbalSelfTest** —— 于是上电后一条运动指令都不发，必须等画面里识别到黑框（靶心）
-才开始自动标定；现场表现就是"上电没动作、得等靶纸"。本用例用**全白画面（无黑框）**
-跑真实 main()，锁定三件事：
+背景（2026-10-11 需求变更）：原来的「上电自检优先级最高、开机自动跑」被取消 ——
+自检改成一个**屏幕可点击按钮**，点一下才跑。本用例用 mock 的 maix（含 display/touchscreen）
+跑真实 `main()`，锁定三件事：
 
-  1. 上电自检**不依赖视觉**：画面里没有靶心，也照走 pitch 上→下、yaw 左→右；
-  2. 自检**先于**自动标定：标定开始的日志晚于自检完成，且此前只有 4 条自检脉冲帧；
-  3. 链路 FAULT 时自检与标定**都不发指令**。
+  1. **上电不自动跑自检**：没有任何点击时，一条运动帧（0xFD）都不发；
+  2. **点击按钮才跑**：模拟点击右上角 SELF-TEST 后，自检 6 步（yaw 左→右、pitch 上→下）应发出；
+  3. **链路 FAULT 时点击也不发指令**。
 
-顺序 / 每轴帧数的口径见 `GimbalSelfTest._prepare`（固定脉冲：pitch, pitch, yaw, yaw）。
+另外确认「画面流转到 MaixVision」：`display.Display().show()` 被真正调用（preview）。
 """
 import contextlib
 import io
@@ -25,14 +23,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import main as entry
 from vision.stepper_link import StepperLink
 
-SELF_TEST_PULSES = 400        # = config.SELF_TEST_PULSES（固定脉冲自检幅度）
-# 每次 perf_counter() 调用推进的模拟时间。主循环一帧会调用 ~10 次，故约 0.2s/帧，
-# 与真实板端 20~30fps 同量级 —— 太大会让自检的 SELF_TEST_TIMEOUT_S 兜底被瞬间触发。
-CLOCK_STEP_S = 0.02
+CLOCK_STEP_S = 0.02          # 每次 perf_counter() 前进的模拟时间（~0.2s/帧，同板端量级）
+SCREEN_W, SCREEN_H = 640, 480
+TAP = (500, 50)              # 落在右上角 SELF-TEST 按钮内
 
 
-def run(fault=False, calibration="auto", iterations=400, tracking_errors=None):
+def run(fault=False, iterations=600, touch_events=()):
     ports = []
+    shown = []
 
     class UART:
         def __init__(self, dev, baud):
@@ -54,11 +52,36 @@ def run(fault=False, calibration="auto", iterations=400, tracking_errors=None):
             pass
 
         def read(self):
-            # ★ 纯白画面：永远识别不到黑框 -> 自检若仍完成，即证明它不依赖视觉。
+            # 纯白画面：永远识别不到黑框 -> 若仍有运动帧，必来自自检。
             return np.full((480, 640), 200, np.uint8)
 
         def close(self):
             pass
+
+    class Disp:
+        def width(self):
+            return SCREEN_W
+
+        def height(self):
+            return SCREEN_H
+
+        def show(self, img):
+            shown.append(img)
+
+        def close(self):
+            pass
+
+    class Touch:
+        def __init__(self):
+            self.events = list(touch_events)
+            self.i = 0
+
+        def read(self):
+            if self.i < len(self.events):
+                ev = self.events[self.i]
+                self.i += 1
+                return ev
+            return (0, 0, False)
 
     class Clock:
         current = 0.0
@@ -77,123 +100,74 @@ def run(fault=False, calibration="auto", iterations=400, tracking_errors=None):
             return self.n > iterations
 
     maix = types.ModuleType("maix")
-    maix.app = types.SimpleNamespace(need_exit=App().need_exit)
+    maix.app = types.SimpleNamespace(need_exit=App().need_exit, set_exit_flag=lambda v: None)
     maix.uart = types.SimpleNamespace(UART=UART)
     maix.pinmap = types.SimpleNamespace(set_pin_function=lambda *args: 0,
-                                        get_pin_function=lambda pin: "?")
+                                       get_pin_function=lambda pin: "?")
     maix.err = types.SimpleNamespace(check_raise=lambda *args: None)
     maix.camera = types.SimpleNamespace(Camera=Camera)
-    maix.display = types.SimpleNamespace()
+    maix.display = types.SimpleNamespace(Display=Disp)
+    maix.touchscreen = types.SimpleNamespace(TouchScreen=Touch)
     maix.image = types.SimpleNamespace(
         Format=types.SimpleNamespace(FMT_GRAYSCALE=0),
-        image2cv=lambda img, **kwargs: img)
+        image2cv=lambda img, **kwargs: img,
+        cv2image=lambda img, **kwargs: img)
     cfg = type("TestConfig", (entry.Config,), dict(
-        SHOW=False, LENS_CORR=False, LOG_INTERVAL=1000, CALIBRATE_AXIS=calibration))
-    if tracking_errors is not None:
-        cfg.GIMBAL_SELF_TEST = False
-        errors = iter(tracking_errors)
-
-        def detection(gray):
-            dx = next(errors, None)
-            if dx is None:
-                return dict(valid=False, stage="no_black_frame")
-            u, v = cfg.LASER_U_NOMINAL + dx, cfg.LASER_V_NOMINAL
-            return dict(valid=True, stage="track", u=u, v=v, raw_u=u, raw_v=v)
+        SHOW=True, SHOW_FPS=30, LOG_INTERVAL=1000, CALIBRATE_AXIS=""))
     with contextlib.ExitStack() as stack:
         stack.enter_context(patch.dict(sys.modules, maix=maix))
         stack.enter_context(patch.object(entry, "Config", cfg))
         stack.enter_context(patch.object(entry, "time", Clock))
         stack.enter_context(patch.object(entry, "probe_imu", return_value={
             "available": False, "error": "test"}))
-        if tracking_errors is not None:
-            stack.enter_context(patch.object(entry.RectangleCenterDetector, "process", side_effect=detection))
         if fault:
             stack.enter_context(patch.object(StepperLink, "poll", return_value={
                 "fault": True, "reason": "test_fault", "frames": []}))
         log = stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
         entry.main()
-    return ports, log.getvalue()
+    return ports, shown, log.getvalue()
 
 
 def _motion_frames(port):
-    return [p for p in port.sent if p[1] == 0xFD]
+    return [p for p in port.sent if len(p) >= 2 and p[1] == 0xFD]
 
 
-def test_self_test_runs_before_calibration():
-    """正常/自动标定两种配置下，上电都必须先跑固定脉冲自检（不等黑框）。"""
-    for calibration in ("", "auto"):
-        ports, log = run(calibration=calibration)
-        # 端口顺序 = StepperLink 逐轴打开的顺序：yaw(ttyS2) 在前、pitch(ttyS0) 在后。
-        assert [p.dev for p in ports] == ["/dev/ttyS2", "/dev/ttyS0"], ports
-        for port, address in zip(ports, (2, 1)):          # yaw=ID2, pitch=ID1
-            assert port.sent[0][1] == 0xF3, "上电应先发使能帧"
-            moves = _motion_frames(port)
-            assert len(moves) == 2, port.sent            # 每轴两段（往返）
-            assert [int.from_bytes(p[6:10], "big") for p in moves] == [
-                SELF_TEST_PULSES, SELF_TEST_PULSES]
-            assert all(p[0] == address for p in moves)
-        assert "FAULT" not in log
-        assert "[self-test] complete" in log, "上电自检没有跑完"
-        assert "硬超时" not in log, "自检未在 SELF_TEST_TIMEOUT_S 内自然跑完（3s 目标没达成）"
-        assert "上电自检 4 步" in log
-        if calibration == "auto":
-            # ★ 关键：自检完成之后才开始自动标定（旧代码是直接标定、根本不自检）。
-            assert "上电自检完成 -> 开始自动标定" in log
-            assert log.index("[self-test] complete") < log.index("上电自检完成")
-    print("PASS: 上电先自检（4 步、不等黑框），auto 模式下自检完成后才开始标定")
+def test_boot_does_not_autostart_self_test():
+    """上电不自动跑自检：无点击 -> 0 条运动帧；使能帧应已发。"""
+    ports, shown, log = run(fault=False, touch_events=())
+    assert [p.dev for p in ports] == ["/dev/ttyS2", "/dev/ttyS0"], ports
+    for port in ports:
+        assert port.sent and port.sent[0][1] == 0xF3, "上电应先发使能帧"
+        assert not _motion_frames(port), "上电不应自动发运动帧（自检改为按钮触发）"
+    assert "[ui] 上电自检已改为屏幕按钮" in log
+    assert "[self-test] complete" not in log
+    assert shown, "画面应已流转到显示（display.show 未被调用）"
+    print("PASS: 上电不自动跑自检（0 运动帧），且画面已流转到 MaixVision")
 
 
-def test_fault_blocks_self_test_and_calibration():
-    """链路判 FAULT 后，自检与标定都不得再下发运动指令。"""
-    for calibration in ("", "auto"):
-        ports, log = run(fault=True, calibration=calibration)
-        assert all(not _motion_frames(port) for port in ports), "FAULT 后仍在发运动帧"
-        assert "link:test_fault" in log
-    print("PASS: 链路 FAULT 阻断自检与标定（不发任何 0xFD 运动帧）")
+def test_tap_button_runs_self_test():
+    """点击 SELF-TEST 按钮 -> 自检 6 步（yaw×3、pitch×3）并回到起点。"""
+    ports, shown, log = run(fault=False, touch_events=[(TAP[0], TAP[1], True)])
+    assert "[ui] 收到点击 -> 启动上电自检" in log, "按钮点击没有被识别"
+    yaw, pitch = ports
+    assert len(_motion_frames(yaw)) == 3, yaw.sent
+    assert len(_motion_frames(pitch)) == 3, pitch.sent
+    assert all(p[0] == 2 for p in _motion_frames(yaw)), "yaw 帧地址应为 ID2"
+    assert all(p[0] == 1 for p in _motion_frames(pitch)), "pitch 帧地址应为 ID1"
+    assert "[self-test] complete" in log, "自检没有跑完"
+    print("PASS: 点击按钮后自检 6 步发出并完成（yaw×3@ID2、pitch×3@ID1）")
 
 
-def test_tracking_filter_stops_reach_uart():
-    """真实 main() 与 API 都要把控制器取消运动的决定发送为 0xFE，不能只停止生成新指令。"""
-    with patch.dict(globals(), CLOCK_STEP_S=0.001):
-        for errors in ([100, 1], [100, None], [100, -100]):
-            ports, _ = run(calibration="", iterations=2, tracking_errors=errors)
-            yaw = ports[0]
-            assert len(_motion_frames(yaw)) == 1, yaw.sent
-            pulses = int.from_bytes(_motion_frames(yaw)[0][6:10], "big")
-            assert pulses <= entry.Config.AIM_START_PULSES, pulses
-            # main 正常退出另外发一条 stop；退出前必须已因死区/失锁/换向发过 stop。
-            assert [p[1] for p in yaw.sent].count(0xFE) == 2, yaw.sent
-    from target_api import AimLoop
-    from vision.gimbal_aim import GimbalAim
-
-    class Link:
-        def __init__(self):
-            self.sent = []
-
-        def move(self, axis, ccw, pulses, rpm, acc, now=None):
-            self.sent.append((axis, 0xFD, pulses, acc))
-            return True
-
-        def stop(self, axis=None, now=None):
-            self.sent.append((axis, 0xFE))
-            return True
-
-        def poll(self, now):
-            return {"fault": False}
-
-    loop = AimLoop(enable_motors=False)
-    loop.aim, loop.link = GimbalAim(entry.Config), Link()
-    results = iter([dict(valid=True, aim_valid=True, dx=100, dy=0),
-                    dict(valid=True, aim_valid=True, dx=1, dy=0)])
-    loop.tracker = types.SimpleNamespace(track=lambda frame, now: next(results))
-    loop.step(None, now=0)
-    stopped = loop.step(None, now=0.02)
-    assert loop.link.sent == [("yaw", 0xFD, entry.Config.AIM_START_PULSES, entry.Config.ACC_TRACK), ("yaw", 0xFE)], loop.link.sent
-    assert stopped["aim_state"] == "SETTLE"
-    print("PASS: main/API 大误差小步起动，死区/失锁/换向取消帧抵达电机链路")
+def test_fault_blocks_self_test():
+    """链路判 FAULT 后，点击按钮也不得下发运动指令。"""
+    ports, _, log = run(fault=True, touch_events=[(TAP[0], TAP[1], True)])
+    assert all(not _motion_frames(port) for port in ports), "FAULT 后仍在发运动帧"
+    assert "link:test_fault" in log
+    print("PASS: 链路 FAULT 阻断自检（点击也不发任何 0xFD 运动帧）")
 
 
 if __name__ == "__main__":
-    test_self_test_runs_before_calibration()
-    test_fault_blocks_self_test_and_calibration()
-    test_tracking_filter_stops_reach_uart()
+    test_boot_does_not_autostart_self_test()
+    test_tap_button_runs_self_test()
+    test_fault_blocks_self_test()
+    print("main self-test(按钮式) e2e: PASS (3)")

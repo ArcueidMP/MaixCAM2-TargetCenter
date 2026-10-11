@@ -1,11 +1,23 @@
 # MaixCAM2 黑框中心：四边精修、快速跟踪与双轴云台瞄准
 
-构建号 `2026-10-10-lens-off-v19`，应用版本 `1.4.0`。在 MaixVision 中打开本文件夹，选择“运行项目”。
+构建号 `2026-10-11-v0.4.1`，应用版本 `0.4.1`。在 MaixVision 中打开本文件夹，选择“运行项目”。
 必须一起下发应用包内的 **12 个文件**（`app.yaml` / `main.py` / `config.py` / `target_api.py` /
 `assets/icon.png` / `vision/` 下 7 个 `.py`），不能只运行当前 `main.py`。
 
 > 只想临时试参数时，也可以先 `python tools/build_single.py` 生成 `dist/main_single.py`，
 > 再用「运行当前文件」—— 那是自包含的单文件版，语义与分模块完全一致。改了源码记得重新生成。
+
+## 2026-10-11 改动（v0.4.1）：上电自检改为屏幕按钮 + 画面流转到 MaixVision
+
+- **自检不再上电自动跑**：改为显示画面右上角的 **`SELF-TEST` 按钮，点一下才触发**
+  （`Config.ENABLE_TOUCH_BUTTON`）。原因：上电即自检会在没准备好时自动扫动，现场不好控制。
+  自检用**固定脉冲**（`Config.SELF_TEST_PULSES=400`，不依赖脉冲/度标定），点一次跑 6 步
+  （yaw 左→右、pitch 上→下）后回起点；屏幕底部显示 `self-test k/6`。
+- **画面流转到 MaixVision**：`main._Preview` 在**主进程内**把带标注的画面按"**屏幕尺寸画布**"
+  letterbox 后 `display.Display().show()`。画布尺寸 == 屏幕尺寸，才能让触摸坐标与按钮区域 1:1
+  对应（MaixPy「触摸屏使用」的官方做法）。启动日志 `[preview] mode=in-process WxH`。
+- **顺带修**：`StepperLink.poll()` 无故障返回 `fault=False`，而主循环曾用 `is not None` 判故障 →
+  **开机第 1 帧就误判 FAULT**、云台一条指令都不发（v3 基线回归坑）。
 
 ## 2026-10-10 改动⑪：关掉未调参的镜头畸变校正——修「识别黑框时画面畸变」（`-lens-off-v19`）
 

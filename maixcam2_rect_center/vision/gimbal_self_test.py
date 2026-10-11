@@ -1,4 +1,10 @@
-"""上电云台小幅自检：yaw ±15°，pitch ±30°，最后回到启动姿态。"""
+"""上电云台小幅自检：yaw ±15°，pitch ±30°，最后回到启动姿态。
+
+两种幅度口径（`config.SELF_TEST_PULSES` 决定用哪种）：
+    · >0 = **固定脉冲**（推荐，见 AGENTS.md §3.2）：不依赖"脉冲/度"标定即可动作，
+      所以可由屏幕按钮直接触发；顺序与角度模式一致（yaw 左→右、pitch 上→下，各回到起点）。
+    · ==0 = 按 `SELF_TEST_*_DEG × *_PULSES_PER_DEG` 换算角度；未标定（两者均 0）则跳过。
+"""
 
 
 class GimbalSelfTest:
@@ -17,6 +23,19 @@ class GimbalSelfTest:
     def _prepare(self):
         if not bool(getattr(self.cfg, "GIMBAL_SELF_TEST", True)):
             self.state, self.reason = "DONE", "disabled"
+            return
+        # ---- 固定脉冲模式（不依赖标定；屏幕按钮触发走这条）----
+        fixed = int(getattr(self.cfg, "SELF_TEST_PULSES", 0) or 0)
+        if fixed > 0:
+            yaw_ccw = bool(getattr(self.cfg, "YAW_POSITIVE_CCW", False))
+            pitch_ccw = bool(getattr(self.cfg, "PITCH_POSITIVE_CCW", False))
+            self.sequence = [
+                ("yaw", yaw_ccw, fixed), ("yaw", not yaw_ccw, 2 * fixed), ("yaw", yaw_ccw, fixed),
+                ("pitch", pitch_ccw, fixed), ("pitch", not pitch_ccw, 2 * fixed), ("pitch", pitch_ccw, fixed),
+            ]
+            self.state = "RUNNING"
+            print("[self-test] 固定脉冲模式 pulses=%d rpm=%d" %
+                  (fixed, int(getattr(self.cfg, "SELF_TEST_RPM", 900))))
             return
         yaw_ppd = float(getattr(self.cfg, "YAW_PULSES_PER_DEG", 0.0))
         pitch_ppd = float(getattr(self.cfg, "PITCH_PULSES_PER_DEG", 0.0))

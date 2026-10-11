@@ -10,13 +10,13 @@ main_single.py · 25E 靶心识别（轨道 B）—— 单文件自包含版
 用途：在 MaixVision 里点「运行当前文件」即可运行（不必用「运行项目」）。
       行为与模块化工程完全一致，输出也就完全一致。
 
-生成时间：2026-10-11 16:40:26
-    config.py                    sha1=dea0a125e641
-    main.py                      sha1=5275ce6af80f
+生成时间：2026-10-11 17:13:02
+    config.py                    sha1=223defb562bc
+    main.py                      sha1=bd8d036a77d9
     target_api.py                sha1=9c5a71aa209b
     vision/gimbal_aim.py         sha1=0b0ae21ebd2e
     vision/gimbal_calibrate.py   sha1=9c4bb08a1b99
-    vision/gimbal_self_test.py   sha1=b31ac16c287b
+    vision/gimbal_self_test.py   sha1=17b72e0935bb
     vision/laser_spot.py         sha1=d8d722904443
     vision/rectangle_center.py   sha1=173cbdfeb6a4
     vision/stepper_link.py       sha1=825c01fa8f50
@@ -25,7 +25,7 @@ main_single.py · 25E 靶心识别（轨道 B）—— 单文件自包含版
 import sys as _sys
 import types as _types
 
-_SRC_SHA1 = {'config.py': 'dea0a125e6417540ac257d5a49da3e11fb6e66fd', 'vision/rectangle_center.py': '173cbdfeb6a4ea3ed2b36726a7cea5db62e9d954', 'vision/laser_spot.py': 'd8d722904443201c539507baca6d69be668ade93', 'vision/gimbal_self_test.py': 'b31ac16c287b150caeef26728146704a40ad3116', 'vision/gimbal_aim.py': '0b0ae21ebd2e6cce2d7839fccf03dc8ada5c02d3', 'vision/stepper_link.py': '825c01fa8f5050d57e827df4fc98ac6920f90ba9', 'vision/gimbal_calibrate.py': '9c4bb08a1b99d6feaef77bc8cf3fc56655e87676', 'target_api.py': '9c5a71aa209bb2716f1c0c4ac2fadd3eec23241d', 'main.py': '5275ce6af80f07d8696e24a187736813dade5415'}
+_SRC_SHA1 = {'config.py': '223defb562bccf0a2351d11819798dd7dd76302a', 'vision/rectangle_center.py': '173cbdfeb6a4ea3ed2b36726a7cea5db62e9d954', 'vision/laser_spot.py': 'd8d722904443201c539507baca6d69be668ade93', 'vision/gimbal_self_test.py': '17b72e0935bbb7786f7c936d17b55c291795990b', 'vision/gimbal_aim.py': '0b0ae21ebd2e6cce2d7839fccf03dc8ada5c02d3', 'vision/stepper_link.py': '825c01fa8f5050d57e827df4fc98ac6920f90ba9', 'vision/gimbal_calibrate.py': '9c4bb08a1b99d6feaef77bc8cf3fc56655e87676', 'target_api.py': '9c5a71aa209bb2716f1c0c4ac2fadd3eec23241d', 'main.py': 'bd8d036a77d9cbe134a5f3e404f945af560e4736'}
 
 # --------------------------------------------------------------------------
 # ① 各模块源码原样嵌入，运行时装进 sys.modules（保持原 import 语义）
@@ -50,6 +50,9 @@ class Config:
     # 检测不跳帧；显示独立限频，减少 RGB 转换和 MaixVision 图像传输开销。
     SHOW_WIDTH = 480
     SHOW_FPS = 15
+    # ---- 屏幕交互：把「上电自检」做成屏幕上的可点击按钮（不再上电自动跑）----
+    # True=在显示画布右上角画 SELF-TEST 按钮，点一下才触发自检；无显示/无触摸屏时自动禁用。
+    ENABLE_TOUCH_BUTTON = True
     OPENCV_THREADS = 1
     LOG_INTERVAL = 2.0
     # ---- 双 ZDT 云台链路 -------------------------------------------------
@@ -92,7 +95,9 @@ class Config:
     GIMBAL_SELF_TEST = True
     SELF_TEST_YAW_DEG = 15.0
     SELF_TEST_PITCH_DEG = 30.0
-    # 计算参考：3200 pulses/rev * 减速比 / 360；减速比未知时不要猜。
+    # 固定脉冲自检幅度（AGENTS.md §3.2）：>0 时**不依赖**"脉冲/度"标定即可动作，
+    # 因此屏幕按钮点了就能跑（推荐）。置 0 才回退到按 SELF_TEST_*_DEG × PULSES_PER_DEG 换算角度。
+    SELF_TEST_PULSES = 400
     YAW_PULSES_PER_DEG = 0.0
     PITCH_PULSES_PER_DEG = 0.0
     # 两轴正方向均为 CCW：yaw CCW=左 / CW=右，pitch CCW=上(仰) / CW=下（见 AGENTS.md §2）。
@@ -947,7 +952,13 @@ def draw_laser_overlay(canvas, laser, result=None, scale=1.0, use_raw=False):
 
 # ===== vision.gimbal_self_test  (vision/gimbal_self_test.py) =====
 _MOD_SRC['vision.gimbal_self_test'] = r'''
-"""上电云台小幅自检：yaw ±15°，pitch ±30°，最后回到启动姿态。"""
+"""上电云台小幅自检：yaw ±15°，pitch ±30°，最后回到启动姿态。
+
+两种幅度口径（`config.SELF_TEST_PULSES` 决定用哪种）：
+    · >0 = **固定脉冲**（推荐，见 AGENTS.md §3.2）：不依赖"脉冲/度"标定即可动作，
+      所以可由屏幕按钮直接触发；顺序与角度模式一致（yaw 左→右、pitch 上→下，各回到起点）。
+    · ==0 = 按 `SELF_TEST_*_DEG × *_PULSES_PER_DEG` 换算角度；未标定（两者均 0）则跳过。
+"""
 
 
 class GimbalSelfTest:
@@ -966,6 +977,19 @@ class GimbalSelfTest:
     def _prepare(self):
         if not bool(getattr(self.cfg, "GIMBAL_SELF_TEST", True)):
             self.state, self.reason = "DONE", "disabled"
+            return
+        # ---- 固定脉冲模式（不依赖标定；屏幕按钮触发走这条）----
+        fixed = int(getattr(self.cfg, "SELF_TEST_PULSES", 0) or 0)
+        if fixed > 0:
+            yaw_ccw = bool(getattr(self.cfg, "YAW_POSITIVE_CCW", False))
+            pitch_ccw = bool(getattr(self.cfg, "PITCH_POSITIVE_CCW", False))
+            self.sequence = [
+                ("yaw", yaw_ccw, fixed), ("yaw", not yaw_ccw, 2 * fixed), ("yaw", yaw_ccw, fixed),
+                ("pitch", pitch_ccw, fixed), ("pitch", not pitch_ccw, 2 * fixed), ("pitch", pitch_ccw, fixed),
+            ]
+            self.state = "RUNNING"
+            print("[self-test] 固定脉冲模式 pulses=%d rpm=%d" %
+                  (fixed, int(getattr(self.cfg, "SELF_TEST_RPM", 900))))
             return
         yaw_ppd = float(getattr(self.cfg, "YAW_PULSES_PER_DEG", 0.0))
         pitch_ppd = float(getattr(self.cfg, "PITCH_PULSES_PER_DEG", 0.0))
@@ -2019,7 +2043,16 @@ class AimLoop:
 '''
 
 _MAIN_SRC = r'''
-"""MaixCAM2 entry point for perspective robust black rectangle center detection."""
+"""MaixCAM2 entry point for perspective robust black rectangle center detection.
+
+上电行为（v0.4.1 起）：
+  使能 → 建显示/触摸 → 进入主循环（识别 + 光斑偏差 + 云台闭环）。
+  **上电不再自动跑自检**；自检改为屏幕右上角的 `SELF-TEST` 按钮，点一下才触发
+  （见 `Config.ENABLE_TOUCH_BUTTON`）。`CALIBRATE_AXIS` 非空时仍走标定（标定期不闭环）。
+
+画面流转到 MaixVision：由 `_Preview` 在主进程内把带标注的画面按"屏幕尺寸画布"letterbox
+后 `display.Display().show()` —— 这是 MaixVision 能看到画面的成熟路径（PC 上无 maix 时自动跳过）。
+"""
 
 import os
 import sys
@@ -2047,7 +2080,157 @@ from vision.gimbal_aim import GimbalAim
 from vision.gimbal_self_test import GimbalSelfTest, probe_imu
 from vision.gimbal_calibrate import GimbalCalibrator
 
-BUILD_ID = "2026-10-11-v0.4.0"
+BUILD_ID = "2026-10-11-v0.4.1"
+
+
+class _Preview:
+    """主进程内显示（MaixVision 可见）：标注画面 + 可点击按钮 → 屏幕尺寸画布 → `show()`。
+
+    为什么画布做成"屏幕尺寸"：MaixPy 触摸返回的是**屏幕坐标**，只有画布尺寸 == 屏幕尺寸，
+    触摸坐标才能与画布/按钮坐标 **1:1** 对应，按钮命中判定才可靠（MaixPy「触摸屏使用」示例即如此）。
+    标注图按等比例 letterbox 居中，不拉伸变形。
+    `Config.SHOW=False` 时不建 Display；无显示 / 建失败 / show 失败只打日志并停用，绝不影响识别与闭环。
+    """
+
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.display = None
+        self.width = self.height = 0
+        self.enabled = False
+        self.buttons = {}
+        self.shown = 0
+        self.fps = 0.0
+        self.show_max_ms = 0.0
+        self._period = 1.0 / max(1, int(getattr(cfg, "SHOW_FPS", 15)))
+        self._t_show = -1e9
+        self._fps_t = None
+        self._fps_n = 0
+        self._canvas = None
+        if not bool(getattr(cfg, "SHOW", False)):
+            print("[preview] SHOW=False -> 不建显示（纯串口/头部模式，画面不流转）")
+            return
+        try:
+            from maix import display
+            self.display = display.Display()
+            self.width = int(self.display.width())
+            self.height = int(self.display.height())
+            self.enabled = True
+            print("[preview] mode=in-process %dx%d show_fps=%d —— MaixVision 看不到画面时先确认本行"
+                  % (self.width, self.height, int(getattr(cfg, "SHOW_FPS", 15))))
+        except Exception as exc:
+            print("[preview] 显示初始化失败（不影响识别/闭环，仅无预览）: %s" % exc)
+
+    # ------------------------------------------------------------------ 按钮
+    def add_button(self, name, x0, y0, x1, y1):
+        """注册一个按钮（画布=屏幕坐标）。"""
+        self.buttons[name] = (int(x0), int(y0), int(x1), int(y1))
+
+    def hit(self, x, y):
+        """触摸点 (x, y) 命中的按钮名；未命中返回 None。"""
+        for name, (x0, y0, x1, y1) in self.buttons.items():
+            if x0 <= x <= x1 and y0 <= y <= y1:
+                return name
+        return None
+
+    # ------------------------------------------------------------------ 渲染
+    def due(self, now):
+        """是否到了本次显示节拍（按 SHOW_FPS 限频，避免拖累主循环）。"""
+        return self.enabled and (float(now) - self._t_show) >= self._period
+
+    def render(self, view, now, status=""):
+        """把标注后的 `view`（任意尺寸）letterbox 到屏幕画布、叠加按钮与状态，再 show。"""
+        if not self.enabled:
+            return
+        now = float(now)
+        self._t_show = now
+        vh, vw = view.shape[:2]
+        scale = min(self.width / float(vw), self.height / float(vh))
+        nw, nh = max(1, int(round(vw * scale))), max(1, int(round(vh * scale)))
+        ox, oy = (self.width - nw) // 2, (self.height - nh) // 2
+        if self._canvas is None or self._canvas.shape[:2] != (self.height, self.width):
+            self._canvas = np.zeros((self.height, self.width, 3), np.uint8)
+        else:
+            self._canvas[:] = 0
+        self._canvas[oy:oy + nh, ox:ox + nw] = cv2.resize(view, (nw, nh))
+        self._draw_buttons(status)
+        t0 = time.perf_counter()
+        try:
+            from maix import image as maix_image
+            self.display.show(maix_image.cv2image(self._canvas, bgr=True, copy=True))
+        except Exception as exc:
+            self.enabled = False
+            print("[preview] show 失败，停用显示: %s" % exc)
+            return
+        ms = (time.perf_counter() - t0) * 1000.0
+        self.show_max_ms = max(self.show_max_ms, ms)
+        self.shown += 1
+        if self._fps_t is None:
+            self._fps_t = now
+            self._fps_n = 0
+        elif now - self._fps_t >= 0.5:
+            self.fps = self._fps_n / max(1e-6, now - self._fps_t)
+            self._fps_n = 0
+            self._fps_t = now
+        else:
+            self._fps_n += 1
+
+    def _draw_buttons(self, status):
+        # 用 ASCII 标签：OpenCV 的 Hershey 字体不支持中文，画中文会变问号/方块。
+        for name, (x0, y0, x1, y1) in self.buttons.items():
+            cv2.rectangle(self._canvas, (x0, y0), (x1, y1), (46, 150, 60), -1)
+            cv2.rectangle(self._canvas, (x0, y0), (x1, y1), (235, 235, 235), 1)
+            label = "SELF-TEST" if name == "selftest" else name.upper()
+            tw = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)[0][0]
+            cv2.putText(self._canvas, label,
+                        (x0 + max(4, (x1 - x0 - tw) // 2), y0 + (y1 - y0) // 2 + 7),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
+        if status:
+            cv2.putText(self._canvas, status, (8, self.height - 8),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv2.LINE_AA)
+
+    def close(self):
+        if self.display is not None:
+            try:
+                self.display.close()
+            except Exception:
+                pass
+
+
+class _Touch:
+    """触摸屏输入：把点击映射到 `_Preview` 的按钮（按下沿触发）。
+
+    `maix.touchscreen.TouchScreen().read()` 立即返回 `(x, y, pressed)`（MaixPy v4）。
+    无触摸屏 / 未启用 / 无显示时自动禁用，只打日志。
+    """
+
+    def __init__(self, cfg):
+        self.ts = None
+        self._down = False
+        if not bool(getattr(cfg, "ENABLE_TOUCH_BUTTON", True)):
+            print("[touch] 触摸按钮已关闭（ENABLE_TOUCH_BUTTON=False）")
+            return
+        try:
+            from maix import touchscreen
+            self.ts = touchscreen.TouchScreen()
+            print("[touch] 触摸屏就绪：屏幕按钮可点击")
+        except Exception as exc:
+            print("[touch] 触摸不可用（按钮禁用）: %s" % exc)
+
+    def poll(self, preview):
+        """返回本帧**新按下**的按钮名（按下沿）；无则 None。"""
+        if self.ts is None or preview is None or not preview.enabled:
+            return None
+        try:
+            x, y, pressed = self.ts.read()
+        except Exception:
+            return None
+        if pressed:
+            if not self._down:
+                self._down = True
+                return preview.hit(int(x), int(y))
+            return None
+        self._down = False
+        return None
 
 
 def _to_gray(img, image_module):
@@ -2078,7 +2261,7 @@ def _send_uart(uart, result):
 
 def main():
     # Imports stay inside main so the geometry module remains PC-testable.
-    from maix import app, camera, display, image
+    from maix import app, camera, image
 
     # 小图上的多线程调度常常比运算本身更贵，也避免 ARM 多核线程争用。
     cv2.setNumThreads(Config.OPENCV_THREADS)
@@ -2088,7 +2271,6 @@ def main():
                         fps=Config.CAMERA_FPS,
                         buff_num=Config.CAMERA_BUFFERS)
     cam.skip_frames(Config.SKIP_FRAMES)
-    disp = display.Display() if Config.SHOW else None
     uart = None
     if Config.ENABLE_UART:
         try:
@@ -2098,7 +2280,7 @@ def main():
             print("[uart] open failed: %s" % exc)
     link = None
     aim = None
-    self_test = None
+    self_test = None          # ★ 上电不再自动创建；由屏幕按钮触发时才建
     calibrator = None
     if Config.ENABLE_GIMBAL:
         try:
@@ -2114,9 +2296,8 @@ def main():
                 print("[imu] unavailable: %s" % imu_info["error"])
             calibrator = GimbalCalibrator(Config, link, time.perf_counter())
             if calibrator.done:
-                # 未配置标定轴：正常进入自检 + 跟踪。
+                # 未配置标定轴：正常进入（按钮式）自检 + 跟踪。
                 calibrator = None
-                self_test = GimbalSelfTest(Config, link, time.perf_counter())
             else:
                 print("[gimbal] calibration mode axis=%s（本次只标定，不闭环）" % calibrator.axis)
             print("[gimbal] enabled yaw=%s(ID%d) pitch=%s(ID%d) acc=%d" %
@@ -2124,6 +2305,20 @@ def main():
                    Config.ACC_DEFAULT))
         except Exception as exc:
             print("[gimbal] disabled after init failure: %s" % exc)
+
+    # ---- 显示（把画面流转到 MaixVision）+ 屏幕按钮 ----
+    preview = _Preview(Config)
+    touch = None
+    if preview.enabled and bool(getattr(Config, "ENABLE_TOUCH_BUTTON", True)):
+        bw = max(70, int(preview.width * 0.30))
+        bh = max(34, int(preview.height * 0.20))
+        preview.add_button("selftest", preview.width - bw - 8, 8, preview.width - 8, 8 + bh)
+        touch = _Touch(Config)
+    elif preview.enabled:
+        print("[touch] ENABLE_TOUCH_BUTTON=False -> 不画按钮")
+    elif bool(getattr(Config, "ENABLE_TOUCH_BUTTON", True)):
+        print("[touch] 无显示 -> 屏幕按钮不可用（自检需有显示才能点击触发；SHOW=True 才有）")
+
     detector = RectangleCenterDetector(Config)
     laser_det = LaserSpotDetector(Config) if Config.ENABLE_LASER else None
     # fixed 模式（光斑位置写死）：开机取一次常量，之后全程复用 —— 不做任何图像检测，
@@ -2132,9 +2327,7 @@ def main():
     aim_use_raw = bool(getattr(Config, "AIM_USE_RAW", False))
     last = time.perf_counter()
     last_log = last
-    last_show = -1e10
-    lens_enabled = Config.LENS_CORR
-    totals = dict(read=0.0, lens=0.0, bridge=0.0, detect=0.0, laser=0.0,
+    totals = dict(read=0.0, bridge=0.0, detect=0.0, laser=0.0,
                   uart=0.0, rx=0.0, aim=0.0, show=0.0, loop=0.0)
     count, searches = 0, 0
     laser_state = laser_det.static_state() if laser_static else None
@@ -2144,6 +2337,7 @@ def main():
     print("[rect-center] %s search_width=%d display_width=%d display_fps=%d" %
           (BUILD_ID, Config.SEARCH_WIDTH, Config.SHOW_WIDTH, Config.SHOW_FPS))
     print("[rect-center] 四边窄带跟踪 / 失锁后低分辨率搜索 / 72 点逆投影")
+    print("[ui] 上电自检已改为屏幕按钮：点显示右上角 SELF-TEST 触发（不再上电自动跑）")
     print("[aim] 闭环口径=%s（raw_u/raw_v）离群拒收=%spx 死区=%.1fpx 限幅=%dp" %
           ("raw" if aim_use_raw else "smoothed", Config.JUMP_REJECT_PX,
            Config.DEADBAND_PX, Config.MAX_STEP_PULSES))
@@ -2162,15 +2356,6 @@ def main():
         if img is None:
             continue
         after_read = time.perf_counter()
-        if lens_enabled:
-            try:
-                corrected = img.lens_corr(strength=Config.LENS_STRENGTH)
-                if corrected is not None:
-                    img = corrected
-            except Exception as exc:
-                lens_enabled = False
-                print("[lens] 本次会话停用不支持的 lens_corr: %s" % exc)
-        after_lens = time.perf_counter()
         gray = _to_gray(img, image)
         after_bridge = time.perf_counter()
         result = detector.process(gray)
@@ -2198,37 +2383,56 @@ def main():
         rx_started = time.perf_counter()
         fb = link.poll(after_uart) if link is not None else None
         rx_elapsed = time.perf_counter() - rx_started
-        link_fault = (fb or {}).get("fault")
+        # ⚠ `_ingest()` 无故障时返回的是 `fault=False`（不是 None）：必须按**真值**判故障，
+        #   写成 `is not None` 会让开机第 1 帧就误判 FAULT（v3 基线的回归坑，已修）。
+        link_fault = bool(fb.get("fault")) if fb else False
+        link_reason = fb.get("reason") if fb else None
         aim_started = time.perf_counter()
-        if link_fault is not None and aim is not None and aim.state != "FAULT":
-            print("[gimbal] link fault: %s -> 立即停止并进入 FAULT" % link_fault)
+        if link_fault and aim is not None and aim.state != "FAULT":
+            print("[gimbal] link fault: %s -> 立即停止并进入 FAULT" % link_reason)
             link.stop(now=after_uart)
-            aim.fault("link:%s" % link_fault)
+            aim.fault("link:%s" % link_reason)
+        # ---- 屏幕按钮：点击触发上电自检（上电不再自动跑）----
+        if touch is not None and link is not None and aim is not None:
+            if touch.poll(preview) == "selftest":
+                if self_test is not None and not self_test.done:
+                    print("[ui] 自检进行中，忽略重复点击")
+                elif aim.state == "FAULT":
+                    print("[ui] 链路 FAULT，拒绝自检")
+                elif not bool(getattr(Config, "GIMBAL_SELF_TEST", True)):
+                    print("[ui] GIMBAL_SELF_TEST=False，忽略自检")
+                else:
+                    self_test = GimbalSelfTest(Config, link, after_uart)
+                    print("[ui] 收到点击 -> 启动上电自检（%d 步）" % len(self_test.sequence))
         if calibrator is not None:
             if not calibrator.done:
                 calibrator.update(after_uart, result)
+        elif self_test is not None and not self_test.done:
+            self_test.update(after_uart)
         elif aim is not None and link is not None and aim.state != "FAULT":
-            if self_test is not None and not self_test.done:
-                self_test.update(after_uart)
-            elif self_test is None or self_test.state != "FAULT":
-                aim_result = aim.update(result, now=after_uart)
-                for axis, command in aim_result["cmds"].items():
-                    if command is not None:
-                        ccw, pulses, rpm = command
-                        link.move(axis, ccw, pulses, rpm, Config.ACC_DEFAULT, now=after_uart)
+            aim_result = aim.update(result, now=after_uart)
+            for axis, command in aim_result["cmds"].items():
+                if command is not None:
+                    ccw, pulses, rpm = command
+                    link.move(axis, ccw, pulses, rpm, Config.ACC_DEFAULT, now=after_uart)
         aim_elapsed = time.perf_counter() - aim_started
         after_aim = time.perf_counter()
-        if disp is not None and (after_uart - last_show >= 1.0 / max(1, Config.SHOW_FPS)):
-            last_show = after_uart
+        # ---- 显示：把带标注的画面 + 按钮流转到 MaixVision ----
+        if preview.due(after_uart):
             view = draw_result(gray, result, Config.SHOW_WIDTH,
                                top_offset=PANEL_H if laser_state is not None else 0)
             if laser_state is not None:
                 draw_laser_overlay(view, laser_state, result,
                                    min(1.0, float(Config.SHOW_WIDTH) / gray.shape[1]),
                                    use_raw=aim_use_raw)
-            cv2.putText(view, "FPS %.1f" % fps, (12, view.shape[0] - 12),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 255, 255), 2)
-            disp.show(image.cv2image(view, bgr=True, copy=True))
+            cv2.putText(view, "loop %.1f  disp %.1f fps" % (fps, preview.fps),
+                        (12, view.shape[0] - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+            status = ""
+            if self_test is not None and not self_test.done:
+                status = "self-test %d/%d" % (self_test.index, len(self_test.sequence))
+            elif calibrator is not None and not calibrator.done:
+                status = "calibrate %s" % calibrator.axis
+            preview.render(view, after_uart, status=status)
         after_show = time.perf_counter()
         now = after_show
         dt = now - last
@@ -2236,8 +2440,8 @@ def main():
         if dt > 1e-4:
             mean_dt = dt if mean_dt is None else 0.9 * mean_dt + 0.1 * dt
             fps = 1.0 / mean_dt
-        phases = (after_read - start, after_lens - after_read,
-                  after_bridge - after_lens, after_detect - after_bridge,
+        phases = (after_read - start,
+                  after_bridge - after_read, after_detect - after_bridge,
                   after_laser - after_detect, after_uart - after_laser,
                   rx_elapsed, aim_elapsed, after_show - after_aim, now - start)
         for key, elapsed in zip(totals, phases):
@@ -2248,10 +2452,10 @@ def main():
             window_fps = count / max(1e-6, now - last_log)
             last_log = now
             laser_avg = laser_ms / laser_calls if laser_calls else 0.0
-            print("[perf] %s valid=%s FPS=%.1f stage=%s frames=%d searches=%d "
-                  "read=%.1f lens=%.1f bridge=%.1f detect=%.1f laser=%.1f "
+            print("[perf] %s valid=%s FPS=%.1f disp=%.1f stage=%s frames=%d searches=%d "
+                  "read=%.1f bridge=%.1f detect=%.1f laser=%.1f "
                   "uart=%.1f rx=%.1f aim=%.1f show=%.1f loop=%.1f ms | laser_call=%.2fms n=%d hit=%d" %
-                  ((BUILD_ID, result["valid"], window_fps, result["stage"], count, searches) +
+                  ((BUILD_ID, result["valid"], window_fps, preview.fps, result["stage"], count, searches) +
                    tuple(totals[k] / count for k in totals) +
                    (laser_avg, laser_calls, laser_hits)))
             if aim is not None:
@@ -2265,6 +2469,7 @@ def main():
             link.stop()
         except Exception as exc:
             print("[gimbal] stop on exit failed: %s" % exc)
+    preview.close()
     try:
         cam.close()
     except Exception:
