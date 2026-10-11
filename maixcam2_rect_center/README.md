@@ -1,11 +1,63 @@
 # MaixCAM2 黑框中心：四边精修、快速跟踪与双轴云台瞄准
 
-构建号 `2026-10-11-display-thread-v0.4.3`，应用版本 `0.4.3`。在 MaixVision 中打开本文件夹，选择“运行项目”。
+构建号 `2026-10-11-show-probe-v0.4.4`，应用版本 `0.4.4`。在 MaixVision 中打开本文件夹，选择“运行项目”。
 必须一起下发应用包内的 **12 个文件**（`app.yaml` / `main.py` / `config.py` / `target_api.py` /
 `assets/icon.png` / `vision/` 下 7 个 `.py`），不能只运行当前 `main.py`。
 
 > 只想临时试参数时，也可以先 `python tools/build_single.py` 生成 `dist/main_single.py`，
 > 再用「运行当前文件」—— 那是自包含的单文件版，语义与分模块完全一致。改了源码记得重新生成。
+
+## 2026-10-11 改动（v0.4.4）：定位「板上一律 ~2fps」= MaixCDK 图传忙等，并加开机探针
+
+**现场读数**（v0.4.3 分相计时的首功）：
+
+```text
+[perf] ... | read=106.9 draw=13.9 loop=321.2 ms | show avg=505.8 p95=508.4 max=509.1ms n=5 | ...
+```
+
+**判定**：`show` 的 avg/p95/max = **505.8 / 508.4 / 509.1ms**，三者挤在 505~509ms —— 这不是算力，是
+**固定超时**。对照 MaixCDK 源码 `components/vision/src/maix_image_trans.cpp`：
+
+```cpp
+err::Err ImageTrans::send_image(image::Image &img) {
+    if(!handle->init) {                      // 处于 MaixVision 模式，但图传 websocket 尚未连上
+        uint64_t t = time::ticks_ms();
+        while (!handle->init) {
+            if(time::ticks_ms() - t > 500)   // ← 忙等 500ms（CPU 空转）后放弃
+                return err::Err::ERR_NOT_READY;
+        }
+    }
+    ...
+}
+```
+
+而 `Display::show()` 的第一件事就是 `if(img_trans) img_trans->send_image(img);`，`img_trans` 仅在
+`maixvision_mode()` 为真（即用 MaixVision 运行本代码）时才创建。于是：
+
+- 每次 `show()` 白烧 **500ms CPU**；`disp≈1.9fps` ⇒ 约 **95% 一个核**被空转吃掉；
+- 算力被抢 ⇒ `cam.read()` 涨到 107~175ms、`loop` 涨到 321ms、识别线程 `detect_fps=0` —— **全系统塌方**；
+- 本地屏幕本身只要 **1~5ms**（官方数据），与 500ms 无关。
+
+> ⚠ 由此可同时证伪两个直觉：**(a)** 降 `SHOW_FPS` 无效（每次 show 仍要忙等 500ms）；**(b)** "关掉预览丢帧"
+> 也无效 —— 丢帧是 show 慢的**结果**而非原因，去掉丢帧只会把主循环一起拖住。
+
+**改法**：`_Preview` 开机做一次 **`show()` 探针**并计时，把结论直接打出来（不再只丢一个 p95 数字）：
+
+```text
+[preview] show 探针 2.6ms —— 显示链路健康（本地屏典型 1~5ms）
+# 或命中忙等分支：
+[preview] ⚠ show 探针 505ms —— 命中 MaixCDK「MaixVision 图传未就绪」忙等分支 ...
+[preview] ⚠ 对策①：改从**设备本地**启动本应用（应用菜单 / 开机自启），不要用 MaixVision 的“运行”按钮 ...
+[preview] ⚠ 对策②：确认 MaixVision 的画面预览已真正连上 ...
+```
+
+**拿到全帧显示的真正办法（三选一）**
+
+1. **从设备本地启动应用**（把应用装到设备 / 从应用菜单启动 / 开「开机自启」）——此时 `maixvision_mode()`
+   为假，`img_trans` 根本不创建，`show()` 只走屏幕 ≈1~5ms，**可跑满相机帧率**。
+   日志落在设备 `/maixapp/tmp/last_run.log`。
+2. **让 MaixVision 的画面预览真正连上**（连上后图传走"压 JPEG 入队"的异步路径，不再忙等）。
+3. 只要数据不要画面时 `Config.SHOW=False`（零图传开销，识别/闭环全速）。
 
 ## 2026-10-11 改动（v0.4.3）：显示移出主循环——修「只有 1.5 帧」
 

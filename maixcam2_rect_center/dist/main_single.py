@@ -10,9 +10,9 @@ main_single.py · 25E 靶心识别（轨道 B）—— 单文件自包含版
 用途：在 MaixVision 里点「运行当前文件」即可运行（不必用「运行项目」）。
       行为与模块化工程完全一致，输出也就完全一致。
 
-生成时间：2026-10-11 22:55:34
+生成时间：2026-10-11 23:28:13
     config.py                    sha1=f3a8149af079
-    main.py                      sha1=136addd1c2d4
+    main.py                      sha1=45e6ff41890a
     target_api.py                sha1=9c5a71aa209b
     vision/gimbal_aim.py         sha1=0b0ae21ebd2e
     vision/gimbal_calibrate.py   sha1=9c4bb08a1b99
@@ -25,7 +25,7 @@ main_single.py · 25E 靶心识别（轨道 B）—— 单文件自包含版
 import sys as _sys
 import types as _types
 
-_SRC_SHA1 = {'config.py': 'f3a8149af0790b28e5c73d31cf2096c9f5930c4c', 'vision/rectangle_center.py': '8aa5e868f9ea2a9a7d243ff4879e8295652d4c0f', 'vision/laser_spot.py': 'c131498c5ff980e594b1c8d5d2feda6195caee23', 'vision/gimbal_self_test.py': '17b72e0935bbb7786f7c936d17b55c291795990b', 'vision/gimbal_aim.py': '0b0ae21ebd2e6cce2d7839fccf03dc8ada5c02d3', 'vision/stepper_link.py': '29501ea53b740bb704bbb8da166b5b4b6eabfffb', 'vision/gimbal_calibrate.py': '9c4bb08a1b99d6feaef77bc8cf3fc56655e87676', 'target_api.py': '9c5a71aa209bb2716f1c0c4ac2fadd3eec23241d', 'main.py': '136addd1c2d49002d50ffebb38c44beafa5291bf'}
+_SRC_SHA1 = {'config.py': 'f3a8149af0790b28e5c73d31cf2096c9f5930c4c', 'vision/rectangle_center.py': '8aa5e868f9ea2a9a7d243ff4879e8295652d4c0f', 'vision/laser_spot.py': 'c131498c5ff980e594b1c8d5d2feda6195caee23', 'vision/gimbal_self_test.py': '17b72e0935bbb7786f7c936d17b55c291795990b', 'vision/gimbal_aim.py': '0b0ae21ebd2e6cce2d7839fccf03dc8ada5c02d3', 'vision/stepper_link.py': '29501ea53b740bb704bbb8da166b5b4b6eabfffb', 'vision/gimbal_calibrate.py': '9c4bb08a1b99d6feaef77bc8cf3fc56655e87676', 'target_api.py': '9c5a71aa209bb2716f1c0c4ac2fadd3eec23241d', 'main.py': '45e6ff41890ac4d65e842f2f217bb62a47653f99'}
 
 # --------------------------------------------------------------------------
 # ① 各模块源码原样嵌入，运行时装进 sys.modules（保持原 import 语义）
@@ -2382,7 +2382,7 @@ from vision.gimbal_aim import GimbalAim
 from vision.gimbal_self_test import GimbalSelfTest, probe_imu
 from vision.gimbal_calibrate import GimbalCalibrator
 
-BUILD_ID = "2026-10-11-display-thread-v0.4.3"
+BUILD_ID = "2026-10-11-show-probe-v0.4.4"
 
 
 class _FrameRate:
@@ -2554,6 +2554,8 @@ class _Preview:
         self._canvas = None                     # 同步模式的单张画布（异步模式走 _free 池）
         self._show_times = []                   # 本日志窗口内的 show() 耗时样本（ms）
         self._show_max = 0.0
+        self.probe_ms = -1.0                    # 开机 show() 探针耗时（判定显示链路是否健康）
+        self._slow_warned = False               # "显示侧慢"告警只打一次，避免每 2s 刷屏
         # ---- 显示线程状态（时间轴 C）----
         self.async_show = bool(getattr(cfg, "SHOW_ASYNC", True))
         self._cond = threading.Condition()      # 保护 _free / _pending / _pool / _stop
@@ -2581,6 +2583,11 @@ class _Preview:
                   % ("display-thread" if self.async_show else "sync-inprocess",
                      self.width, self.height, self.render_width, self.render_height,
                      int(getattr(cfg, "SHOW_FPS", 30)), int(getattr(cfg, "SHOW_JPEG_QUALITY", 70))))
+            # ★ 开机探针：立刻量一次 show() 真实耗时。本地屏典型 1~5ms；若命中 MaixCDK 的
+            #   "MaixVision 图传未就绪"分支，send_image() 会在 C++ 里**忙等 500ms 并空转 CPU**
+            #   （见 MaixCDK components/vision/src/maix_image_trans.cpp），表现为 show 恒定 ~505ms、
+            #   并连带把相机/识别/闭环一起拖慢。这条必须当场说清，不能只报一个 p95 数字。
+            self.probe_ms = self._probe_show()
             if self.async_show:
                 self.thread = threading.Thread(target=self._show_loop, name="display", daemon=True)
                 self.thread.start()
@@ -2704,6 +2711,47 @@ class _Preview:
                 return                                       # show 已失败并停用显示 → 线程退出
             with self._cond:
                 self._free.append(canvas)
+
+    def _probe_show(self):
+        """开机量一次 show() 耗时，判定显示链路是否健康；返回毫秒（探针失败返回 -1）。
+
+        判据为何取 300ms：本地屏幕刷新官方数据是 **1~5ms**；而 MaixCDK 的
+        `ImageTrans::send_image()` 在「处于 MaixVision 模式、但图传连接未就绪（handle->init 为假）」
+        时，会 `while(!init) { if(ticks - t > 500) return ERR_NOT_READY; }` ——
+        **忙等 500ms 且空转 CPU**。这正是本项目实测
+        `show avg/p95/max=505.8/508.4/509.1ms`、`disp≈1.9fps` 且相机与识别一起变慢的根因：
+        500ms × 约 2 次/秒 ≈ **烧掉半个 CPU 核**。
+        """
+        try:
+            from maix import image as maix_image
+            frame = np.zeros((self.render_height, self.render_width, 3), np.uint8)
+            t0 = time.perf_counter()
+            self.display.show(maix_image.cv2image(frame, bgr=True, copy=True))
+            ms = (time.perf_counter() - t0) * 1000.0
+        except Exception as exc:
+            print("[preview] show 探针失败（显示可能不可用）: %s" % exc)
+            return -1.0
+        if ms >= 300.0:
+            print("[preview] ⚠ show 探针 %.0fms —— 命中 MaixCDK「MaixVision 图传未就绪」忙等分支："
+                  "每次 show() 空转 500ms（maix_image_trans.cpp），约每秒烧掉半个 CPU 核，"
+                  "是相机 read / 识别 / 闭环一起变慢的根因。" % ms)
+            print("[preview] ⚠ 对策①：改从**设备本地**启动本应用（应用菜单 / 开机自启），"
+                  "不要用 MaixVision 的“运行”按钮 —— 本地启动时 maixvision 模式关闭，"
+                  "show() 只走屏幕 ≈1~5ms，可跑满相机帧率。")
+            print("[preview] ⚠ 对策②：确认 MaixVision 的画面预览已真正连上"
+                  "（连上后图传走「压 JPEG 入队」的异步路径，不再忙等）。")
+        else:
+            print("[preview] show 探针 %.1fms —— 显示链路健康（本地屏典型 1~5ms）" % ms)
+        return ms
+
+    def warn_slow_once(self, p95):
+        """显示侧变慢只提示一次（每 2s 窗口重复报会刷屏）；点明最可能的根因。"""
+        if self._slow_warned:
+            return
+        self._slow_warned = True
+        print("[preview] show slow: p95=%.0fms —— 瓶颈在显示侧（非识别）。"
+              "若该值恒定 ≈505ms，即为 MaixCDK 的 MaixVision 图传忙等；"
+              "改从**设备本地**启动应用即可消除。预览掉帧，识别/闭环不受影响。" % p95)
 
     def _do_show(self, canvas, maix_image=None):
         """真正调用 display.show()，记耗时/帧率；失败即停用显示（不影响识别/闭环）。返回是否成功。"""
@@ -3111,13 +3159,13 @@ def main():
                 if show_p95 > 100:
                     # show 的 p95 超过 100ms ⇒ 瓶颈在**显示侧**（屏幕驱动 / MaixVision 图传），
                     # 不是识别慢。预览会掉帧，但识别与闭环不受影响 —— 判据与对策见 README。
-                    print("[preview] show slow: p95=%.0fms；预览掉帧，识别/闭环不受影响"
-                          "（更省可降 SHOW_FPS 或 SHOW=False）" % show_p95)
+                    preview.warn_slow_once(show_p95)
                 if loop_avg > 66.0:
-                    # 主循环单轮超过 66ms ⇒ 已在 15fps 以下，且此数**不含 show**：
-                    # 说明卡在取帧/提交侧，看 read= 是否偏大（相机请求帧率或驱动）。
-                    print("[preview] main loop slow: loop=%.0fms（不含 show）；查 read= 是否偏大"
-                          % loop_avg)
+                    # 主循环单轮超过 66ms ⇒ 已在 15fps 以下，且此数**不含 show**。两个常见来源：
+                    # ① 相机 read 本身偏大；② 显示线程在 MaixVision 图传忙等里空转 CPU，
+                    # 把整体算力抢走（此时 read 也会被动变大）。
+                    print("[preview] main loop slow: loop=%.0fms（不含 show）；看 read= 是否偏大；"
+                          "若 show 也恒定 ~505ms 则是图传忙等抢 CPU" % loop_avg)
                 last_log = now
                 read_times.clear()
                 draw_times.clear()

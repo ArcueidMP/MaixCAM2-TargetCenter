@@ -139,6 +139,9 @@ def test_slow_vision_keeps_live_video():
         # 本用例量的是**同步**显示路径的节拍（"慢识别下视频仍连续、且如实报帧率"），
         # 所以显式钉住 SHOW_ASYNC=False；异步显示线程的契约由下面单独用例覆盖。
         preview = _Preview(type("Cfg", (Config,), dict(SHOW_ASYNC=False)))
+        # v0.4.4 起 _Preview 会在构造时做一次 show() 探针（量显示链路耗时）；那一帧不是
+        # 本用例要考察的"渲染帧"，且其灰度值为 0 会与首个渲染帧撞车，故先丢弃。
+        shows.clear()
         preview.add_button("selftest", 440, 8, 632, 104)
         assert preview.hit(500, 50) == "selftest"
         started = time.perf_counter()
