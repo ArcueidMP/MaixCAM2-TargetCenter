@@ -1,11 +1,63 @@
 # MaixCAM2 黑框中心：四边精修、快速跟踪与双轴云台瞄准
 
-构建号 `2026-10-11-v0.4.1`，应用版本 `0.4.1`。在 MaixVision 中打开本文件夹，选择“运行项目”。
+构建号 `2026-10-11-display-thread-v0.4.3`，应用版本 `0.4.3`。在 MaixVision 中打开本文件夹，选择“运行项目”。
 必须一起下发应用包内的 **12 个文件**（`app.yaml` / `main.py` / `config.py` / `target_api.py` /
 `assets/icon.png` / `vision/` 下 7 个 `.py`），不能只运行当前 `main.py`。
 
 > 只想临时试参数时，也可以先 `python tools/build_single.py` 生成 `dist/main_single.py`，
 > 再用「运行当前文件」—— 那是自包含的单文件版，语义与分模块完全一致。改了源码记得重新生成。
+
+## 2026-10-11 改动（v0.4.3）：显示移出主循环——修「只有 1.5 帧」
+
+**现场现象**：屏幕画面约 **1.5 fps**（电脑端 MaixVision 未连着）。
+
+**定位**：不是识别慢。识别在独立线程里、单帧毫秒级；真凶是 `Display.show()` **仍在主循环里同步调用**：
+
+```text
+主循环: cam.read() → submit(给识别线程) → snapshot → 绘制 → show()  ← 阻塞数百 ms
+          ↑__________________________________________________|
+```
+
+于是**只要 show 慢，整条链就慢**：`submit()` 的节奏被拖死 → 识别线程没有新帧可算 →
+`capture` / `disp` / `detect_fps` **三路一起**掉到同一低位（这正是"三路口径必须分开看"的用处：
+分开口径后一眼就能看出"是一起掉"还是"只有一路掉"）。
+
+另外，`preview.due()` 的"固定时间轴限频"在这条链上**也被架空**：show 阻塞 600ms 之后
+`now >= _t_show` 恒成立，把 `SHOW_FPS` 调到 5 也照样每轮都 show —— **降这个配置对该症状无效**。
+
+**改法（两项）**
+
+1. **显示线程化**（`Config.SHOW_ASYNC=True`，默认开）：绘制完成后只把画布**投递**给独立显示线程，
+   主循环立刻返回、永不等待 `show()`。画布池固定 **2 张**（显示线程 1 张 + 主线程 1 张），
+   池满时 `due()` 直接返回 False —— **丢帧，不排队、不积压**。
+   `SHOW_ASYNC=False` 可一键退回旧行为（主循环内同步 show）。
+2. **画布 = 屏幕尺寸**（`Config.SHOW_WIDTH=0`）：MaixCAM2 屏幕 640×480 与相机 640×480 宽高比一致，
+   旧默认 480 会把画面**先缩到 480×360、再由 `show()` 放大回 640×480** —— 纯属来回折腾。
+   现在零缩放，同时画布坐标与触摸坐标天然 1:1（`set_trans_image_quality` 仍只影响 MaixVision 图传）。
+
+**顺带去掉的冗余**（显示路径，均为零行为变化）
+
+- `cv2.getTextSize` / 按钮坐标换算**每帧重算** → 改为 `add_button()` 时**预计算一次**；
+- 画布**每帧整体刷黑** → 仅当"画面没盖满画布（真存在黑边）"时才刷；
+- `preview.rate.values()` 每显示帧调两次、`worker.snapshot()` 每轮循环调两次 → 各减为一次；
+- 恢复 v0.4.2 丢掉的分相计时：`[perf]` 现报 `read= draw= loop=`（主循环）与
+  `show avg/p95/max n=`（显示线程），且 `show_max` 改为**窗口内**最大值（旧的是开机至今全局最大值，易误读）。
+
+**新 `[perf]` 读法**
+
+```text
+[perf] <BUILD> capture=30.0 disp=29.8 low1=29.1 detect_fps=28.4 valid=True stage=track |
+       read=4.2 draw=2.1 loop=34.0 ms | show avg=9.5 p95=14.0 max=22.0ms n=60 |
+       age=38ms shown=60 drop(show)=0 drop(vision)=3
+```
+
+- `capture / disp / detect_fps` 仍是三路**不同**口径，别互相换算；
+- `read/draw/loop` 属**主循环**，`show` 属**显示线程** —— 分开看就能直接判定"谁在吃时间"；
+- `loop > 66ms` → 主循环侧瓶颈（查 `read=`）；`show p95 > 100ms` → 显示侧瓶颈（预览掉帧，识别/闭环不受影响）。
+
+**回归**：`tools/test_runtime_performance.py` 新增 `test_slow_show_does_not_block_main_loop`
+（把 `show()` 故意做成 300ms，断言 `render()` 耗时 < 50ms、有丢帧、显示线程确实在上屏）；
+原同步节拍用例显式钉 `SHOW_ASYNC=False`。
 
 ## 2026-10-11 改动（v0.4.1）：上电自检改为屏幕按钮 + 画面流转到 MaixVision
 

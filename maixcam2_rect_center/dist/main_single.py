@@ -10,22 +10,22 @@ main_single.py · 25E 靶心识别（轨道 B）—— 单文件自包含版
 用途：在 MaixVision 里点「运行当前文件」即可运行（不必用「运行项目」）。
       行为与模块化工程完全一致，输出也就完全一致。
 
-生成时间：2026-10-11 17:13:02
-    config.py                    sha1=223defb562bc
-    main.py                      sha1=bd8d036a77d9
+生成时间：2026-10-11 22:55:34
+    config.py                    sha1=f3a8149af079
+    main.py                      sha1=136addd1c2d4
     target_api.py                sha1=9c5a71aa209b
     vision/gimbal_aim.py         sha1=0b0ae21ebd2e
     vision/gimbal_calibrate.py   sha1=9c4bb08a1b99
     vision/gimbal_self_test.py   sha1=17b72e0935bb
-    vision/laser_spot.py         sha1=d8d722904443
-    vision/rectangle_center.py   sha1=173cbdfeb6a4
-    vision/stepper_link.py       sha1=825c01fa8f50
+    vision/laser_spot.py         sha1=c131498c5ff9
+    vision/rectangle_center.py   sha1=8aa5e868f9ea
+    vision/stepper_link.py       sha1=29501ea53b74
 """
 
 import sys as _sys
 import types as _types
 
-_SRC_SHA1 = {'config.py': '223defb562bccf0a2351d11819798dd7dd76302a', 'vision/rectangle_center.py': '173cbdfeb6a4ea3ed2b36726a7cea5db62e9d954', 'vision/laser_spot.py': 'd8d722904443201c539507baca6d69be668ade93', 'vision/gimbal_self_test.py': '17b72e0935bbb7786f7c936d17b55c291795990b', 'vision/gimbal_aim.py': '0b0ae21ebd2e6cce2d7839fccf03dc8ada5c02d3', 'vision/stepper_link.py': '825c01fa8f5050d57e827df4fc98ac6920f90ba9', 'vision/gimbal_calibrate.py': '9c4bb08a1b99d6feaef77bc8cf3fc56655e87676', 'target_api.py': '9c5a71aa209bb2716f1c0c4ac2fadd3eec23241d', 'main.py': 'bd8d036a77d9cbe134a5f3e404f945af560e4736'}
+_SRC_SHA1 = {'config.py': 'f3a8149af0790b28e5c73d31cf2096c9f5930c4c', 'vision/rectangle_center.py': '8aa5e868f9ea2a9a7d243ff4879e8295652d4c0f', 'vision/laser_spot.py': 'c131498c5ff980e594b1c8d5d2feda6195caee23', 'vision/gimbal_self_test.py': '17b72e0935bbb7786f7c936d17b55c291795990b', 'vision/gimbal_aim.py': '0b0ae21ebd2e6cce2d7839fccf03dc8ada5c02d3', 'vision/stepper_link.py': '29501ea53b740bb704bbb8da166b5b4b6eabfffb', 'vision/gimbal_calibrate.py': '9c4bb08a1b99d6feaef77bc8cf3fc56655e87676', 'target_api.py': '9c5a71aa209bb2716f1c0c4ac2fadd3eec23241d', 'main.py': '136addd1c2d49002d50ffebb38c44beafa5291bf'}
 
 # --------------------------------------------------------------------------
 # ① 各模块源码原样嵌入，运行时装进 sys.modules（保持原 import 语义）
@@ -47,9 +47,23 @@ class Config:
     LENS_CORR = False
     LENS_STRENGTH = 1.5
     SHOW = True
-    # 检测不跳帧；显示独立限频，减少 RGB 转换和 MaixVision 图像传输开销。
-    SHOW_WIDTH = 480
-    SHOW_FPS = 15
+    # 视频主循环与后台识别/串口解耦；后台忙时只保留最新帧，不积压旧图像。
+    # ★ 画布宽度：0 = 用**屏幕原始宽度**（推荐）。MaixCAM2 屏幕 640×480 与本工程相机
+    #   (CAMERA_W/H=640×480) 宽高比一致，画布=屏幕尺寸时 show() 拿到与屏幕同尺寸的图，
+    #   **驱动层不必再每帧缩放一次**（旧值 480 会让 640×480 先被缩到 480×360、再被驱动
+    #   放大回 640×480，纯属来回折腾）；画布坐标还与触摸坐标天然 1:1，省掉比例换算。
+    #   >0 才按比例缩小 —— 只有"MaixVision 图传带宽吃紧"时才值得用（本机屏幕会被放大回全屏）。
+    SHOW_WIDTH = 0
+    SHOW_FPS = 30
+    SHOW_JPEG_QUALITY = 70   # 只影响 MaixVision JPEG 图传，检测始终用原始灰度图。
+    VISION_ASYNC = True
+    # ★ 显示线程化：True = 绘制完成后把画布交给**独立显示线程**去 show()，主循环**永不等待 show**。
+    #   屏幕驱动或 MaixVision 图传慢时，只表现为"预览掉帧"（丢帧而非排队），
+    #   识别、串口与云台闭环仍跑满相机帧率。False = 旧行为（主循环内同步 show，慢就整体卡住）。
+    SHOW_ASYNC = True
+    RESULT_MAX_AGE_S = 0.20  # 以采图时刻计龄；过期结果不画框、不下发追踪指令。
+    UART_RX_MAX_BYTES = 256
+    UART_RX_BUFFER_MAX_BYTES = 1024
     # ---- 屏幕交互：把「上电自检」做成屏幕上的可点击按钮（不再上电自动跑）----
     # True=在显示画布右上角画 SELF-TEST 按钮，点一下才触发自检；无显示/无触摸屏时自动禁用。
     ENABLE_TOUCH_BUTTON = True
@@ -249,6 +263,29 @@ _MOD_SRC['vision.rectangle_center'] = r'''
 
 搜索在缩小图上执行；精修和坐标输出始终使用当前帧的原始分辨率。
 已锁定时只采样四条窄带，不运行全图 Canny、轮廓扫描或阈值遍历。
+
+================================================================================
+几何原理（为什么靶心能"算"出来）
+================================================================================
+靶纸四周贴 1.8cm 黑胶带形成一个矩形环，环的两个"内框角点"构成一个**平面四边形**。
+相机斜看时该四边形在图像里是透视投影，但两条对角线的交点 = 靶心，这是**射影不变量**
+（任意透视变换下，四边对角线的交点都映射到对应四边形的对角线交点）。因此：
+    检测四边形四角 → 求对角线交点 = 靶心像素坐标 (u,v)，
+无需解单应、也无需知道相机内外参。本模块即按此实现。
+
+================================================================================
+单帧处理链（process 的骨架，四段）
+================================================================================
+    ① 候选生成 _candidate_quads : 阈值化 → 轮廓树 → 取四边形轮廓，按内外框打标
+    ② 搜索 _search              : 在缩小图上轮换阈值/候选，时间预算内做有限次验证
+    ③ 四边验证 _verify          : 用"胶带厚度方向的暗带 + 内侧亮面"四边覆盖率判真伪
+    ④ 亚像素精修 _refine        : 当前帧四条灰度窄带 → 有向边缘跳变 → fitLine → 四角交点
+    末：把四角规整为外框，取正视面中心投影回原图 → (u,v)，并按 CENTER_ALPHA 做一阶平滑。
+
+三种进入方式（process 里按上一帧是否锁定决定，越靠前越省算力）：
+    track       已锁定 → 只沿四边窄带精修（不跑 Canny/轮廓/阈值遍历，稳态 ~1ms）
+    roi_search  刚失锁 → 在上一帧外框外扩 ROI_PADDING 的窗口内搜索（一次）
+    full_search 彻底丢失 → 在全图缩小图上多阈值扫描 + Canny 兜底
 """
 import time
 
@@ -257,65 +294,84 @@ import numpy as np
 
 
 def _polygon_area(p):
+    """带符号面积的 2 倍（>0 = 逆时针 CCW，<0 = 顺时针 CW）。用于把四角规整成统一方向。"""
     return float(cv2.contourArea(np.asarray(p, np.float32).reshape(-1, 1, 2), oriented=True))
 
 
 def _order_quad(points):
+    """把 4 个点规整为统一顺序：以质心为极点按极角排序 → 保证 CCW → 旋转到"左上角"开头。
+
+    统一顺序是后续所有几何运算（边向量、对角线、单应四点对应）的前提。
+    返回顺序语义：**[左上, 右上, 右下, 左下]**（逆时针），与 _side_lengths 的边 0/1/2/3 对应。
+    """
     p = np.asarray(points, np.float32).reshape(4, 2)
     c = p.mean(axis=0)
-    p = p[np.argsort(np.arctan2(p[:, 1] - c[1], p[:, 0] - c[0]))]
+    p = p[np.argsort(np.arctan2(p[:, 1] - c[1], p[:, 0] - c[0]))]   # 按极角排序
     if _polygon_area(p) < 0:
-        p = p[::-1]
+        p = p[::-1]                                                  # 反了则翻转成 CCW
+    # np.roll 到"x+y 最小"的点（即左上角）打头。
     return np.roll(p, -int(np.argmin(p.sum(axis=1))), axis=0).copy()
 
 
 def _side_lengths(q):
+    """四边长度 [边0, 边1, 边2, 边3]，边 i = 从点 i 指向点 i+1（roll -1 取下一个点）。"""
     return np.linalg.norm(np.roll(q, -1, axis=0) - q, axis=1)
 
 
 def _gaussian_solve(a, b):
-    """带部分主元的高斯消元；消去行向量化，避免 64 次 Python 行循环。"""
+    """带部分主元的高斯消元；消去行向量化，避免 64 次 Python 行循环。
+
+    a 为 n×n、b 为 n，返回解向量。主元过小（矩阵退化，如四点共线）抛 ValueError，
+    由调用方捕获后判该候选无效 —— 不做伪解。
+    """
     m = np.column_stack((np.asarray(a, np.float64), np.asarray(b, np.float64)))
     for col in range(len(m)):
-        pivot = col + int(np.argmax(np.abs(m[col:, col])))
+        pivot = col + int(np.argmax(np.abs(m[col:, col])))    # 选列内绝对值最大的行做主元
         if abs(m[pivot, col]) < 1e-10:
             raise ValueError("degenerate quadrilateral")
         if pivot != col:
-            m[[col, pivot]] = m[[pivot, col]]
-        m[col] /= m[col, col]
+            m[[col, pivot]] = m[[pivot, col]]                 # 换行
+        m[col] /= m[col, col]                                 # 归一化主元行
         factors = m[:, col].copy()
         factors[col] = 0.0
-        m -= factors[:, None] * m[col]
+        m -= factors[:, None] * m[col]                        # 一次消去整列（行向量化）
     return m[:, -1]
 
 
 def _homography(src, dst):
-    """显式构建 8×8 方程；先归一化坐标以提高大像素坐标下的稳定性。"""
+    """解 4 点对应的 3×3 单应 H（使 H·src ≡ dst）。
+
+    做法：先对 src/dst **归一化**（平移质心到原点、缩放到量级 1）再建 8×8 线性方程，
+    求得 H_n 后用 T_dst·H_n·T_src⁻¹ 还原 —— 归一化能显著提升大像素坐标下的数值稳定性。
+    退化情形（任一边集合尺度过小/共线）抛 ValueError。
+    """
     src, dst = np.asarray(src, np.float64), np.asarray(dst, np.float64)
     sc, dc = src.mean(axis=0), dst.mean(axis=0)
     ss, ds = float(np.max(np.abs(src - sc))), float(np.max(np.abs(dst - dc)))
     if min(ss, ds) < 1e-8:
         raise ValueError("zero-size rectangle")
-    xy, uv = (src - sc) / ss, (dst - dc) / ds
+    xy, uv = (src - sc) / ss, (dst - dc) / ds                 # 归一化坐标
     a = np.zeros((8, 8), np.float64)
-    a[0::2, :3] = np.column_stack((xy, np.ones(4)))
-    a[1::2, 3:6] = a[0::2, :3]
-    a[0::2, 6:] = -uv[:, :1] * xy
+    a[0::2, :3] = np.column_stack((xy, np.ones(4)))           # 偶数行：x 分量方程
+    a[1::2, 3:6] = a[0::2, :3]                                # 奇数行：y 分量方程
+    a[0::2, 6:] = -uv[:, :1] * xy                             # 第 3 列（透视项）
     a[1::2, 6:] = -uv[:, 1:] * xy
     v = _gaussian_solve(a, uv.reshape(-1))
-    hn = np.append(v, 1.0).reshape(3, 3)
+    hn = np.append(v, 1.0).reshape(3, 3)                      # 归一化域下的 H
     ts = np.array([[1 / ss, 0, -sc[0] / ss], [0, 1 / ss, -sc[1] / ss], [0, 0, 1]])
     td_inv = np.array([[ds, 0, dc[0]], [0, ds, dc[1]], [0, 0, 1]])
-    h = td_inv @ hn @ ts
+    h = td_inv @ hn @ ts                                      # 还原到原坐标域
     return h / h[2, 2] if abs(h[2, 2]) > 1e-12 else h
 
 
 def homography_8x8(src_quad, width_mm, height_mm):
+    """把物理矩形 (0,0)-(w,h) 映射到图像四边形 src_quad 的单应（mm → px）。"""
     return _homography(src_quad, [[0, 0], [width_mm, 0],
                                  [width_mm, height_mm], [0, height_mm]])
 
 
 def project_points(matrix, points):
+    """齐次投影：把 (N,2) 点经 3×3 矩阵映射，做透视除法得 (N,2)。落无穷远点抛错。"""
     p = np.asarray(points, np.float64).reshape(-1, 2)
     z = np.column_stack((p, np.ones(len(p)))) @ np.asarray(matrix).T
     if np.any(np.abs(z[:, 2]) < 1e-9):
@@ -324,21 +380,32 @@ def project_points(matrix, points):
 
 
 def inverse_map_points(h, points):
+    """单应逆映射（px → mm）；不做透视除法前的越界检查，由调用方负责。"""
     return project_points(np.linalg.inv(h), points)
 
 
 def standard_circle(width_mm, height_mm, radius_mm, samples=72):
+    """正视面坐标下、以矩形中心为圆心、半径 radius_mm 的等分圆采样点（(samples,2)）。
+
+    用途：把该圆逆映射回原图，用于可视化/交叉校验中心；**圆心本身直接取矩形中心投影**，
+    不用圆周平均（见 process 内注释）。
+    """
     a = np.arange(samples) * (2 * np.pi / samples)
     return np.array([width_mm / 2, height_mm / 2]) + radius_mm * np.column_stack((np.cos(a), np.sin(a)))
 
 
 def _rectangle(w, h, inset=0.0):
+    """物理矩形四角（mm），inset>0 时向内缩进（用于取胶带内沿 = 内框）。顺序 LL→LR→UR→UL。"""
     return np.array([[inset, inset], [w - inset, inset],
                      [w - inset, h - inset], [inset, h - inset]], np.float64)
 
 
 def _sample(gray, points):
-    """一次 OpenCV remap 双线性采样整批点，越界由调用方拒绝。"""
+    """一次 OpenCV remap 双线性采样整批点，越界由调用方拒绝。
+
+    相比逐点 Python 循环，remap 一次调用即可采样成百上千个点（四边验证/精修的关键提速）。
+    borderMode=REPLICATE 保证边缘点也能返回数值（越界判据在调用方单独做）。
+    """
     shape = points.shape[:-1]
     p = points.reshape(-1, 2).astype(np.float32)
     values = cv2.remap(gray, p[:, 0].reshape(1, -1), p[:, 1].reshape(1, -1),
@@ -347,6 +414,17 @@ def _sample(gray, points):
 
 
 class RectangleCenterDetector:
+    """有状态检测器：跨帧记住锁定框(_track)与平滑中心(_smooth)，稳态只做窄带精修。
+
+    状态字段：
+        _track       上一帧验证通过的外框（dict 候选）；None = 未锁定
+        _smooth      上一帧输出中心，用于 CENTER_ALPHA 一阶平滑（仅显示口径）
+        _locked_th   上次成功的二值化阈值（下次优先复用，减少阈值轮换）
+        _roi_retry   失锁后是否还允许一次"ROI 搜索"（用一次即置 False，防反复局部搜）
+        _search_jobs 每 ROI 的阈值轮换进度（持续失败时跨帧轮换候选）
+    每帧重置的临时量：_search_count / _threshold_count / _proposals / _deadline（时间预算）。
+    """
+
     def __init__(self, config):
         self.cfg = config
         self.last = None
@@ -354,13 +432,24 @@ class RectangleCenterDetector:
         self._track = None
         self._locked_th = None
         self._frame = 0
-        self._kernel = np.ones((3, 3), np.uint8)
+        self._kernel = np.ones((3, 3), np.uint8)               # 二值化后闭运算核
+        # 四边上均匀分布的参数 t ∈ (0.12, 0.88)：避开四角（角点附近因透视最易模糊）。
         self._t = np.linspace(0.12, 0.88, config.EDGE_SAMPLES, dtype=np.float32)
-        self._circle_cache = {}
+        self._circle_cache = {}                                # 正视面圆周采样点缓存（按尺存）
         self._search_count = 0
         self._threshold_count = 0
+        self._search_jobs = {}
+        self._proposals = 0
+        self._deadline = float("inf")
+        self._roi_retry = True
 
     def _valid_quad(self, q, shape, margin=1):
+        """四边形体检：不越界、凸、边长下限、无明显退化尖角。
+
+        允许任意透视（不要求接近直角/矩形），只排除两类坏形状：
+          · 贴边/出界：角点落在图像边缘 margin 内 → 采样会越界、中心不可信；
+          · 退化尖角：相邻边几乎平行（sin 很小）→ 四角拟合不稳定。
+        """
         h, w = shape
         if (q[:, 0].min() < margin or q[:, 1].min() < margin or
                 q[:, 0].max() >= w - margin or q[:, 1].max() >= h - margin):
@@ -369,14 +458,20 @@ class RectangleCenterDetector:
             return False
         e = np.roll(q, -1, axis=0) - q
         lengths = np.linalg.norm(e, axis=1)
-        if lengths.min() < 12:
+        if lengths.min() < 12:                                 # 最短边至少 12px
             return False
         # 透视图不要求四角接近 90 度，只排除退化尖角和过扁的四边形。
+        # 相邻边向量叉积 / (边长积) = sin(夹角)，要求每个角 > ~11.5°。
         sine = np.abs(e[:, 0] * np.roll(e[:, 1], -1) -
                       e[:, 1] * np.roll(e[:, 0], -1)) / (lengths * np.roll(lengths, -1))
         return bool(sine.min() > 0.20)
 
     def _layout(self, q, kind):
+        """由四边形朝向推断物理长宽比，并给出该 kind 对应的物理矩形四角。
+
+        horizontal：两条"横向边长之和" > 两条"纵向边长之和" → 长边水平 → w=长边(mm)。
+        kind=="inner" 时物理矩形向内缩进一个胶带宽度 BLACK_FRAME_MM（对应内框角点）。
+        """
         lengths = _side_lengths(q)
         horizontal = lengths[0] + lengths[2] > lengths[1] + lengths[3]
         w, h = ((self.cfg.TARGET_LONG_MM, self.cfg.TARGET_SHORT_MM) if horizontal
@@ -397,11 +492,14 @@ class RectangleCenterDetector:
         if tape <= 0 or 2 * tape >= min(w, h):
             raise ValueError("BLACK_FRAME_MM must be between 0 and half the short side")
         try:
+            # 求 mm → px 单应：把物理矩形映射到图像候选四边形 q。
             rect_to_image = _homography(physical_quad, q)
             t = self._t
-            # 三个点覆盖黑带的中部，再在内边缘后采两个亮面点。
+            # 沿每条边的法向采 5 个偏移：0.20/0.40/0.60×胶带宽 = 黑带内部三点（应为暗），
+            # 1.22/1.45×胶带宽 = 越过内沿的亮面两点（应为亮）。暗亮对比即边证据。
             offsets = tape * np.array([0.20, 0.40, 0.60, 1.22, 1.45])
             p = np.empty((4, len(t), 5, 2), np.float64)
+            # 四条边分别参数化：(边0 上/边1 右/边2 下/边3 左)，每条边沿 t 铺采样点。
             p[0, :, :, 0] = (tape + t * (w - 2 * tape))[:, None]
             p[0, :, :, 1] = offsets
             p[1, :, :, 0] = w - offsets
@@ -414,13 +512,16 @@ class RectangleCenterDetector:
         except (ValueError, np.linalg.LinAlgError):
             return None
         gh, gw = gray.shape
+        # 任何采样点落到图像外 → 该候选不可信（中心也无法可靠外推）。
         if (mapped[..., 0].min() < 0 or mapped[..., 1].min() < 0 or
                 mapped[..., 0].max() >= gw - 1 or mapped[..., 1].max() >= gh - 1):
             return None
         samples = _sample(gray, mapped).astype(np.float32)
+        # 每条边、每个 t：暗带取三点最大值（黑带里最亮的那个仍应暗），亮面取两点中位数。
         dark = np.max(samples[:, :, :3], axis=2)
         bright = np.median(samples[:, :, 3:], axis=2)
         delta = bright - dark
+        # "该证据成立" = 对比度达标 且 暗带确实比亮面暗（比值约束，排除两侧都亮的纸边）。
         coverage = ((delta >= self.cfg.MIN_EDGE_CONTRAST) &
                     (dark <= bright * self.cfg.MAX_DARK_BRIGHT_RATIO)).mean(axis=1)
         edge_contrast = np.median(delta, axis=1)
@@ -434,6 +535,8 @@ class RectangleCenterDetector:
         outer = project_points(rect_to_image, _rectangle(w, h)).astype(np.float32)
         if not self._valid_quad(outer, gray.shape):
             return None
+        # 返回候选：外框(图像)、内框(胶带内沿)、mm→px 单应、四边剖面、质量分。
+        # 打分 = 中位对比度 + 60×平均覆盖率，用于多候选时择优（分数越高越像真靶纸）。
         return dict(quad=q, outer_quad=outer,
                     inner_quad=project_points(rect_to_image, _rectangle(w, h, tape)).astype(np.float32),
                     kind=kind, rect_to_image=rect_to_image, width_mm=w, height_mm=h,
@@ -442,55 +545,75 @@ class RectangleCenterDetector:
                     score=float(np.median(edge_contrast) + 60 * coverage.mean()))
 
     def _refine(self, gray, q, kind, radius):
-        """当前帧四条灰度窄带 -> 有方向的边缘跳变 -> fitLine -> 四角交点。"""
+        """当前帧四条灰度窄带 → 有方向的边缘跳变 → fitLine → 四角交点。
+
+        与 _verify 的区别：_verify 只判"像不像"，_refine 才真正**重新定位**每条边。
+        步骤：沿四边已有点 (base) 的法向 ±radius 采样灰度 → 求有向梯度 → 每列取
+        "最近预测位置"的跳变（offset 越小越优先，防止误锁到内侧印刷圆或另一侧胶带边）
+        → 用 fitLine 拟合四条直线 → 相邻直线两两求交 = 亚像素四角。
+        精修结果偏离原 q 超过 radius*2.8 或四角体检不过 → 判失败（返回 None）。
+        """
         q = np.asarray(q, np.float32)
         nxt = np.roll(q, -1, axis=0)
         e = nxt - q
         lengths = np.linalg.norm(e, axis=1)
         if lengths.min() < 10:
             return None
-        normal = np.column_stack((-e[:, 1], e[:, 0])) / lengths[:, None]
+        normal = np.column_stack((-e[:, 1], e[:, 0])) / lengths[:, None]   # 各边外/内法向
         base = q[:, None, :] * (1 - self._t[None, :, None]) + nxt[:, None, :] * self._t[None, :, None]
         offsets = np.arange(-radius, radius + 1, dtype=np.float32)
+        # 每条边、每个 t、每个法向偏移 → 采样点网格 (4, len(t), 2r+1, 2)。
         points = base[:, :, None, :] + normal[:, None, None, :] * offsets[None, None, :, None]
         gh, gw = gray.shape
         inside = ((points[..., 0] >= 1) & (points[..., 0] < gw - 1) &
                   (points[..., 1] >= 1) & (points[..., 1] < gh - 1)).all(axis=2)
         values = _sample(gray, points).astype(np.float32)
-        gradient = values[:, :, 2:] - values[:, :, :-2]
+        gradient = values[:, :, 2:] - values[:, :, :-2]                    # 中心差分近似梯度
         if kind == "outer":
-            gradient *= -1
+            gradient *= -1                                                 # 外框要求暗→亮方向相反
         # 近预测边缘优先，避免捕获靶纸内部印刷圆或另一侧的胶带边缘。
-        penalty = np.abs(offsets[1:-1])[None, None, :] * 0.45
-        indices = np.argmax(gradient - penalty, axis=2)
+        penalty = np.abs(offsets[1:-1])[None, None, :] * 0.45              # 偏离预测位置的惩罚
+        indices = np.argmax(gradient - penalty, axis=2)                    # 每股取最强跳变
         strength = np.take_along_axis(gradient, indices[..., None], axis=2)[..., 0]
         selected = offsets[indices + 1]
         lines = []
         for i in range(4):
-            good = inside[i] & (strength[i] >= self.cfg.MIN_EDGE_CONTRAST * 0.7)
+            good = inside[i] & (strength[i] >= self.cfg.MIN_EDGE_CONTRAST * 0.7)   # 有效采样
             if good.sum() < max(5, len(self._t) * self.cfg.WEAK_EDGE_COVERAGE):
-                return None
+                return None                                                # 证据太少，整框弃用
             shifts = selected[i, good]
             med = float(np.median(shifts))
+            # 去掉偏离中位数过大的离群跳变（反光/杂物），再确认仍够点。
             good &= np.abs(selected[i] - med) <= max(2.5, float(np.median(np.abs(shifts - med))) * 3)
             if good.sum() < 5:
                 return None
             samples = base[i, good] + selected[i, good, None] * normal[i]
+            # 用鲁棒 Huber 回归拟合该边直线；fitLine 返回 (vx, vy, x0, y0)。
             vx, vy, x, y = cv2.fitLine(samples, cv2.DIST_HUBER, 0, 0.01, 0.01).reshape(4)
             # 直线 ax+by+c=0。
             lines.append(np.array([-vy, vx, vy * x - vx * y], np.float64))
         lines = np.asarray(lines)
+        # 相邻两条直线（roll 1 使其错位一位）叉积求交点：交点齐次坐标 = 两直线系数叉积。
         crosses = np.cross(np.roll(lines, 1, axis=0), lines)
         if np.any(np.abs(crosses[:, 2]) < 1e-8):
-            return None
+            return None                                                    # 有平行边 → 退化
         refined = (crosses[:, :2] / crosses[:, 2:]).astype(np.float32)
         if (np.linalg.norm(refined - q, axis=1).max() > radius * 2.8 or
                 not self._valid_quad(refined, gray.shape)):
-            return None
+            return None                                                    # 跑太远或形状不合法
         return refined
 
     def _candidate_quads(self, mask):
-        """用轮廓树的孔/黑环关系代替候选两两组合。"""
+        """用轮廓树的孔/黑环关系代替候选两两组合。
+
+        输入是二值掩膜（暗区为前景）。输出 [(quad, kind), ...]：
+          · 借 findContours 的 RETR_TREE 层级：黑胶带环 = 一个"孔"（有子级）；
+            深度奇偶决定 kind —— 偶数深度=outer(外框)，奇数=inner(内框)。
+          · 用**包围框/面积**先廉价预筛（剔过小、过扁），只对最大若干个轮廓做 approxPolyDP，
+            控制昂贵的多边形逼近次数。
+          · 排除"实心黑块"（outer 却没有亮孔），因为靶纸黑环中心必是亮的。
+        返回排序把 inner 排前：亮面孔比与背景粘连的黑环更稳定。
+        """
         contours, hierarchy = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)[-2:]
         if hierarchy is None:
             return []
@@ -499,28 +622,32 @@ class RectangleCenterDetector:
         candidates = []
         # 先用廉价的包围框/面积筛选，仅拟合最大的少数轮廓。
         eligible = []
-        for i, cnt in enumerate(contours):
+        # findContours 本身是原子调用；后续 Python 遍历只看最大的有限个轮廓。
+        ids = sorted(range(len(contours)), key=lambda i: abs(cv2.contourArea(contours[i])),
+                     reverse=True)[:self.cfg.MAX_CONTOURS]
+        for i in ids:
+            cnt = contours[i]
             x, y, cw, ch = cv2.boundingRect(cnt)
             if min(cw, ch) < 15 or cw * ch < w * h * self.cfg.MIN_AREA_RATIO:
-                continue
+                continue                                   # 太小/太扁：不是候选框
             area = abs(cv2.contourArea(cnt))
             if w * h * self.cfg.MIN_AREA_RATIO <= area <= w * h * self.cfg.MAX_AREA_RATIO:
                 eligible.append((area, i))
         for area, i in sorted(eligible, reverse=True)[:self.cfg.MAX_CANDIDATES]:
             cnt = contours[i]
             peri = cv2.arcLength(cnt, True)
-            approx = cv2.approxPolyDP(cnt, self.cfg.APPROX_EPSILON * peri, True)
+            approx = cv2.approxPolyDP(cnt, self.cfg.APPROX_EPSILON * peri, True)   # 多边形逼近
             # 不使用凸包修补任意背景：凸包可把桌面阴影拼成错误大四边形。
             if len(approx) != 4 or not cv2.isContourConvex(approx):
-                continue
+                continue                                   # 只接受凸四边形
             q = _order_quad(approx)
             if not self._valid_quad(q, mask.shape):
                 continue
-            parent, depth = int(hierarchy[i][3]), 0
+            parent, depth = int(hierarchy[i][3]), 0        # 沿父链数深度
             while parent >= 0:
                 depth += 1
                 parent = int(hierarchy[parent][3])
-            kind = "inner" if depth % 2 else "outer"
+            kind = "inner" if depth % 2 else "outer"       # 奇偶定内外框
             if kind == "outer" and hierarchy[i][2] < 0:
                 continue  # 实心黑块没有亮孔。
             candidates.append((q, kind))
@@ -528,7 +655,83 @@ class RectangleCenterDetector:
         return sorted(candidates, key=lambda c: c[1] != "inner")
 
     def _search(self, gray, roi=None):
+        """在缩小图上找候选并验证；**合作式**：每帧只推进有限步，跨帧延续。
+
+        关键设计（性能与鲁棒性的平衡）：
+          · 缩小到 SEARCH_WIDTH 宽再阈值化，全图扫描代价大幅下降；坐标末了乘回原分辨率。
+          · 阈值列表 = [上次成功阈值] + [Otsu] + DARK_THRESHOLDS；持续失败时**跨帧轮换**
+            （job["index"] 在 _search_jobs 里记进度），避免单帧把全部阈值跑一遍。
+          · SEARCH_MAX_PROPOSALS=1：每帧最多验证一个候选；时间预算 SEARCH_BUDGET_MS 是软预算
+            （至少验证一个，防止原子调用稍慢导致永远不推进）。
+          · 全部阈值候选耗尽后，才用 Canny 轮廓兜底（最贵，只在彻底找不到时用）。
+        找到即锁定 _locked_th 并清空该 ROI 的待验证队列，下次直接复用。
+        """
         self._search_count += 1
+        x, y, w, h = roi if roi is not None else (0, 0, gray.shape[1], gray.shape[0])
+        crop = gray[y:y + h, x:x + w]
+        scale = min(1.0, self.cfg.SEARCH_WIDTH / float(w))
+        sw, sh = max(32, int(round(w * scale))), max(24, int(round(h * scale)))
+        small = cv2.resize(crop, (sw, sh), interpolation=cv2.INTER_AREA) if scale < 1 else crop
+        sx, sy = w / float(sw), h / float(sh)              # 缩小图 → 原图 的坐标比例
+        # 阈值候选：优先复用上次成功值，再并入 Otsu 与固定档位（去掉与已有值太接近的）。
+        thresholds = [self._locked_th] if self._locked_th is not None else []
+        otsu, _ = cv2.threshold(small, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+        for th in (int(otsu),) + tuple(self.cfg.DARK_THRESHOLDS):
+            if not any(abs(th - t) < 6 for t in thresholds):
+                thresholds.append(th)
+        # 持续失败时跨帧轮换阈值；只缓存候选几何，不保存旧图像或旧验证结果。
+        key = tuple(roi) if roi is not None else "full"
+        job = self._search_jobs.setdefault(key, dict(index=0, pending=[], threshold=None))
+        if len(self._search_jobs) > 4:
+            self._search_jobs = {key: job}                 # 最多只留 4 个 ROI 的进度
+        pending = job["pending"]
+        if not pending:
+            index = job["index"] % (len(thresholds) + 1)   # 最后一档留作 Canny 兜底
+            job["index"] += 1
+            if index < len(thresholds):
+                th = thresholds[index]
+                job["threshold"] = th
+                self._threshold_count += 1
+                _, mask = cv2.threshold(small, th, 255, cv2.THRESH_BINARY_INV)   # 暗区为前景
+                mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self._kernel)     # 闭运算补断线
+                # 候选坐标从缩小图坐标乘回原图（+ROI 偏移）。
+                pending.extend((q * np.array([sx, sy], np.float32) + [x, y], kind)
+                               for q, kind in self._candidate_quads(mask))
+            else:
+                job["threshold"] = None
+                # Canny 兜底：边缘图直接找四边形轮廓，内/外框都试。
+                edges = cv2.Canny(small, self.cfg.CANNY_LOW, self.cfg.CANNY_HIGH)
+                contours = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)[-2]
+                for cnt in sorted(contours, key=cv2.contourArea, reverse=True)[:self.cfg.MAX_CANDIDATES]:
+                    if cv2.contourArea(cnt) < sw * sh * self.cfg.MIN_AREA_RATIO:
+                        continue
+                    ap = cv2.approxPolyDP(cnt, self.cfg.APPROX_EPSILON * cv2.arcLength(cnt, True), True)
+                    if len(ap) == 4 and cv2.isContourConvex(ap):
+                        q = _order_quad(ap) * [sx, sy] + [x, y]
+                        pending.extend(((q, "inner"), (q, "outer")))
+        # 逐个验证候选；每帧最多 SEARCH_MAX_PROPOSALS 个。
+        while pending and self._proposals < self.cfg.SEARCH_MAX_PROPOSALS:
+            # 至少验证一个候选，避免原子轮廓扫描稍慢导致永远没有进展。
+            if self._proposals and time.perf_counter() >= self._deadline:
+                break
+            q, kind = pending.pop(0)
+            self._proposals += 1
+            verified = self._verify(gray, q, kind)         # 四边暗带验证
+            if verified is None:
+                continue
+            refined = self._refine(gray, q, kind, self.cfg.REFINE_RADIUS)   # 亚像素精修
+            if refined is not None:
+                precise = self._verify(gray, refined, kind)                 # 精修后再验证
+                if precise is not None:
+                    verified = precise                    # 精修通过则用更准的结果
+            self._locked_th = job["threshold"]             # 记住本次成功阈值
+            job["pending"] = []
+            job["index"] = 0
+            return verified
+        return None
+
+    def _legacy_search(self, gray, roi=None):
+        """保留可选线段恢复路径使用的完整搜索；常规帧不调用。"""
         x, y, w, h = roi if roi is not None else (0, 0, gray.shape[1], gray.shape[0])
         crop = gray[y:y + h, x:x + w]
         scale = min(1.0, self.cfg.SEARCH_WIDTH / float(w))
@@ -644,6 +847,7 @@ class RectangleCenterDetector:
         return best
 
     def process(self, gray, timestamp=None):
+        """单帧入口：按"track → roi_search → full_search"三级降级找框，输出中心与结果 dict。"""
         started = time.perf_counter()
         g = np.asarray(gray)
         if g.ndim == 3 and g.shape[2] == 1:
@@ -651,43 +855,58 @@ class RectangleCenterDetector:
         if g.ndim != 2 or g.dtype != np.uint8:
             raise ValueError("process expects a uint8 grayscale image")
         self._frame += 1
+        # 每帧重置的临时统计与时间预算（预算内没找到就留给下一帧继续）。
         self._search_count = self._threshold_count = 0
+        self._proposals = 0
+        self._deadline = started + self.cfg.SEARCH_BUDGET_MS / 1000.0
         candidate, stage = None, "search"
+        # ---- ① track：上一帧已锁定 → 只用四边窄带精修（最省，稳态走这里）----
         if self._track is not None:
             q, kind = self._track["quad"], self._track["kind"]
             q = self._refine(g, q, kind, self.cfg.TRACK_RADIUS)
             if q is not None:
                 candidate = self._verify(g, q, kind)
                 stage = "track"
-        if candidate is None and self._track is not None:
+        # ---- ② roi_search：刚失锁 → 在上一帧外框外扩的窗口内搜一次 ----
+        if candidate is None and self._track is not None and self._roi_retry:
             q = self._track["outer_quad"]
             lo, hi = q.min(axis=0), q.max(axis=0)
-            pad = np.maximum((hi - lo) * self.cfg.ROI_PADDING, 24)
+            pad = np.maximum((hi - lo) * self.cfg.ROI_PADDING, 24)         # 外扩量（至少 24px）
             lo = np.maximum(0, np.floor(lo - pad)).astype(int)
             hi = np.minimum([g.shape[1], g.shape[0]], np.ceil(hi + pad)).astype(int)
             candidate = self._search(g, (int(lo[0]), int(lo[1]), int(hi[0] - lo[0]), int(hi[1] - lo[1])))
             stage = "roi_search"
-        if candidate is None:
+            self._roi_retry = False                                        # 只允许一次 ROI 搜索
+        elif candidate is None:
+            # ---- ③ full_search：彻底丢失 → 全图多阈值 + Canny 兜底 ----
             candidate = self._search(g)
             stage = "full_search"
         if candidate is None:
-            self._track = self._smooth = None
-            self._locked_th = None
+            # 三路都没找到：清空平滑中心，返回无效结果（不沿用旧框，避免"粘住"）。
+            self._smooth = None
             self.last = dict(valid=False, stage="no_black_frame", search_count=self._search_count,
-                             thresholds=self._threshold_count, detector_ms=(time.perf_counter() - started) * 1000)
+                             thresholds=self._threshold_count, proposals=self._proposals,
+                             detector_ms=(time.perf_counter() - started) * 1000)
             return self.last
+        # ---- 找到：锁定、清进度、算中心 ----
         self._track = candidate
+        self._roi_retry = True
+        self._search_jobs.clear()
         w, h = candidate["width_mm"], candidate["height_mm"]
         matrix = candidate["rect_to_image"]
         # 直接映射正视面圆心才是正确中心，圆周采样不用于平均中心。
+        # （中心 = 矩形中心的对角线交点；由 mm→px 单应把 (w/2,h/2) 投回原图即得。）
         raw = project_points(matrix, [[w / 2, h / 2]])[0]
         alpha = float(self.cfg.CENTER_ALPHA)
+        # 一阶低通：平滑值只在显示口径使用；raw 供闭环（见 config.AIM_USE_RAW）。
+        # 跳变过大（FILTER_RESET_PX）直接重置，避免平滑把真运动拖成滞后。
         if (self._smooth is None or alpha <= 0 or
                 np.linalg.norm(raw - self._smooth) > self.cfg.FILTER_RESET_PX):
             center = raw
         else:
             center = self._smooth + alpha * (raw - self._smooth)
         self._smooth = center
+        # 圆周采样点（仅可视化/交叉校验用）按尺寸缓存，避免每帧重算。
         key = (w, h, self.cfg.CIRCLE_RADIUS_MM, self.cfg.CIRCLE_SAMPLES)
         if key not in self._circle_cache:
             self._circle_cache[key] = standard_circle(*key)
@@ -697,7 +916,8 @@ class RectangleCenterDetector:
                       outer_inferred=candidate["kind"] == "inner",
                       circle_points=project_points(matrix, self._circle_cache[key]),
                       stage=stage, threshold=self._locked_th, search_count=self._search_count,
-                      thresholds=self._threshold_count, detector_ms=(time.perf_counter() - started) * 1000)
+                      thresholds=self._threshold_count, proposals=self._proposals,
+                      detector_ms=(time.perf_counter() - started) * 1000)
         self.last = result
         return result
 
@@ -707,29 +927,37 @@ def draw_result(gray, result, show_width=480, top_offset=0):
 
     top_offset：屏幕上方的文字整体下移量（像素）。激光读数面板占用左上角时由
     main.py 传 vision.laser_spot.PANEL_H，避免两处文字叠在一起。
+
+    绘制元素（均按 scale 换算到缩小图坐标，避免在原始分辨率上画）：
+        · 绿色外框 quad、青色内框 inner_quad
+        · 洋红四角圆点 + "P1..P4 (x,y)" 标签（原图坐标）
+        · 蓝色靶心十字 + "(u,v) stage 耗时" 文字
+    返回 BGR 画布，交由 _Preview.render 再 letterbox 到屏幕画布。
     """
     g = np.asarray(gray).squeeze()
-    scale = min(1.0, float(show_width) / g.shape[1])
+    scale = min(1.0, float(show_width) / g.shape[1])        # 原图 → 缩小图 的比例
     if scale < 1:
         g = cv2.resize(g, (int(round(g.shape[1] * scale)), int(round(g.shape[0] * scale))))
     canvas = cv2.cvtColor(g, cv2.COLOR_GRAY2BGR)
     if not result.get("valid"):
+        # 无效：只提示一行红字，不画任何框（过期结果已在 main._display_result 降级）。
         cv2.putText(canvas, "NO BLACK RECTANGLE", (8, 24 + top_offset), cv2.FONT_HERSHEY_SIMPLEX, .55, (0, 0, 255), 1)
         return canvas
-    q = np.rint(result["quad"] * scale).astype(np.int32)
-    iq = np.rint(result["inner_quad"] * scale).astype(np.int32)
+    q = np.rint(result["quad"] * scale).astype(np.int32)          # 外框（缩小图坐标）
+    iq = np.rint(result["inner_quad"] * scale).astype(np.int32)   # 内框（缩小图坐标）
     cv2.polylines(canvas, [q], True, (0, 255, 0), 2, cv2.LINE_AA)
     cv2.polylines(canvas, [iq], True, (0, 220, 220), 1)
     for i, (x, y) in enumerate(result["quad"]):
         p = tuple(q[i])
-        cv2.circle(canvas, p, 4, (255, 0, 255), -1)
+        cv2.circle(canvas, p, 4, (255, 0, 255), -1)               # 洋红实心点
+        # 标签用**原图坐标**（x,y），便于与日志/回算对照；位置做边界夹取防出画。
         label = "P%d (%d,%d)" % (i + 1, round(float(x)), round(float(y)))
         tw = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, .36, 1)[0][0]
         pos = (max(0, min(int(p[0]) + 5, canvas.shape[1] - tw - 1)),
                max(12, min(int(p[1]) - 7, canvas.shape[0] - 5)))
         cv2.putText(canvas, label, pos, cv2.FONT_HERSHEY_SIMPLEX, .36, (255, 255, 0), 1, cv2.LINE_AA)
     c = tuple(np.rint(np.array([result["u"], result["v"]]) * scale).astype(int))
-    cv2.drawMarker(canvas, c, (255, 0, 0), cv2.MARKER_CROSS, 14, 2)
+    cv2.drawMarker(canvas, c, (255, 0, 0), cv2.MARKER_CROSS, 14, 2)   # 蓝色靶心十字
     cv2.putText(canvas, "(%d,%d) %s %.1fms" % (round(result["u"]), round(result["v"]),
                 result["stage"], result["detector_ms"]), (8, 22 + top_offset), cv2.FONT_HERSHEY_SIMPLEX, .45, (255, 220, 0), 1)
     return canvas
@@ -798,10 +1026,18 @@ class LaserSpotDetector:
 
     # ------------------------------------------------------------------ 内部
     def _detect(self, g):
+        """在标称位附近的方形 ROI 内做一次"阈值 + 加权质心"，返回 (u,v)。
+
+        判据链（任一不满足即判无光斑，并带 reason 便于排障）：
+            峰值 >= max(LASER_MIN_PEAK, 背景 + LASER_MIN_CONTRAST)  → 否则 no_peak
+            亮点像素数在 [LASER_MIN_PIXELS, LASER_MAX_PIXELS] 内    → 过大 too_big（挡高光）/过小 too_small
+        质心用 (灰度−阈值) 加权，越亮的像素权重越大 → 亚像素级、抗噪。
+        """
         cfg = self.cfg
         H, W = g.shape[:2]
         cx, cy = float(cfg.LASER_U_NOMINAL), float(cfg.LASER_V_NOMINAL)
         r = int(cfg.LASER_ROI_RADIUS)
+        # ROI = 标称位 ± r，并夹取到图像内（标称值决定"往哪儿看"，不决定结果）。
         x0 = max(0, int(cx - r))
         y0 = max(0, int(cy - r))
         x1 = min(W, int(cx + r) + 1)
@@ -827,6 +1063,7 @@ class LaserSpotDetector:
         total = float(w.sum())
         if total <= 0:
             return dict(found=False, reason="flat", peak=peak, bg=bg, area=area, u=cx, v=cy)
+        # 加权质心：权重 = 灰度−阈值；坐标加 ROI 原点 (x0,y0) 回到全图坐标。
         return dict(found=True, reason="ok", peak=peak, bg=bg, area=area,
                     u=x0 + float((xs * w).sum() / total), v=y0 + float((ys * w).sum() / total))
 
@@ -845,12 +1082,16 @@ class LaserSpotDetector:
         return self._fixed_dict(self.nominal)
 
     def process(self, gray, now=None):
-        """每帧调用；fixed 模式恒返回标定常量，detect 模式内部按 LASER_INTERVAL_S 限频。"""
+        """每帧调用；fixed 模式恒返回标定常量，detect 模式内部按 LASER_INTERVAL_S 限频。
+
+        限频逻辑：距上次实测不足 interval 时**直接沿用上次结果**（updated=False, ms=0），
+        因此每帧调用的代价近似为零；真正重算时依次做跳变门限与平滑。
+        """
         if self.mode == "fixed":
             return self.static_state()
         now = time.perf_counter() if now is None else float(now)
         if self._t is not None and (now - self._t) < self.interval:
-            out = dict(self.last)
+            out = dict(self.last)                 # 沿用上次：位置不变，仅标记未更新
             out["updated"] = False
             out["ms"] = 0.0
             return out
@@ -871,6 +1112,7 @@ class LaserSpotDetector:
                 return keep
         if res["found"]:
             if self._uv is not None and 0.0 < self.alpha < 1.0:
+                # 位置一阶低通（仅 detect 模式）；alpha=0 时关闭平滑，直接用最新质心。
                 self._uv = (self._uv[0] + self.alpha * (res["u"] - self._uv[0]),
                             self._uv[1] + self.alpha * (res["v"] - self._uv[1]))
             else:
@@ -892,14 +1134,14 @@ def deviation(laser, result, use_raw=False):
     激光丢失或黑框无效时返回 None。
     """
     if not laser or not laser.get("found"):
-        return None
+        return None                        # ★ 必须先看 found：found=False 时 u/v 只是标称占位
     if not result or not result.get("valid"):
         return None
     if use_raw and result.get("raw_u") is not None and result.get("raw_v") is not None:
-        tx, ty = float(result["raw_u"]), float(result["raw_v"])
+        tx, ty = float(result["raw_u"]), float(result["raw_v"])   # 闭环档：未平滑中心
     else:
-        tx, ty = float(result["u"]), float(result["v"])
-    return (tx - float(laser["u"]), ty - float(laser["v"]))
+        tx, ty = float(result["u"]), float(result["v"])           # 显示档：CENTER_ALPHA 平滑中心
+    return (tx - float(laser["u"]), ty - float(laser["v"]))       # dx=靶心−光斑, dy 同理
 
 
 def draw_laser_overlay(canvas, laser, result=None, scale=1.0, use_raw=False):
@@ -908,12 +1150,17 @@ def draw_laser_overlay(canvas, laser, result=None, scale=1.0, use_raw=False):
     use_raw 与 deviation() 保持一致：True 时连线终点与 dx/dy 都用未平滑的 raw 中心，
     屏幕上看到的就是控制律真正在用的那个点。
 
+    scale：**原图坐标 → 画布坐标** 的比例（main.py 传 render_width/原图宽）。
+    本函数内部所有坐标（光斑 p、连线终点 c）都要乘 scale，才能与 draw_result 画的框对齐。
+    **注意**：面板本身（左上角矩形与文字）用画布固定像素坐标，不随 scale 缩放。
+
     返回面板占用的高度（像素，显示画布坐标），调用方据此把 draw_result 的文字
     整体下移，避免和本面板重叠。
     """
     if not laser:
         return 0
     found = bool(laser.get("found"))
+    # 第 1 行：光斑位置与来源（fixed=标定常量 / 实测 peak,area / 丢失原因）。
     if laser.get("reason") == "fixed":
         line1 = "LASER (%d,%d) [fixed/calib]" % (round(laser["u"]), round(laser["v"]))
     elif found:
@@ -922,31 +1169,35 @@ def draw_laser_overlay(canvas, laser, result=None, scale=1.0, use_raw=False):
     else:
         line1 = "LASER -- [%s] peak=%d bg=%d" % (
             laser.get("reason", "?"), round(laser.get("peak", 0.0)), round(laser.get("bg", 0.0)))
+    # 第 2 行：光斑→靶心偏差（用同一 use_raw 口径，与闭环一致）。
     dv = deviation(laser, result, use_raw=use_raw)
     if dv is not None:
         line2 = "D-CENTER dx=%+.1f dy=%+.1f px" % (dv[0], dv[1])
-        line2_color = _TEXT_C2
+        line2_color = _TEXT_C2                       # 浅绿：有效
     elif result is not None and result.get("valid"):
         line2 = "D-CENTER -- (laser lost)"
-        line2_color = _TEXT_C3
+        line2_color = _TEXT_C3                       # 浅红：有靶心无光斑
     else:
         line2 = "D-CENTER -- (no black rect)"
-        line2_color = _TEXT_C3
+        line2_color = _TEXT_C3                       # 浅红：无靶心
+    # 面板宽度按两行文字较宽者自适应（固定画布像素，不随 scale 缩放）。
     w = max(cv2.getTextSize(t, cv2.FONT_HERSHEY_SIMPLEX, .45, 1)[0][0] for t in (line1, line2))
     cv2.rectangle(canvas, (2, 2), (min(canvas.shape[1] - 1, w + 14), PANEL_H - 2), _PANEL_BG, -1)
     cv2.putText(canvas, line1, (8, 18), cv2.FONT_HERSHEY_SIMPLEX, .45, _TEXT_C1, 1, cv2.LINE_AA)
     cv2.putText(canvas, line2, (8, 18 + PANEL_LINE), cv2.FONT_HERSHEY_SIMPLEX, .45, line2_color, 1, cv2.LINE_AA)
     if not found:
-        return PANEL_H
+        return PANEL_H                              # 无光斑：只留面板，不画标记/连线
+    # 光斑标记：原图坐标 × scale → 画布坐标。
     p = (int(round(laser["u"] * scale)), int(round(laser["v"] * scale)))
     if result is not None and result.get("valid"):
+        # 连线终点 = 靶心，同样按 use_raw 选 raw 或平滑中心，再 × scale。
         if use_raw and result.get("raw_u") is not None and result.get("raw_v") is not None:
             c = (int(round(float(result["raw_u"]) * scale)), int(round(float(result["raw_v"]) * scale)))
         else:
             c = (int(round(float(result["u"]) * scale)), int(round(float(result["v"]) * scale)))
-        cv2.line(canvas, p, c, _LINK, 1, cv2.LINE_AA)
-    cv2.circle(canvas, p, 7, _MARK, 1, cv2.LINE_AA)
-    cv2.drawMarker(canvas, p, _MARK, cv2.MARKER_CROSS, 5, 1, cv2.LINE_AA)
+        cv2.line(canvas, p, c, _LINK, 1, cv2.LINE_AA)   # 橙色连线：光斑 → 靶心
+    cv2.circle(canvas, p, 7, _MARK, 1, cv2.LINE_AA)     # 红色圆圈
+    cv2.drawMarker(canvas, p, _MARK, cv2.MARKER_CROSS, 5, 1, cv2.LINE_AA)   # 红十字
     return PANEL_H
 '''
 
@@ -1424,7 +1675,7 @@ class StepperLink:
         try:
             available = int(port.available(0))
             if available > 0:
-                port.read(available)
+                port.read(min(available, int(getattr(self.cfg, "UART_RX_MAX_BYTES", 256))), timeout=0)
         except Exception:
             pass
         self._rxbuf[axis] = bytearray()
@@ -1482,17 +1733,23 @@ class StepperLink:
             try:
                 available = int(port.available(0))
                 if available > 0:
-                    data = port.read(available)
+                    data = port.read(min(available, int(getattr(self.cfg, "UART_RX_MAX_BYTES", 256))), timeout=0)
                     if data:
                         self._rxbuf[axis].extend(bytes(data))
                 buf = self._rxbuf[axis]
+                limit = max(4, int(getattr(self.cfg, "UART_RX_BUFFER_MAX_BYTES", 1024)))
+                if len(buf) > limit:
+                    del buf[:-limit]
                 while len(buf) >= 4:
                     if buf[0] != self._addr(axis):
                         del buf[0]
                         continue
                     end = buf.find(bytes([CR]), 1)
-                    if end < 3:
+                    if end < 0:
                         break
+                    if end < 3:
+                        del buf[0]
+                        continue
                     frames.append((axis, bytes(buf[:end + 1])))
                     del buf[:end + 1]
                     self._stats["rx"] += 1
@@ -2050,13 +2307,58 @@ _MAIN_SRC = r'''
   **上电不再自动跑自检**；自检改为屏幕右上角的 `SELF-TEST` 按钮，点一下才触发
   （见 `Config.ENABLE_TOUCH_BUTTON`）。`CALIBRATE_AXIS` 非空时仍走标定（标定期不闭环）。
 
-画面流转到 MaixVision：由 `_Preview` 在主进程内把带标注的画面按"屏幕尺寸画布"letterbox
-后 `display.Display().show()` —— 这是 MaixVision 能看到画面的成熟路径（PC 上无 maix 时自动跳过）。
+画面流转到 MaixVision / 板载屏幕：`_Preview` 把带标注的画面 letterbox 进"屏幕尺寸画布"，
+再交给**独立显示线程**去 `display.Display().show()`（仍在主进程内 —— 这是 MaixVision 能看到
+画面的成熟路径；PC 上无 maix 时自动跳过）。主循环只负责绘制与投递，**永不等待 show**。
+
+================================================================================
+★ 图像显示运行逻辑（自"取帧"到"上屏"的完整链路）—— 本文件读法总纲
+================================================================================
+本文件里跑着**三条独立的时间轴**。理解显示前必须先分清它们；把二者混在一起，就会把
+"图传慢"误诊为"识别慢"（这正是本项目历史上踩过的坑，见 B 轨 README「v9→v17 追踪手感对照」）。
+
+  时间轴 A —— 主循环（`main()`，主线程；决定采图/控制节奏）
+    ① cam.read()                      从 MaixCAM2 相机取一帧（灰度 FMT_GRAYSCALE）
+    ② _to_gray(img, image)            借相机缓冲 → 灰度 ndarray（copy=False，零拷贝）
+    ③ touch.poll(preview)             触摸"按下沿"→ 置 controller.request_test（触发自检）
+    ④ worker.submit(gray, captured)   把**当帧灰度图的副本**投进识别线程（不等待结果）
+    ⑤ worker.snapshot(now)            取回**最近一次**识别结果（可能不是本帧，允许滞后）
+    ⑥ _display_result(snapshot,...)   结果超过 RESULT_MAX_AGE_S 即降级为 invalid，不画旧框
+    ⑦ preview.due(now)                显示节拍（SHOW_FPS）到了**且画布空闲**才画：
+         ├─ draw_result()             画外/内框、四角、靶心十字（vision/rectangle_center.py）
+         ├─ draw_laser_overlay()      画光斑标记 + 左上角面板 + 光斑→靶心连线（vision/laser_spot.py）
+         └─ preview.render()          letterbox 到画布 → **投给显示线程，立刻返回**
+    ⑧ 每 LOG_INTERVAL 打印 [perf]     分相耗时 + 三路帧率（口径分开，勿混读）
+
+  时间轴 B —— 识别线程（`_LatestVision`，daemon 线程；决定识别吞吐）
+    "最新帧槽位"取一帧 → controller.process()（识别 + 光斑偏差 + 云台闭环）→ 写回"最新结果槽位"
+    → 空闲时走 controller.idle()（继续收 ACK、推进按钮自检）。槽位只保留**最新**一份：
+    主循环产帧快于识别时，旧帧被丢弃并计入 worker.dropped（丢帧而非积压）。
+
+  时间轴 C —— 显示线程（`_Preview._show_loop`，daemon 线程；决定屏幕刷新）
+    取"待上屏画布"槽 → `display.show()`（屏幕 + MaixVision 图传）→ 画布还池。
+    画布池固定 2 张（显示线程 1 张 + 主线程 1 张）；主循环要画时池空 → **直接跳过该帧**
+    （丢帧，不排队、不等待）。所以 show() 再慢也只慢预览本身。
+
+  为什么必须拆成三条轴：
+    · display.show() 走屏幕驱动 / MaixVision 图传，单次可长达数百 ms；同线程时一慢全卡。
+    · 识别（Canny / 轮廓 / 单应）耗时不确定；同线程时识别一慢屏幕就卡成幻灯片。
+    每条轴各自取"最新"，任一侧变慢只表现为**丢帧 / 滞后**，不会互相拖垮（降级但不崩溃）。
+    ★ 历史教训：只把"识别"拆出去是不够的 —— 只要 show() 还在主循环里同步调用，
+      主循环就被它按在地上，`submit()` 的节奏随之被拖死，识别线程再快也无帧可算
+      （表现为 capture / disp / detect_fps **一起**掉到同一个低位）。故 v0.4.3 把显示也拆出去。
+
+  ★ 隔离原则（贯穿本文件）：显示层任何失败 —— 无 maix、Display 建失败、show 抛异常、
+    无触摸屏 —— 一律只打日志并把 `preview.enabled` 置 False，**绝不影响识别、串口下发
+    与云台闭环**。识别的正确性请以 [perf] 日志与 target_api 回归为准，不要拿屏幕观感判断。
+================================================================================
 """
 
 import os
 import sys
 import time
+import threading
+from collections import deque
 
 import cv2
 import numpy as np
@@ -2080,32 +2382,186 @@ from vision.gimbal_aim import GimbalAim
 from vision.gimbal_self_test import GimbalSelfTest, probe_imu
 from vision.gimbal_calibrate import GimbalCalibrator
 
-BUILD_ID = "2026-10-11-v0.4.1"
+BUILD_ID = "2026-10-11-display-thread-v0.4.3"
+
+
+class _FrameRate:
+    """滑动窗口帧率计。按"成功完成的事件时刻"计时；返回 (平均fps, low1)。
+
+    本类被三处复用（各自独立实例，口径不同、切勿混读）：
+        capture_rate —— 主循环 cam.read() 速率   → [perf] capture=
+        preview.rate —— 显示 show() 完成速率      → [perf] disp= / 屏幕文字 disp
+        worker.rate  —— 识别帧处理完成速率        → [perf] detect_fps=
+
+    low1 = "最慢 1% 帧间隔的倒数"：用于暴露**卡顿**——平均值好看但偶发长停顿（如 JPEG 图传
+    抖动）时，fps 可能仍高，而 low1 会被那几帧长间隔拉低，是比平均值更诚实的体感指标。
+    """
+
+    def __init__(self):
+        self.total = 0
+        self._times = deque(maxlen=120)   # 只留最近 120 个时刻，足够覆盖 2s 窗口
+
+    def record(self, now):
+        self.total += 1
+        self._times.append(float(now))
+
+    def values(self, now):
+        ts = list(self._times)
+        if len(ts) < 2:
+            return 0.0, 0.0
+        # 只看最近两秒内的时刻：统计窗口滚动，旧的读数随时间长自然淡出。
+        # 关键：把"距上一个事件已过去的时间(stall)"也算作一次间隔 —— 否则一旦卡住
+        # （长时间没有新事件），窗口里只剩早先的高速样本，会把上次的快读数永久挂在屏幕上。
+        recent = [t for t in ts if t >= float(now) - 2.0]
+        if len(recent) < 2:
+            return 0.0, 0.0
+        gaps = np.diff(recent)
+        stall = float(now) - recent[-1]
+        if stall > gaps.max():
+            gaps = np.append(gaps, stall)          # 把"当前这段停顿"并入间隔序列
+        fps = (len(recent) - 1) / max(1e-6, float(now) - recent[0])   # 平均帧率
+        slow = np.sort(gaps)[-max(1, int(np.ceil(len(gaps) * 0.01))):]  # 最慢的 1% 间隔
+        return fps, 1.0 / max(1e-6, float(np.mean(slow)))              # low1
+
+
+class _LatestVision:
+    """单识别线程 + 两个"最新槽位"：一个待处理帧槽(_pending)、一个结果槽(_latest)。
+
+    线程模型（时间轴 B 的实现，见模块开头总纲）：
+        · 主线程（生产者）：submit() 往 _pending 放**最新一帧**的副本；
+        · 识别线程（消费者）：取走 _pending → callback() 处理 → 结果写 _latest；
+        · 主线程（读者）：snapshot() 无锁等待地取回 _latest（可能滞后于当前摄像头帧）。
+
+    "最新优先、丢弃旧帧"是刻意的：识别跟不上时保留最新画面才有意义，积压旧帧只会让
+    追踪越追越偏。Camera / Display / 触摸这些**必须独占主线程**的资源一概不跨线程。
+    """
+
+    def __init__(self, callback, idle=None, asynchronous=True):
+        self.callback, self.idle = callback, idle
+        self._condition = threading.Condition()   # 保护 _pending / _latest / _stop
+        self._pending = self._latest = None
+        self._stop = False
+        self.error = None
+        self.dropped = 0                          # 因来不及处理而被覆盖的帧数（丢帧计数）
+        self.rate = _FrameRate()                  # 识别帧率（detect_fps 口径）
+        self.thread = None
+        if asynchronous:
+            # daemon=True：进程退出时线程自动结束，不必显式 join 也能安全收摊。
+            self.thread = threading.Thread(target=self._run, name="rect-vision", daemon=True)
+            self.thread.start()
+
+    def submit(self, gray, captured_at):
+        # ★ 必须拷贝：image2cv(copy=False) 借用的相机内部缓冲会被**下一次 read 覆写**，
+        #   识别线程还没处理完就可能已被改写 → 后台线程必须持有自己的一份灰度图。
+        item = (np.array(gray, dtype=np.uint8, order="C", copy=True), float(captured_at))
+        if self.thread is None:
+            self._process(item)          # 同步模式（VISION_ASYNC=False）：主线程内直接算
+            return
+        with self._condition:
+            if self._stop:
+                return
+            if self._pending is not None:
+                self.dropped += 1        # 上一帧还没被取走就被覆盖 → 记一次丢帧
+            self._pending = item
+            self._condition.notify()     # 唤醒识别线程
+
+    def _process(self, item):
+        snapshot = self.callback(*item)  # callback = _VisionControl.process（识别+偏差+闭环）
+        with self._condition:
+            self._latest = snapshot
+            self.rate.record(time.perf_counter())
+
+    def _run(self):
+        """识别线程主体：循环取最新帧处理；无帧时走 idle() 维持串口保活。"""
+        try:
+            while True:
+                with self._condition:
+                    if self._pending is None and not self._stop:
+                        # 20ms 超时轮询（而非无限 wait），保证 stop 能被及时看到。
+                        self._condition.wait(timeout=0.02)
+                    if self._stop:
+                        return
+                    item, self._pending = self._pending, None
+                if item is not None:
+                    self._process(item)
+                elif self.idle is not None:
+                    # 有帧就处理、没帧就保活：空闲时继续收 ACK/推进按钮自检，但不重发旧误差。
+                    self.idle()
+        except Exception as exc:
+            # 识别线程异常不能静默：记下原因，主循环下一轮会读到 error 并抛出终止。
+            with self._condition:
+                self.error = repr(exc)
+                self._latest = None
+            print("[vision] worker failed: %s" % exc)
+
+    def snapshot(self, now):
+        """取回最近一次识别结果 + 识别帧率（主线程调用，非阻塞）。"""
+        with self._condition:
+            fps, low1 = self.rate.values(now)
+            return self._latest, fps, low1
+
+    def close(self):
+        """停线程；必须等它真正退出——UART 归识别线程独占，未退干净就动硬件会打架。"""
+        with self._condition:
+            self._stop = True
+            self._pending = None
+            self._condition.notify()
+        if self.thread is not None:
+            self.thread.join(timeout=2.0)
+            if self.thread.is_alive():
+                # 线程没停就动 UART/相机是竞态；宁可抛错让上层看见，也不静默降级。
+                raise RuntimeError("vision worker did not stop; UART remains owned by worker")
 
 
 class _Preview:
-    """主进程内显示（MaixVision 可见）：标注画面 + 可点击按钮 → 屏幕尺寸画布 → `show()`。
+    """显示层：标注画面 →（letterbox）画布 → `display.show()`，附屏幕可点击按钮。
+
+    ★ 线程模型（时间轴 C，v0.4.3 起）
+        主循环（生产者）  `render(view, ...)` —— letterbox + 叠按钮，把画布塞进"待上屏槽"就返回；
+        显示线程（消费者） `_show_loop()`     —— 取最新画布 → `show()` → 画布还回池子。
+        画布池固定 2 张：显示线程占 1 张、主线程画 1 张；两张都被占用时 `due()` 直接返回 False
+        （丢帧，不排队、不等待）。因此 **show() 再慢也只表现为预览掉帧**，绝不拖慢主循环、
+        识别线程与云台闭环 —— 这正是"把识别拆出去"之外还必须做的一步（见模块开头总纲）。
+        `Config.SHOW_ASYNC=False` 时退回旧行为（主循环内同步 `show()`）。
 
     为什么画布做成"屏幕尺寸"：MaixPy 触摸返回的是**屏幕坐标**，只有画布尺寸 == 屏幕尺寸，
     触摸坐标才能与画布/按钮坐标 **1:1** 对应，按钮命中判定才可靠（MaixPy「触摸屏使用」示例即如此）。
     标注图按等比例 letterbox 居中，不拉伸变形。
     `Config.SHOW=False` 时不建 Display；无显示 / 建失败 / show 失败只打日志并停用，绝不影响识别与闭环。
+
+    两级尺寸务必分清（`render()` 里同时出现，最易混淆）：
+        · display.width/height  —— 物理屏幕尺寸，也是**触摸坐标**所在坐标系（按钮按此定义）
+        · render_width/height   —— 实际送去 show() 的**画布**尺寸（SHOW_WIDTH 限制）
+    默认 `SHOW_WIDTH=0` ⇒ 画布 == 屏幕：`show()` 不再缩放、触摸不再换算；相机 640×480 与
+    MaixCAM2 屏幕 640×480 宽高比一致时，letterbox 也退化成零开销（不 resize、不刷黑边）。
     """
 
     def __init__(self, cfg):
         self.cfg = cfg
         self.display = None
-        self.width = self.height = 0
-        self.enabled = False
-        self.buttons = {}
-        self.shown = 0
+        self.width = self.height = 0            # 物理屏幕尺寸（触摸坐标系）
+        self.render_width = self.render_height = 0
+        self.enabled = False                    # 显示是否可用；任何一步失败都置 False 并停用
+        self.buttons = {}                       # name -> (x0,y0,x1,y1)，屏幕坐标
+        self._button_draw = []                  # 预算好的按钮绘制参数（画布坐标），渲染时不再换算
+        self.shown = 0                          # 已成功 show() 的帧数（disp 口径）
+        self.dropped = 0                        # 因显示线程忙而未画的帧数（丢帧，不排队）
         self.fps = 0.0
-        self.show_max_ms = 0.0
-        self._period = 1.0 / max(1, int(getattr(cfg, "SHOW_FPS", 15)))
-        self._t_show = -1e9
-        self._fps_t = None
-        self._fps_n = 0
-        self._canvas = None
+        self.low1 = 0.0
+        self.rate = _FrameRate()                # 显示帧率（disp 口径，与识别帧率分开）
+        self._period = 1.0 / max(1, int(getattr(cfg, "SHOW_FPS", 15)))   # 显示节拍周期
+        self._t_show = -1e9                     # 下一次该画的时刻（固定时间轴，见 due/render）
+        self._canvas = None                     # 同步模式的单张画布（异步模式走 _free 池）
+        self._show_times = []                   # 本日志窗口内的 show() 耗时样本（ms）
+        self._show_max = 0.0
+        # ---- 显示线程状态（时间轴 C）----
+        self.async_show = bool(getattr(cfg, "SHOW_ASYNC", True))
+        self._cond = threading.Condition()      # 保护 _free / _pending / _pool / _stop
+        self._free = []                         # 空闲画布池
+        self._pending = None                    # 待上屏画布（只留最新一张）
+        self._pool = 0                          # 已分配画布数（上限 2，由 due() 保证）
+        self._stop = False
+        self.thread = None
         if not bool(getattr(cfg, "SHOW", False)):
             print("[preview] SHOW=False -> 不建显示（纯串口/头部模式，画面不流转）")
             return
@@ -2114,19 +2570,41 @@ class _Preview:
             self.display = display.Display()
             self.width = int(self.display.width())
             self.height = int(self.display.height())
+            # 画布宽度：SHOW_WIDTH<=0 ⇒ 用屏幕原始宽度（画布＝屏幕 ⇒ show() 零缩放）。
+            cap = int(getattr(cfg, "SHOW_WIDTH", 0) or 0)
+            self.render_width = self.width if cap <= 0 else min(self.width, cap)
+            self.render_height = max(1, int(round(self.height * self.render_width / self.width)))
+            if hasattr(display, "set_trans_image_quality"):
+                display.set_trans_image_quality(int(getattr(cfg, "SHOW_JPEG_QUALITY", 70)))
             self.enabled = True
-            print("[preview] mode=in-process %dx%d show_fps=%d —— MaixVision 看不到画面时先确认本行"
-                  % (self.width, self.height, int(getattr(cfg, "SHOW_FPS", 15))))
+            print("[preview] mode=%s screen=%dx%d canvas=%dx%d show_fps=%d jpeg=%d"
+                  % ("display-thread" if self.async_show else "sync-inprocess",
+                     self.width, self.height, self.render_width, self.render_height,
+                     int(getattr(cfg, "SHOW_FPS", 30)), int(getattr(cfg, "SHOW_JPEG_QUALITY", 70))))
+            if self.async_show:
+                self.thread = threading.Thread(target=self._show_loop, name="display", daemon=True)
+                self.thread.start()
         except Exception as exc:
+            # 建不了显示不算错误：板子仍照常识别 + 跑闭环，只是没有画面。
             print("[preview] 显示初始化失败（不影响识别/闭环，仅无预览）: %s" % exc)
 
     # ------------------------------------------------------------------ 按钮
     def add_button(self, name, x0, y0, x1, y1):
-        """注册一个按钮（画布=屏幕坐标）。"""
+        """注册一个按钮（**屏幕坐标**）。几何与文本宽度在此**预计算一次**，渲染时不再换算。"""
         self.buttons[name] = (int(x0), int(y0), int(x1), int(y1))
+        # 屏幕坐标 → 画布坐标（默认 SHOW_WIDTH=0 时二者相同，比例恒为 1）
+        sx = self.render_width / float(self.width) if self.width else 1.0
+        sy = self.render_height / float(self.height) if self.height else 1.0
+        bx0, bx1 = int(round(x0 * sx)), int(round(x1 * sx))
+        by0, by1 = int(round(y0 * sy)), int(round(y1 * sy))
+        # 用 ASCII 标签：OpenCV 的 Hershey 字体不支持中文，画中文会变问号/方块。
+        label = "SELF-TEST" if name == "selftest" else name.upper()
+        tw = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)[0][0]
+        pos = (bx0 + max(4, (bx1 - bx0 - tw) // 2), by0 + (by1 - by0) // 2 + 7)   # 水平居中
+        self._button_draw.append((bx0, by0, bx1, by1, label, pos))
 
     def hit(self, x, y):
-        """触摸点 (x, y) 命中的按钮名；未命中返回 None。"""
+        """触摸点 (x, y)（屏幕坐标）命中的按钮名；未命中返回 None。"""
         for name, (x0, y0, x1, y1) in self.buttons.items():
             if x0 <= x <= x1 and y0 <= y <= y1:
                 return name
@@ -2134,61 +2612,153 @@ class _Preview:
 
     # ------------------------------------------------------------------ 渲染
     def due(self, now):
-        """是否到了本次显示节拍（按 SHOW_FPS 限频，避免拖累主循环）。"""
-        return self.enabled and (float(now) - self._t_show) >= self._period
+        """是否到了显示节拍**且**有画布可用；显示线程忙时返回 False（丢帧，绝不等待）。"""
+        if not self.enabled or float(now) < self._t_show:
+            return False
+        if not self.async_show:
+            return True
+        with self._cond:
+            if self._free or self._pool < 2:
+                return True
+        self.dropped += 1        # 节拍到了但两张画布都占用中 → 本帧不画（丢帧而非排队）
+        return False
+
+    def _take_canvas(self):
+        """取一张画布：同步模式复用固定那张；异步模式从池里取，池空则新分配（上限由 due 保证）。"""
+        need = (self.render_height, self.render_width)
+        if not self.async_show:
+            if self._canvas is None or self._canvas.shape[:2] != need:
+                self._canvas = np.empty((need[0], need[1], 3), np.uint8)
+            return self._canvas
+        with self._cond:
+            if self._free:
+                return self._free.pop()
+            self._pool += 1
+        return np.empty((need[0], need[1], 3), np.uint8)
 
     def render(self, view, now, status=""):
-        """把标注后的 `view`（任意尺寸）letterbox 到屏幕画布、叠加按钮与状态，再 show。"""
+        """把标注后的 `view`（任意尺寸）letterbox 到画布、叠按钮与状态，然后交给显示线程。
+
+        步骤（对应模块总纲时间轴 A 的第 ⑦ 步）：
+            1) 推进节拍 _t_show（固定时间轴，见下）
+            2) 算 letterbox 缩放与居中偏移 (scale/ox/oy)，把 view 放进画布
+            3) 叠按钮/状态条
+            4) 交显示 —— 异步：投递后**立即返回**；同步：当场 `show()`
+        """
         if not self.enabled:
             return
         now = float(now)
-        self._t_show = now
-        vh, vw = view.shape[:2]
-        scale = min(self.width / float(vw), self.height / float(vh))
-        nw, nh = max(1, int(round(vw * scale))), max(1, int(round(vh * scale)))
-        ox, oy = (self.width - nw) // 2, (self.height - nh) // 2
-        if self._canvas is None or self._canvas.shape[:2] != (self.height, self.width):
-            self._canvas = np.zeros((self.height, self.width, 3), np.uint8)
+        # ★ 固定时间轴限频：节拍由"上一次预期时刻 + 周期"推进，而不是"show 完成后再等一周期"。
+        #   好处：即使某次 show() 慢，也不会让后续节拍越拖越后（避免累积漂移）；
+        #   已经错过的节拍用 skipped 一次性跳过，只画最新画面。
+        if self._t_show < 0:
+            self._t_show = now + self._period
         else:
-            self._canvas[:] = 0
-        self._canvas[oy:oy + nh, ox:ox + nw] = cv2.resize(view, (nw, nh))
-        self._draw_buttons(status)
-        t0 = time.perf_counter()
+            skipped = max(1, int((now - self._t_show) / self._period) + 1)
+            self._t_show += skipped * self._period
+        canvas = self._take_canvas()
+        # ---- letterbox：等比缩放 + 居中，两侧留黑边，绝不拉伸（保持几何不变形）----
+        vh, vw = view.shape[:2]
+        rw, rh = self.render_width, self.render_height
+        scale = min(rw / float(vw), rh / float(vh))         # 取两轴较小比例 → 完整装入
+        nw, nh = max(1, int(round(vw * scale))), max(1, int(round(vh * scale)))
+        ox, oy = (rw - nw) // 2, (rh - nh) // 2             # 居中偏移
+        if (nw, nh) != (rw, rh):
+            canvas[:] = 0                                   # 只有真存在黑边时才需要刷黑背景
+        canvas[oy:oy + nh, ox:ox + nw] = (
+            view if (nw, nh) == (vw, vh) else cv2.resize(view, (nw, nh)))
+        self._draw_buttons(canvas, status)                   # 按钮与状态条画在画布之上
+        if self.async_show:
+            self._publish(canvas)                            # 投递即返回：show 交给显示线程
+        else:
+            self._do_show(canvas)
+
+    def _publish(self, canvas):
+        """把画布放进"待上屏槽"（只留最新一张）并唤醒显示线程；主循环不等它。"""
+        with self._cond:
+            if self._stop:
+                return
+            if self._pending is not None:
+                self._free.append(self._pending)             # 上一张还没上屏 → 退回池（丢帧）
+                self.dropped += 1
+            self._pending = canvas
+            self._cond.notify()
+
+    def _show_loop(self):
+        """显示线程主体（时间轴 C）：取最新画布 → show() → 画布还池。**慢也只慢自己**。"""
         try:
             from maix import image as maix_image
-            self.display.show(maix_image.cv2image(self._canvas, bgr=True, copy=True))
+        except Exception as exc:
+            print("[preview] 显示线程无法导入 maix.image，退化为无预览: %s" % exc)
+            return
+        while True:
+            with self._cond:
+                if self._pending is None and not self._stop:
+                    self._cond.wait(timeout=0.02)            # 20ms 轮询，保证 stop 能被及时看到
+                if self._stop:
+                    return
+                canvas, self._pending = self._pending, None
+            if canvas is None:
+                continue
+            if not self._do_show(canvas, maix_image):
+                return                                       # show 已失败并停用显示 → 线程退出
+            with self._cond:
+                self._free.append(canvas)
+
+    def _do_show(self, canvas, maix_image=None):
+        """真正调用 display.show()，记耗时/帧率；失败即停用显示（不影响识别/闭环）。返回是否成功。"""
+        if maix_image is None:
+            from maix import image as maix_image
+        t0 = time.perf_counter()
+        try:
+            # bgr=True：cv2 是 BGR 序；copy=True：交给显示的必须是独立缓冲。
+            self.display.show(maix_image.cv2image(canvas, bgr=True, copy=True))
         except Exception as exc:
             self.enabled = False
             print("[preview] show 失败，停用显示: %s" % exc)
-            return
+            return False
         ms = (time.perf_counter() - t0) * 1000.0
-        self.show_max_ms = max(self.show_max_ms, ms)
         self.shown += 1
-        if self._fps_t is None:
-            self._fps_t = now
-            self._fps_n = 0
-        elif now - self._fps_t >= 0.5:
-            self.fps = self._fps_n / max(1e-6, now - self._fps_t)
-            self._fps_n = 0
-            self._fps_t = now
-        else:
-            self._fps_n += 1
+        completed = time.perf_counter()
+        self.rate.record(completed)
+        self.fps, self.low1 = self.rate.values(completed)
+        with self._cond:
+            self._show_times.append(ms)
+            if ms > self._show_max:
+                self._show_max = ms
+        return True
 
-    def _draw_buttons(self, status):
-        # 用 ASCII 标签：OpenCV 的 Hershey 字体不支持中文，画中文会变问号/方块。
-        for name, (x0, y0, x1, y1) in self.buttons.items():
-            cv2.rectangle(self._canvas, (x0, y0), (x1, y1), (46, 150, 60), -1)
-            cv2.rectangle(self._canvas, (x0, y0), (x1, y1), (235, 235, 235), 1)
-            label = "SELF-TEST" if name == "selftest" else name.upper()
-            tw = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.55, 2)[0][0]
-            cv2.putText(self._canvas, label,
-                        (x0 + max(4, (x1 - x0 - tw) // 2), y0 + (y1 - y0) // 2 + 7),
+    def take_show_stats(self):
+        """取走并清空本日志窗口的 show() 耗时样本 → (avg, p95, max, n)，单位 ms。"""
+        with self._cond:
+            times, worst = self._show_times, self._show_max
+            self._show_times, self._show_max = [], 0.0
+        if not times:
+            return 0.0, 0.0, worst, 0
+        arr = np.asarray(times, dtype=np.float64)
+        return float(arr.mean()), float(np.percentile(arr, 95)), worst, len(times)
+
+    def _draw_buttons(self, canvas, status=""):
+        # 按钮几何/文本宽度已在 add_button() 预算好，这里只画（不再每帧 getTextSize/换算）。
+        for (x0, y0, x1, y1, label, pos) in self._button_draw:
+            cv2.rectangle(canvas, (x0, y0), (x1, y1), (46, 150, 60), -1)   # 填充
+            cv2.rectangle(canvas, (x0, y0), (x1, y1), (235, 235, 235), 1)  # 描边
+            cv2.putText(canvas, label, pos,
                         cv2.FONT_HERSHEY_SIMPLEX, 0.55, (255, 255, 255), 2, cv2.LINE_AA)
         if status:
-            cv2.putText(self._canvas, status, (8, self.height - 8),
+            # 左下角状态串：self-test i/n、calibrate <axis>、或 aim 状态机名。
+            cv2.putText(canvas, status, (8, self.render_height - 8),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1, cv2.LINE_AA)
 
     def close(self):
+        """先停显示线程（等它把当前一次 show 做完）再关 Display —— 顺序反了会并发操作显示。"""
+        if self.async_show:
+            with self._cond:
+                self._stop = True
+                self._pending = None
+                self._cond.notify()
+            if self.thread is not None:
+                self.thread.join(timeout=2.0)
         if self.display is not None:
             try:
                 self.display.close()
@@ -2197,15 +2767,16 @@ class _Preview:
 
 
 class _Touch:
-    """触摸屏输入：把点击映射到 `_Preview` 的按钮（按下沿触发）。
+    """触摸屏输入：把点击映射到 `_Preview` 的按钮（**按下沿**触发，防连点重复启动）。
 
     `maix.touchscreen.TouchScreen().read()` 立即返回 `(x, y, pressed)`（MaixPy v4）。
     无触摸屏 / 未启用 / 无显示时自动禁用，只打日志。
+    坐标口径：read() 返回的是**屏幕坐标**，与按钮注册坐标一致（画布=屏幕尺寸的前提）。
     """
 
     def __init__(self, cfg):
         self.ts = None
-        self._down = False
+        self._down = False                 # 上一帧按下状态，用于识别"按下沿"
         if not bool(getattr(cfg, "ENABLE_TOUCH_BUTTON", True)):
             print("[touch] 触摸按钮已关闭（ENABLE_TOUCH_BUTTON=False）")
             return
@@ -2225,15 +2796,22 @@ class _Touch:
         except Exception:
             return None
         if pressed:
-            if not self._down:
+            if not self._down:             # 只有"上一帧未按、这一帧按下"才算一次点击
                 self._down = True
                 return preview.hit(int(x), int(y))
-            return None
-        self._down = False
+            return None                    # 按住不放：不重复返回，避免反复触发
+        self._down = False                 # 松开，允许下一次按下沿
         return None
 
 
 def _to_gray(img, image_module):
+    """MaixPy 相机帧 → cv2 灰度 ndarray（H×W，uint8）。
+
+    优先走 `image2cv(..., copy=False)` **零拷贝**借用相机缓冲（不额外占内存、最快），
+    因此返回的数组在下一次 cam.read() 前必须用完；跨线程传递前务必先 copy（见 _LatestVision.submit）。
+    按通道数兜底：单通道直接取、3 通道按 RGB2GRAY、4 通道按 RGBA2GRAY；
+    都不能识别时退回 copy=True 的 BGR 再转灰度。
+    """
     a = image_module.image2cv(img, ensure_bgr=False, copy=False)
     if a.ndim == 2:
         return a
@@ -2250,6 +2828,7 @@ def _to_gray(img, image_module):
 
 
 def _send_uart(uart, result):
+    """旧版纯视觉 ASCII 输出（ENABLE_GIMBAL=False 的降级路径才用；开云台时 uart 为 None）。"""
     if uart is None:
         return
     if result.get("valid"):
@@ -2257,6 +2836,135 @@ def _send_uart(uart, result):
     else:
         payload = "@[invalid]%%\r\n"
     uart.write(payload.encode("ascii"))
+
+
+class _VisionControl:
+    """识别 + 电机状态由**识别线程独占**；主循环只提交图像、按钮事件、读结果。
+
+    独占理由：UART 读写不可并发（两条轴各有独立串口，但同一轴的收发必须串行），
+    把"识别 → 偏差 → 闭环下发 → 收 ACK"全放进识别线程，天然避免与主线程抢串口。
+    主线程要触发自检只置 `request_test` 事件，由识别线程在自己的上下文里安全地启动。
+    """
+
+    def __init__(self, cfg, link, aim, calibrator, uart):
+        self.cfg, self.link, self.aim = cfg, link, aim
+        self.calibrator, self.uart = calibrator, uart
+        self.self_test = None
+        self.request_test = threading.Event()   # 主线程置位、识别线程消费（按钮 → 自检）
+        self.detector = RectangleCenterDetector(cfg)
+        self.laser = LaserSpotDetector(cfg) if cfg.ENABLE_LASER else None
+        self.laser_static = self.laser is not None and self.laser.mode == "fixed"
+        # fixed 模式：光斑位置是常量，开机取一次即可，之后每帧只做减法（零检测开销）。
+        self.laser_state = self.laser.static_state() if self.laser_static else None
+        self.last_capture = -1e9
+        self.stale_stopped = True
+
+    def process(self, gray, captured_at):
+        """识别线程的单帧主流程：识别 → 光斑 → 偏差 → 串口 → 闭环 → 打包给显示层。"""
+        started = time.perf_counter()
+        result = self.detector.process(gray)                # ① 黑框识别
+        detected = time.perf_counter()
+        if self.laser is not None and not self.laser_static:
+            self.laser_state = self.laser.process(gray, detected)   # ② detect 模式才实测光斑
+        dv = deviation(self.laser_state, result, use_raw=self.cfg.AIM_USE_RAW) if self.laser_state else None
+        if dv is not None:
+            result["laser_u"], result["laser_v"] = self.laser_state["u"], self.laser_state["v"]
+            result["dx"], result["dy"] = dv                 # dx=靶心−光斑（闭环用的那个偏差）
+        now = time.perf_counter()
+        fresh = now - captured_at <= self.cfg.RESULT_MAX_AGE_S   # 结果是否还"新鲜"
+        result["aim_valid"] = bool(dv is not None and fresh)
+        self.last_capture = captured_at
+        # 过期结果不外发：串口与闭环都用降级后的 output，避免拿旧定位驱动电机。
+        output = result if fresh else dict(valid=False, aim_valid=False, stage="stale")
+        _send_uart(self.uart, output)
+        self._control(output, now, new_measurement=True)
+        # 返回给显示层的快照：识别结果 + 光斑 + 计时 + 状态串。
+        return dict(result=result, laser=dict(self.laser_state) if self.laser_state else None,
+                    captured_at=captured_at, completed_at=time.perf_counter(),
+                    detect_ms=(detected - started) * 1000, status=self.status())
+
+    def idle(self):
+        # 摄像头/图传停顿时继续收 ACK 与推进按钮自检，禁止重复发送旧视觉误差。
+        self._control(None, time.perf_counter(), new_measurement=False)
+
+    def status(self):
+        """给屏幕左下角显示的状态串：自检 > 标定 > 闭环状态机的优先级。"""
+        if self.self_test is not None and not self.self_test.done:
+            return "self-test %d/%d" % (self.self_test.index, len(self.self_test.sequence))
+        if self.calibrator is not None and not self.calibrator.done:
+            return "calibrate %s" % self.calibrator.axis
+        return self.aim.state if self.aim is not None else "vision"
+
+    def _control(self, result, now, new_measurement):
+        """闭环调度中枢：故障检查 → 按钮自检 → 标定 → 自检 → 失锁停机 → 追踪下发。
+
+        优先级顺序**不可随意调换**（见 B 轨 AGENTS.md §3.2）；尤其 FAULT 必须在最前，
+        因为链路故障要阻断的不只是追踪，还包括已启动的自检/标定。
+        """
+        link, aim = self.link, self.aim
+        if link is None or aim is None:
+            return
+        feedback = link.poll(now)                            # 非阻塞收两条串口的返回帧
+        if feedback and bool(feedback.get("fault")) and aim.state != "FAULT":
+            reason = feedback.get("reason")
+            link.stop(now=now)
+            aim.fault("link:%s" % reason)                    # 链路故障 → 进入 FAULT
+        if self.request_test.is_set():                       # 屏幕按钮置位的自检请求
+            self.request_test.clear()
+            if self.self_test is not None and not self.self_test.done:
+                print("[ui] 自检进行中，忽略重复点击")
+            elif aim.state == "FAULT":
+                print("[ui] 链路 FAULT，拒绝自检")
+            elif self.calibrator is not None and not self.calibrator.done:
+                print("[ui] 标定进行中，拒绝自检")
+            elif not self.cfg.GIMBAL_SELF_TEST:
+                print("[ui] GIMBAL_SELF_TEST=False，忽略自检")
+            else:
+                link.stop(now=now)                           # 先停当前动作再起自检
+                self.self_test = GimbalSelfTest(self.cfg, link, now)
+                print("[ui] 收到点击 -> 启动上电自检（%d 步）" % len(self.self_test.sequence))
+        # 链路故障必须阻断已启动的自检/标定，不只阻断普通追踪。
+        if aim.state == "FAULT":
+            return
+        if self.calibrator is not None and not self.calibrator.done:
+            self.calibrator.update(now, result or {"valid": False, "aim_valid": False})
+            return
+        if self.self_test is not None and not self.self_test.done:
+            self.self_test.update(now)
+            return
+        if not new_measurement:
+            # idle 路径：没有新视觉误差。若已超时且尚未停机，则停一次并置 aim 无效（防"漂"）。
+            if now - self.last_capture > self.cfg.RESULT_MAX_AGE_S and not self.stale_stopped:
+                link.stop(now=now)
+                aim.update({"aim_valid": False}, now=now)
+                self.stale_stopped = True
+            return
+        if not result.get("aim_valid"):
+            if not self.stale_stopped:                       # 视觉失效：停一次电机，不回零
+                link.stop(now=now)
+            self.stale_stopped = True
+        else:
+            self.stale_stopped = False
+        commands = aim.update(result, now=now)["cmds"]       # 状态机算出的两轴增量指令
+        for axis, command in commands.items():
+            if command is not None:
+                ccw, pulses, rpm = command
+                link.move(axis, ccw, pulses, rpm, self.cfg.ACC_DEFAULT, now=now)
+
+
+def _display_result(snapshot, now, max_age):
+    """把"识别线程的最新快照"翻译成"这一帧显示该画什么"。
+
+    过期定位不能被画成当前帧的有效定位（否则屏幕上框会"粘"在旧位置，误以为还锁着）；
+    但视频原帧继续刷新，画面不因此冻住。返回 (result, laser, age)：
+        age > max_age → 用 {valid:False, stage:"stale"} 占位，只保留 laser（面板照常显示）
+    """
+    if snapshot is None:
+        return {"valid": False, "stage": "waiting"}, None, 0.0
+    age = max(0.0, now - snapshot["captured_at"])
+    if age > max_age:
+        return {"valid": False, "stage": "stale"}, snapshot["laser"], age
+    return snapshot["result"], snapshot["laser"], age
 
 
 def main():
@@ -2307,6 +3015,8 @@ def main():
             print("[gimbal] disabled after init failure: %s" % exc)
 
     # ---- 显示（把画面流转到 MaixVision）+ 屏幕按钮 ----
+    # 按钮几何按**屏幕坐标**定义：右上角一块 30%宽/20%高 的区域（有下限，保证可点）。
+    # 只有"有显示 且 启用触摸按钮"时才注册按钮并建触摸；否则各自打印降级原因。
     preview = _Preview(Config)
     touch = None
     if preview.enabled and bool(getattr(Config, "ENABLE_TOUCH_BUTTON", True)):
@@ -2319,161 +3029,116 @@ def main():
     elif bool(getattr(Config, "ENABLE_TOUCH_BUTTON", True)):
         print("[touch] 无显示 -> 屏幕按钮不可用（自检需有显示才能点击触发；SHOW=True 才有）")
 
-    detector = RectangleCenterDetector(Config)
-    laser_det = LaserSpotDetector(Config) if Config.ENABLE_LASER else None
-    # fixed 模式（光斑位置写死）：开机取一次常量，之后全程复用 —— 不做任何图像检测，
-    # 每帧只剩"黑框中心 − 该常量"两次减法。detect 模式才需要每帧调用 process()。
-    laser_static = (laser_det.mode == "fixed") if laser_det is not None else False
-    aim_use_raw = bool(getattr(Config, "AIM_USE_RAW", False))
-    last = time.perf_counter()
-    last_log = last
-    totals = dict(read=0.0, bridge=0.0, detect=0.0, laser=0.0,
-                  uart=0.0, rx=0.0, aim=0.0, show=0.0, loop=0.0)
-    count, searches = 0, 0
-    laser_state = laser_det.static_state() if laser_static else None
-    laser_ms, laser_calls, laser_hits = 0.0, 0, 0
-    fps = 0.0
-    mean_dt = None
+    # ---- 线程装配：识别线程（时间轴 B）+ 主循环（时间轴 A）----
+    controller = _VisionControl(Config, link, aim, calibrator, uart)
+    worker = _LatestVision(controller.process, controller.idle, Config.VISION_ASYNC)
+    capture_rate = _FrameRate()             # 取帧帧率（capture 口径）
+    last_log = time.perf_counter()
+    read_times, draw_times, loop_times = [], [], []   # 本日志窗口内的分相耗时样本（ms）
     print("[rect-center] %s search_width=%d display_width=%d display_fps=%d" %
-          (BUILD_ID, Config.SEARCH_WIDTH, Config.SHOW_WIDTH, Config.SHOW_FPS))
-    print("[rect-center] 四边窄带跟踪 / 失锁后低分辨率搜索 / 72 点逆投影")
+          (BUILD_ID, Config.SEARCH_WIDTH, preview.render_width, Config.SHOW_FPS))
+    print("[preview] async=%s 画布=%dx%d（SHOW_WIDTH=%d；0=用屏幕原始宽度）"
+          % (getattr(Config, "SHOW_ASYNC", True), preview.render_width, preview.render_height,
+             int(getattr(Config, "SHOW_WIDTH", 0) or 0)))
+    print("[vision] latest-frame worker=%s max_result_age=%.0fms" %
+          (Config.VISION_ASYNC, Config.RESULT_MAX_AGE_S * 1000))
     print("[ui] 上电自检已改为屏幕按钮：点显示右上角 SELF-TEST 触发（不再上电自动跑）")
-    print("[aim] 闭环口径=%s（raw_u/raw_v）离群拒收=%spx 死区=%.1fpx 限幅=%dp" %
-          ("raw" if aim_use_raw else "smoothed", Config.JUMP_REJECT_PX,
-           Config.DEADBAND_PX, Config.MAX_STEP_PULSES))
-    if laser_det is not None:
-        if laser_static:
-            print("[laser] mode=fixed 光斑位置写死 (%d,%d) —— 不做图像检测，每帧只算黑框中心−该常量" %
-                  (Config.LASER_U_NOMINAL, Config.LASER_V_NOMINAL))
-        else:
-            print("[laser] mode=detect 标称位置 (%d,%d) ROI±%d 限频 %.2fs 判据 peak>=max(%.0f, bg+%.0f) 面积<=%d" %
-                  (Config.LASER_U_NOMINAL, Config.LASER_V_NOMINAL,
-                   Config.LASER_ROI_RADIUS, Config.LASER_INTERVAL_S, Config.LASER_MIN_PEAK,
-                   Config.LASER_MIN_CONTRAST, Config.LASER_MAX_PIXELS))
-    while not app.need_exit():
-        start = time.perf_counter()
-        img = cam.read()
-        if img is None:
-            continue
-        after_read = time.perf_counter()
-        gray = _to_gray(img, image)
-        after_bridge = time.perf_counter()
-        result = detector.process(gray)
-        after_detect = time.perf_counter()
-        if laser_det is not None and not laser_static:
-            # detect 模式：内部限频，未到 LASER_INTERVAL_S 时不重算，直接沿用上次光斑位置。
-            laser_state = laser_det.process(gray, after_detect)
-            if laser_state.get("updated"):
-                laser_calls += 1
-                laser_ms += laser_state["ms"]
-                laser_hits += 1 if laser_state["found"] else 0
-        dv = None
-        if laser_state is not None:
-            # fixed 模式走的就是这里：每帧唯一的光斑相关运算 = 两次减法。
-            dv = deviation(laser_state, result, use_raw=aim_use_raw)
-            if dv is not None:
-                # 靶心-光斑偏差；dx/dy 既是串口字段也是闭环输入（符号见 deviation 注释）。
-                result["laser_u"], result["laser_v"] = laser_state["u"], laser_state["v"]
-                result["dx"], result["dy"] = dv
-        after_laser = time.perf_counter()
-        result["aim_valid"] = bool(dv is not None)
-        _send_uart(uart, result)
-        after_uart = time.perf_counter()
-        # 下行：非阻塞读两条串口，处理 E2 自动补使能 / ACK 超时 / E2 洪水。
-        rx_started = time.perf_counter()
-        fb = link.poll(after_uart) if link is not None else None
-        rx_elapsed = time.perf_counter() - rx_started
-        # ⚠ `_ingest()` 无故障时返回的是 `fault=False`（不是 None）：必须按**真值**判故障，
-        #   写成 `is not None` 会让开机第 1 帧就误判 FAULT（v3 基线的回归坑，已修）。
-        link_fault = bool(fb.get("fault")) if fb else False
-        link_reason = fb.get("reason") if fb else None
-        aim_started = time.perf_counter()
-        if link_fault and aim is not None and aim.state != "FAULT":
-            print("[gimbal] link fault: %s -> 立即停止并进入 FAULT" % link_reason)
-            link.stop(now=after_uart)
-            aim.fault("link:%s" % link_reason)
-        # ---- 屏幕按钮：点击触发上电自检（上电不再自动跑）----
-        if touch is not None and link is not None and aim is not None:
-            if touch.poll(preview) == "selftest":
-                if self_test is not None and not self_test.done:
-                    print("[ui] 自检进行中，忽略重复点击")
-                elif aim.state == "FAULT":
-                    print("[ui] 链路 FAULT，拒绝自检")
-                elif not bool(getattr(Config, "GIMBAL_SELF_TEST", True)):
-                    print("[ui] GIMBAL_SELF_TEST=False，忽略自检")
-                else:
-                    self_test = GimbalSelfTest(Config, link, after_uart)
-                    print("[ui] 收到点击 -> 启动上电自检（%d 步）" % len(self_test.sequence))
-        if calibrator is not None:
-            if not calibrator.done:
-                calibrator.update(after_uart, result)
-        elif self_test is not None and not self_test.done:
-            self_test.update(after_uart)
-        elif aim is not None and link is not None and aim.state != "FAULT":
-            aim_result = aim.update(result, now=after_uart)
-            for axis, command in aim_result["cmds"].items():
-                if command is not None:
-                    ccw, pulses, rpm = command
-                    link.move(axis, ccw, pulses, rpm, Config.ACC_DEFAULT, now=after_uart)
-        aim_elapsed = time.perf_counter() - aim_started
-        after_aim = time.perf_counter()
-        # ---- 显示：把带标注的画面 + 按钮流转到 MaixVision ----
-        if preview.due(after_uart):
-            view = draw_result(gray, result, Config.SHOW_WIDTH,
-                               top_offset=PANEL_H if laser_state is not None else 0)
-            if laser_state is not None:
-                draw_laser_overlay(view, laser_state, result,
-                                   min(1.0, float(Config.SHOW_WIDTH) / gray.shape[1]),
-                                   use_raw=aim_use_raw)
-            cv2.putText(view, "loop %.1f  disp %.1f fps" % (fps, preview.fps),
-                        (12, view.shape[0] - 12), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
-            status = ""
-            if self_test is not None and not self_test.done:
-                status = "self-test %d/%d" % (self_test.index, len(self_test.sequence))
-            elif calibrator is not None and not calibrator.done:
-                status = "calibrate %s" % calibrator.axis
-            preview.render(view, after_uart, status=status)
-        after_show = time.perf_counter()
-        now = after_show
-        dt = now - last
-        last = now
-        if dt > 1e-4:
-            mean_dt = dt if mean_dt is None else 0.9 * mean_dt + 0.1 * dt
-            fps = 1.0 / mean_dt
-        phases = (after_read - start,
-                  after_bridge - after_read, after_detect - after_bridge,
-                  after_laser - after_detect, after_uart - after_laser,
-                  rx_elapsed, aim_elapsed, after_show - after_aim, now - start)
-        for key, elapsed in zip(totals, phases):
-            totals[key] += elapsed * 1000.0
-        count += 1
-        searches += result.get("search_count", 0)
-        if now - last_log > Config.LOG_INTERVAL:
-            window_fps = count / max(1e-6, now - last_log)
-            last_log = now
-            laser_avg = laser_ms / laser_calls if laser_calls else 0.0
-            print("[perf] %s valid=%s FPS=%.1f disp=%.1f stage=%s frames=%d searches=%d "
-                  "read=%.1f bridge=%.1f detect=%.1f laser=%.1f "
-                  "uart=%.1f rx=%.1f aim=%.1f show=%.1f loop=%.1f ms | laser_call=%.2fms n=%d hit=%d" %
-                  ((BUILD_ID, result["valid"], window_fps, preview.fps, result["stage"], count, searches) +
-                   tuple(totals[k] / count for k in totals) +
-                   (laser_avg, laser_calls, laser_hits)))
-            if aim is not None:
-                print(aim.status_line())
-            count, searches = 0, 0
-            laser_ms, laser_calls, laser_hits = 0.0, 0, 0
-            for key in totals:
-                totals[key] = 0.0
-    if link is not None:
-        try:
-            link.stop()
-        except Exception as exc:
-            print("[gimbal] stop on exit failed: %s" % exc)
-    preview.close()
     try:
-        cam.close()
-    except Exception:
-        pass
+        # ============================ 时间轴 A：主循环 ============================
+        # 每轮 = 取帧 → 提交识别 → 取最新结果 → 按节拍绘制并投递上屏 → 周期打日志。
+        # 全程不等待识别结果，**也不等待 show**（真正上屏在显示线程），二者慢只表现为
+        # "标注滞后 / 预览掉帧"，都不拖慢循环本身。
+        while not app.need_exit():
+            started = time.perf_counter()
+            img = cam.read()                             # ① 取帧（灰度）
+            if img is None:
+                continue
+            captured = time.perf_counter()
+            read_times.append((captured - started) * 1000)   # read 耗时样本
+            gray = _to_gray(img, image)                  # ② 零拷贝转灰度 ndarray
+            capture_rate.record(captured)
+            if touch is not None and touch.poll(preview) == "selftest":
+                controller.request_test.set()            # ③ 按键沿 → 通知识别线程起自检
+            worker.submit(gray, captured)                # ④ 提交当帧副本给识别线程
+            now = time.perf_counter()
+            # ⑤ 取最新识别结果（每轮只取一次：日志窗口内不再重复取，省一次加锁 + 帧率统计）
+            snapshot, vision_fps, vision_low1 = worker.snapshot(now)
+            if worker.error is not None:
+                raise RuntimeError("vision worker failed: " + worker.error)   # 识别线程挂了 → 终止
+            result, laser_state, age = _display_result(snapshot, now, Config.RESULT_MAX_AGE_S)  # ⑥ 过期降级
+            if preview.due(now):                         # ⑦ 节拍到 + 画布空闲 → 绘制并投递上屏
+                t_draw = time.perf_counter()
+                # 画进 BGR 视图；render_width == 原图宽时 draw_result 只做灰度→BGR，不缩放
+                view = draw_result(gray, result, preview.render_width,
+                                   top_offset=PANEL_H if laser_state is not None else 0)
+                if laser_state is not None:
+                    # 激光叠加：scale = 画布/原图宽，使光斑标记落在与画面对应的位置
+                    draw_laser_overlay(view, laser_state, result,
+                                       min(1.0, preview.render_width / float(gray.shape[1])),
+                                       use_raw=Config.AIM_USE_RAW)
+                # 画面左下角一行小字：disp=显示帧率 low1=最慢1% det=识别帧率 age=结果龄
+                cv2.putText(view, "disp %.1f low1 %.1f det %.1f age %.0fms" %
+                            (preview.fps, preview.low1, vision_fps, age * 1000),
+                            (8, view.shape[0] - 12), cv2.FONT_HERSHEY_SIMPLEX,
+                            0.40, (0, 255, 255), 1)
+                preview.render(view, now, status=snapshot["status"] if snapshot else "waiting")
+                draw_times.append((time.perf_counter() - t_draw) * 1000.0)   # 绘制+投递（不含 show）
+            loop_times.append((time.perf_counter() - started) * 1000.0)
+            now = time.perf_counter()
+            if now - last_log >= Config.LOG_INTERVAL:    # ⑧ 周期日志：分相耗时 + 三路帧率
+                capture_fps, _ = capture_rate.values(now)
+                display_fps, display_low1 = preview.rate.values(now)
+                show_avg, show_p95, show_max, show_n = preview.take_show_stats()
+                read_avg = float(np.mean(read_times)) if read_times else 0.0
+                draw_avg = float(np.mean(draw_times)) if draw_times else 0.0
+                loop_avg = float(np.mean(loop_times)) if loop_times else 0.0
+                detect_ms = snapshot["detect_ms"] if snapshot else 0.0
+                # ★ 读法：[perf] 里 capture / disp / detect_fps 是三路**不同**口径，
+                #   "眼睛看到的刷新率"看 disp，"识别吞吐"看 detect_fps，别互相换算。
+                #   read/draw/loop 属于**主循环**，show 属于**显示线程** —— 分开看就能一眼判定
+                #   "到底谁在吃时间"，不必再靠猜（这正是 1.5fps 归因的关键）。
+                print("[perf] %s capture=%.1f disp=%.1f low1=%.1f detect_fps=%.1f "
+                      "valid=%s stage=%s | read=%.1f draw=%.1f loop=%.1f ms | "
+                      "show avg=%.1f p95=%.1f max=%.1fms n=%d | "
+                      "age=%.0fms shown=%d drop(show)=%d drop(vision)=%d" %
+                      (BUILD_ID, capture_fps, display_fps, display_low1, vision_fps,
+                       result.get("valid", False), result.get("stage"),
+                       read_avg, draw_avg, loop_avg,
+                       show_avg, show_p95, show_max, show_n,
+                       age * 1000, preview.shown, preview.dropped, worker.dropped))
+                if aim is not None:
+                    print(aim.status_line())
+                if show_p95 > 100:
+                    # show 的 p95 超过 100ms ⇒ 瓶颈在**显示侧**（屏幕驱动 / MaixVision 图传），
+                    # 不是识别慢。预览会掉帧，但识别与闭环不受影响 —— 判据与对策见 README。
+                    print("[preview] show slow: p95=%.0fms；预览掉帧，识别/闭环不受影响"
+                          "（更省可降 SHOW_FPS 或 SHOW=False）" % show_p95)
+                if loop_avg > 66.0:
+                    # 主循环单轮超过 66ms ⇒ 已在 15fps 以下，且此数**不含 show**：
+                    # 说明卡在取帧/提交侧，看 read= 是否偏大（相机请求帧率或驱动）。
+                    print("[preview] main loop slow: loop=%.0fms（不含 show）；查 read= 是否偏大"
+                          % loop_avg)
+                last_log = now
+                read_times.clear()
+                draw_times.clear()
+                loop_times.clear()
+    finally:
+        # worker 独占 UART；停止并 join 后主线程才能下发退出停机命令。
+        try:
+            worker.close()
+        finally:
+            # 工作线程退出后再清理硬件，避免与尚未退出的线程并发操作 UART。
+            if worker.thread is None or not worker.thread.is_alive():
+                if link is not None:
+                    try:
+                        link.stop()
+                    except Exception as exc:
+                        print("[gimbal] stop on exit failed: %s" % exc)
+            preview.close()
+            try:
+                cam.close()
+            except Exception:
+                pass
 
 
 if __name__ == "__main__":

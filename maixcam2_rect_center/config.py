@@ -11,9 +11,23 @@ class Config:
     LENS_CORR = False
     LENS_STRENGTH = 1.5
     SHOW = True
-    # 检测不跳帧；显示独立限频，减少 RGB 转换和 MaixVision 图像传输开销。
-    SHOW_WIDTH = 480
-    SHOW_FPS = 15
+    # 视频主循环与后台识别/串口解耦；后台忙时只保留最新帧，不积压旧图像。
+    # ★ 画布宽度：0 = 用**屏幕原始宽度**（推荐）。MaixCAM2 屏幕 640×480 与本工程相机
+    #   (CAMERA_W/H=640×480) 宽高比一致，画布=屏幕尺寸时 show() 拿到与屏幕同尺寸的图，
+    #   **驱动层不必再每帧缩放一次**（旧值 480 会让 640×480 先被缩到 480×360、再被驱动
+    #   放大回 640×480，纯属来回折腾）；画布坐标还与触摸坐标天然 1:1，省掉比例换算。
+    #   >0 才按比例缩小 —— 只有"MaixVision 图传带宽吃紧"时才值得用（本机屏幕会被放大回全屏）。
+    SHOW_WIDTH = 0
+    SHOW_FPS = 30
+    SHOW_JPEG_QUALITY = 70   # 只影响 MaixVision JPEG 图传，检测始终用原始灰度图。
+    VISION_ASYNC = True
+    # ★ 显示线程化：True = 绘制完成后把画布交给**独立显示线程**去 show()，主循环**永不等待 show**。
+    #   屏幕驱动或 MaixVision 图传慢时，只表现为"预览掉帧"（丢帧而非排队），
+    #   识别、串口与云台闭环仍跑满相机帧率。False = 旧行为（主循环内同步 show，慢就整体卡住）。
+    SHOW_ASYNC = True
+    RESULT_MAX_AGE_S = 0.20  # 以采图时刻计龄；过期结果不画框、不下发追踪指令。
+    UART_RX_MAX_BYTES = 256
+    UART_RX_BUFFER_MAX_BYTES = 1024
     # ---- 屏幕交互：把「上电自检」做成屏幕上的可点击按钮（不再上电自动跑）----
     # True=在显示画布右上角画 SELF-TEST 按钮，点一下才触发自检；无显示/无触摸屏时自动禁用。
     ENABLE_TOUCH_BUTTON = True

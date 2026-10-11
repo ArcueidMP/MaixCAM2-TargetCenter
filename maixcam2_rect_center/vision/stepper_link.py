@@ -136,7 +136,7 @@ class StepperLink:
         try:
             available = int(port.available(0))
             if available > 0:
-                port.read(available)
+                port.read(min(available, int(getattr(self.cfg, "UART_RX_MAX_BYTES", 256))), timeout=0)
         except Exception:
             pass
         self._rxbuf[axis] = bytearray()
@@ -194,17 +194,23 @@ class StepperLink:
             try:
                 available = int(port.available(0))
                 if available > 0:
-                    data = port.read(available)
+                    data = port.read(min(available, int(getattr(self.cfg, "UART_RX_MAX_BYTES", 256))), timeout=0)
                     if data:
                         self._rxbuf[axis].extend(bytes(data))
                 buf = self._rxbuf[axis]
+                limit = max(4, int(getattr(self.cfg, "UART_RX_BUFFER_MAX_BYTES", 1024)))
+                if len(buf) > limit:
+                    del buf[:-limit]
                 while len(buf) >= 4:
                     if buf[0] != self._addr(axis):
                         del buf[0]
                         continue
                     end = buf.find(bytes([CR]), 1)
-                    if end < 3:
+                    if end < 0:
                         break
+                    if end < 3:
+                        del buf[0]
+                        continue
                     frames.append((axis, bytes(buf[:end + 1])))
                     del buf[:end + 1]
                     self._stats["rx"] += 1

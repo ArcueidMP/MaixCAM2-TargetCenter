@@ -28,7 +28,7 @@ SCREEN_W, SCREEN_H = 640, 480
 TAP = (500, 50)              # 落在右上角 SELF-TEST 按钮内
 
 
-def run(fault=False, iterations=600, touch_events=()):
+def run(fault=False, iterations=600, touch_events=(), log_interval=1000):
     ports = []
     shown = []
 
@@ -113,7 +113,11 @@ def run(fault=False, iterations=600, touch_events=()):
         image2cv=lambda img, **kwargs: img,
         cv2image=lambda img, **kwargs: img)
     cfg = type("TestConfig", (entry.Config,), dict(
-        SHOW=True, SHOW_FPS=30, LOG_INTERVAL=1000, CALIBRATE_AXIS=""))
+        SHOW=True, SHOW_FPS=30, VISION_ASYNC=False, RESULT_MAX_AGE_S=1.0,
+        # 本用例用假时钟 (Clock) 逐步推进，只能跑**同步**显示路径 ——
+        # 异步显示线程会与假时钟并发抢 perf_counter，判定不可复现（异步由
+        # test_runtime_performance.test_slow_show_does_not_block_main_loop 单独覆盖）。
+        SHOW_ASYNC=False, LOG_INTERVAL=log_interval, CALIBRATE_AXIS=""))
     with contextlib.ExitStack() as stack:
         stack.enter_context(patch.dict(sys.modules, maix=maix))
         stack.enter_context(patch.object(entry, "Config", cfg))
@@ -166,8 +170,26 @@ def test_fault_blocks_self_test():
     print("PASS: 链路 FAULT 阻断自检（点击也不发任何 0xFD 运动帧）")
 
 
+def test_perf_log_branch_formatting():
+    """[perf] 日志分支必须能跑通、字段齐全。
+
+    这条 print 在板上每 `LOG_INTERVAL`(2s) 执行一次，一旦格式串与实参不匹配就会抛 TypeError
+    **直接打死主循环**；而上面两个用例为了日志干净把 LOG_INTERVAL 设成 1000（从不执行该分支），
+    等于把这段代码留白。这里把周期压到 0 强制命中（v0.4.3 新增分相字段时补的守卫）。
+    """
+    _, _, log = run(fault=False, iterations=400, log_interval=0.0)
+    perf = [l for l in log.splitlines() if l.startswith("[perf]")]
+    assert perf, "没命中 [perf] 日志分支"
+    for field in ("capture=", "disp=", "detect_fps=", "read=", "draw=", "loop=",
+                  "show avg=", "drop(show)=", "drop(vision)="):
+        assert field in perf[0], "缺字段 %s：%s" % (field, perf[0])
+    assert "[preview] async=" in log, "启动未打印显示线程模式"
+    print("PASS: [perf] 日志分支可执行、字段齐全（%d 行）" % len(perf))
+
+
 if __name__ == "__main__":
     test_boot_does_not_autostart_self_test()
     test_tap_button_runs_self_test()
     test_fault_blocks_self_test()
-    print("main self-test(按钮式) e2e: PASS (3)")
+    test_perf_log_branch_formatting()
+    print("main self-test(按钮式) e2e: PASS (4)")

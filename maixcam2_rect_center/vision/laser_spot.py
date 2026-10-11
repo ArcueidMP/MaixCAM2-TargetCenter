@@ -59,10 +59,18 @@ class LaserSpotDetector:
 
     # ------------------------------------------------------------------ 内部
     def _detect(self, g):
+        """在标称位附近的方形 ROI 内做一次"阈值 + 加权质心"，返回 (u,v)。
+
+        判据链（任一不满足即判无光斑，并带 reason 便于排障）：
+            峰值 >= max(LASER_MIN_PEAK, 背景 + LASER_MIN_CONTRAST)  → 否则 no_peak
+            亮点像素数在 [LASER_MIN_PIXELS, LASER_MAX_PIXELS] 内    → 过大 too_big（挡高光）/过小 too_small
+        质心用 (灰度−阈值) 加权，越亮的像素权重越大 → 亚像素级、抗噪。
+        """
         cfg = self.cfg
         H, W = g.shape[:2]
         cx, cy = float(cfg.LASER_U_NOMINAL), float(cfg.LASER_V_NOMINAL)
         r = int(cfg.LASER_ROI_RADIUS)
+        # ROI = 标称位 ± r，并夹取到图像内（标称值决定"往哪儿看"，不决定结果）。
         x0 = max(0, int(cx - r))
         y0 = max(0, int(cy - r))
         x1 = min(W, int(cx + r) + 1)
@@ -88,6 +96,7 @@ class LaserSpotDetector:
         total = float(w.sum())
         if total <= 0:
             return dict(found=False, reason="flat", peak=peak, bg=bg, area=area, u=cx, v=cy)
+        # 加权质心：权重 = 灰度−阈值；坐标加 ROI 原点 (x0,y0) 回到全图坐标。
         return dict(found=True, reason="ok", peak=peak, bg=bg, area=area,
                     u=x0 + float((xs * w).sum() / total), v=y0 + float((ys * w).sum() / total))
 
@@ -106,12 +115,16 @@ class LaserSpotDetector:
         return self._fixed_dict(self.nominal)
 
     def process(self, gray, now=None):
-        """每帧调用；fixed 模式恒返回标定常量，detect 模式内部按 LASER_INTERVAL_S 限频。"""
+        """每帧调用；fixed 模式恒返回标定常量，detect 模式内部按 LASER_INTERVAL_S 限频。
+
+        限频逻辑：距上次实测不足 interval 时**直接沿用上次结果**（updated=False, ms=0），
+        因此每帧调用的代价近似为零；真正重算时依次做跳变门限与平滑。
+        """
         if self.mode == "fixed":
             return self.static_state()
         now = time.perf_counter() if now is None else float(now)
         if self._t is not None and (now - self._t) < self.interval:
-            out = dict(self.last)
+            out = dict(self.last)                 # 沿用上次：位置不变，仅标记未更新
             out["updated"] = False
             out["ms"] = 0.0
             return out
@@ -132,6 +145,7 @@ class LaserSpotDetector:
                 return keep
         if res["found"]:
             if self._uv is not None and 0.0 < self.alpha < 1.0:
+                # 位置一阶低通（仅 detect 模式）；alpha=0 时关闭平滑，直接用最新质心。
                 self._uv = (self._uv[0] + self.alpha * (res["u"] - self._uv[0]),
                             self._uv[1] + self.alpha * (res["v"] - self._uv[1]))
             else:
@@ -153,14 +167,14 @@ def deviation(laser, result, use_raw=False):
     激光丢失或黑框无效时返回 None。
     """
     if not laser or not laser.get("found"):
-        return None
+        return None                        # ★ 必须先看 found：found=False 时 u/v 只是标称占位
     if not result or not result.get("valid"):
         return None
     if use_raw and result.get("raw_u") is not None and result.get("raw_v") is not None:
-        tx, ty = float(result["raw_u"]), float(result["raw_v"])
+        tx, ty = float(result["raw_u"]), float(result["raw_v"])   # 闭环档：未平滑中心
     else:
-        tx, ty = float(result["u"]), float(result["v"])
-    return (tx - float(laser["u"]), ty - float(laser["v"]))
+        tx, ty = float(result["u"]), float(result["v"])           # 显示档：CENTER_ALPHA 平滑中心
+    return (tx - float(laser["u"]), ty - float(laser["v"]))       # dx=靶心−光斑, dy 同理
 
 
 def draw_laser_overlay(canvas, laser, result=None, scale=1.0, use_raw=False):
@@ -169,12 +183,17 @@ def draw_laser_overlay(canvas, laser, result=None, scale=1.0, use_raw=False):
     use_raw 与 deviation() 保持一致：True 时连线终点与 dx/dy 都用未平滑的 raw 中心，
     屏幕上看到的就是控制律真正在用的那个点。
 
+    scale：**原图坐标 → 画布坐标** 的比例（main.py 传 render_width/原图宽）。
+    本函数内部所有坐标（光斑 p、连线终点 c）都要乘 scale，才能与 draw_result 画的框对齐。
+    **注意**：面板本身（左上角矩形与文字）用画布固定像素坐标，不随 scale 缩放。
+
     返回面板占用的高度（像素，显示画布坐标），调用方据此把 draw_result 的文字
     整体下移，避免和本面板重叠。
     """
     if not laser:
         return 0
     found = bool(laser.get("found"))
+    # 第 1 行：光斑位置与来源（fixed=标定常量 / 实测 peak,area / 丢失原因）。
     if laser.get("reason") == "fixed":
         line1 = "LASER (%d,%d) [fixed/calib]" % (round(laser["u"]), round(laser["v"]))
     elif found:
@@ -183,29 +202,33 @@ def draw_laser_overlay(canvas, laser, result=None, scale=1.0, use_raw=False):
     else:
         line1 = "LASER -- [%s] peak=%d bg=%d" % (
             laser.get("reason", "?"), round(laser.get("peak", 0.0)), round(laser.get("bg", 0.0)))
+    # 第 2 行：光斑→靶心偏差（用同一 use_raw 口径，与闭环一致）。
     dv = deviation(laser, result, use_raw=use_raw)
     if dv is not None:
         line2 = "D-CENTER dx=%+.1f dy=%+.1f px" % (dv[0], dv[1])
-        line2_color = _TEXT_C2
+        line2_color = _TEXT_C2                       # 浅绿：有效
     elif result is not None and result.get("valid"):
         line2 = "D-CENTER -- (laser lost)"
-        line2_color = _TEXT_C3
+        line2_color = _TEXT_C3                       # 浅红：有靶心无光斑
     else:
         line2 = "D-CENTER -- (no black rect)"
-        line2_color = _TEXT_C3
+        line2_color = _TEXT_C3                       # 浅红：无靶心
+    # 面板宽度按两行文字较宽者自适应（固定画布像素，不随 scale 缩放）。
     w = max(cv2.getTextSize(t, cv2.FONT_HERSHEY_SIMPLEX, .45, 1)[0][0] for t in (line1, line2))
     cv2.rectangle(canvas, (2, 2), (min(canvas.shape[1] - 1, w + 14), PANEL_H - 2), _PANEL_BG, -1)
     cv2.putText(canvas, line1, (8, 18), cv2.FONT_HERSHEY_SIMPLEX, .45, _TEXT_C1, 1, cv2.LINE_AA)
     cv2.putText(canvas, line2, (8, 18 + PANEL_LINE), cv2.FONT_HERSHEY_SIMPLEX, .45, line2_color, 1, cv2.LINE_AA)
     if not found:
-        return PANEL_H
+        return PANEL_H                              # 无光斑：只留面板，不画标记/连线
+    # 光斑标记：原图坐标 × scale → 画布坐标。
     p = (int(round(laser["u"] * scale)), int(round(laser["v"] * scale)))
     if result is not None and result.get("valid"):
+        # 连线终点 = 靶心，同样按 use_raw 选 raw 或平滑中心，再 × scale。
         if use_raw and result.get("raw_u") is not None and result.get("raw_v") is not None:
             c = (int(round(float(result["raw_u"]) * scale)), int(round(float(result["raw_v"]) * scale)))
         else:
             c = (int(round(float(result["u"]) * scale)), int(round(float(result["v"]) * scale)))
-        cv2.line(canvas, p, c, _LINK, 1, cv2.LINE_AA)
-    cv2.circle(canvas, p, 7, _MARK, 1, cv2.LINE_AA)
-    cv2.drawMarker(canvas, p, _MARK, cv2.MARKER_CROSS, 5, 1, cv2.LINE_AA)
+        cv2.line(canvas, p, c, _LINK, 1, cv2.LINE_AA)   # 橙色连线：光斑 → 靶心
+    cv2.circle(canvas, p, 7, _MARK, 1, cv2.LINE_AA)     # 红色圆圈
+    cv2.drawMarker(canvas, p, _MARK, cv2.MARKER_CROSS, 5, 1, cv2.LINE_AA)   # 红十字
     return PANEL_H

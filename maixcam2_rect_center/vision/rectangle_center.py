@@ -2,6 +2,29 @@
 
 搜索在缩小图上执行；精修和坐标输出始终使用当前帧的原始分辨率。
 已锁定时只采样四条窄带，不运行全图 Canny、轮廓扫描或阈值遍历。
+
+================================================================================
+几何原理（为什么靶心能"算"出来）
+================================================================================
+靶纸四周贴 1.8cm 黑胶带形成一个矩形环，环的两个"内框角点"构成一个**平面四边形**。
+相机斜看时该四边形在图像里是透视投影，但两条对角线的交点 = 靶心，这是**射影不变量**
+（任意透视变换下，四边对角线的交点都映射到对应四边形的对角线交点）。因此：
+    检测四边形四角 → 求对角线交点 = 靶心像素坐标 (u,v)，
+无需解单应、也无需知道相机内外参。本模块即按此实现。
+
+================================================================================
+单帧处理链（process 的骨架，四段）
+================================================================================
+    ① 候选生成 _candidate_quads : 阈值化 → 轮廓树 → 取四边形轮廓，按内外框打标
+    ② 搜索 _search              : 在缩小图上轮换阈值/候选，时间预算内做有限次验证
+    ③ 四边验证 _verify          : 用"胶带厚度方向的暗带 + 内侧亮面"四边覆盖率判真伪
+    ④ 亚像素精修 _refine        : 当前帧四条灰度窄带 → 有向边缘跳变 → fitLine → 四角交点
+    末：把四角规整为外框，取正视面中心投影回原图 → (u,v)，并按 CENTER_ALPHA 做一阶平滑。
+
+三种进入方式（process 里按上一帧是否锁定决定，越靠前越省算力）：
+    track       已锁定 → 只沿四边窄带精修（不跑 Canny/轮廓/阈值遍历，稳态 ~1ms）
+    roi_search  刚失锁 → 在上一帧外框外扩 ROI_PADDING 的窗口内搜索（一次）
+    full_search 彻底丢失 → 在全图缩小图上多阈值扫描 + Canny 兜底
 """
 import time
 
@@ -10,65 +33,84 @@ import numpy as np
 
 
 def _polygon_area(p):
+    """带符号面积的 2 倍（>0 = 逆时针 CCW，<0 = 顺时针 CW）。用于把四角规整成统一方向。"""
     return float(cv2.contourArea(np.asarray(p, np.float32).reshape(-1, 1, 2), oriented=True))
 
 
 def _order_quad(points):
+    """把 4 个点规整为统一顺序：以质心为极点按极角排序 → 保证 CCW → 旋转到"左上角"开头。
+
+    统一顺序是后续所有几何运算（边向量、对角线、单应四点对应）的前提。
+    返回顺序语义：**[左上, 右上, 右下, 左下]**（逆时针），与 _side_lengths 的边 0/1/2/3 对应。
+    """
     p = np.asarray(points, np.float32).reshape(4, 2)
     c = p.mean(axis=0)
-    p = p[np.argsort(np.arctan2(p[:, 1] - c[1], p[:, 0] - c[0]))]
+    p = p[np.argsort(np.arctan2(p[:, 1] - c[1], p[:, 0] - c[0]))]   # 按极角排序
     if _polygon_area(p) < 0:
-        p = p[::-1]
+        p = p[::-1]                                                  # 反了则翻转成 CCW
+    # np.roll 到"x+y 最小"的点（即左上角）打头。
     return np.roll(p, -int(np.argmin(p.sum(axis=1))), axis=0).copy()
 
 
 def _side_lengths(q):
+    """四边长度 [边0, 边1, 边2, 边3]，边 i = 从点 i 指向点 i+1（roll -1 取下一个点）。"""
     return np.linalg.norm(np.roll(q, -1, axis=0) - q, axis=1)
 
 
 def _gaussian_solve(a, b):
-    """带部分主元的高斯消元；消去行向量化，避免 64 次 Python 行循环。"""
+    """带部分主元的高斯消元；消去行向量化，避免 64 次 Python 行循环。
+
+    a 为 n×n、b 为 n，返回解向量。主元过小（矩阵退化，如四点共线）抛 ValueError，
+    由调用方捕获后判该候选无效 —— 不做伪解。
+    """
     m = np.column_stack((np.asarray(a, np.float64), np.asarray(b, np.float64)))
     for col in range(len(m)):
-        pivot = col + int(np.argmax(np.abs(m[col:, col])))
+        pivot = col + int(np.argmax(np.abs(m[col:, col])))    # 选列内绝对值最大的行做主元
         if abs(m[pivot, col]) < 1e-10:
             raise ValueError("degenerate quadrilateral")
         if pivot != col:
-            m[[col, pivot]] = m[[pivot, col]]
-        m[col] /= m[col, col]
+            m[[col, pivot]] = m[[pivot, col]]                 # 换行
+        m[col] /= m[col, col]                                 # 归一化主元行
         factors = m[:, col].copy()
         factors[col] = 0.0
-        m -= factors[:, None] * m[col]
+        m -= factors[:, None] * m[col]                        # 一次消去整列（行向量化）
     return m[:, -1]
 
 
 def _homography(src, dst):
-    """显式构建 8×8 方程；先归一化坐标以提高大像素坐标下的稳定性。"""
+    """解 4 点对应的 3×3 单应 H（使 H·src ≡ dst）。
+
+    做法：先对 src/dst **归一化**（平移质心到原点、缩放到量级 1）再建 8×8 线性方程，
+    求得 H_n 后用 T_dst·H_n·T_src⁻¹ 还原 —— 归一化能显著提升大像素坐标下的数值稳定性。
+    退化情形（任一边集合尺度过小/共线）抛 ValueError。
+    """
     src, dst = np.asarray(src, np.float64), np.asarray(dst, np.float64)
     sc, dc = src.mean(axis=0), dst.mean(axis=0)
     ss, ds = float(np.max(np.abs(src - sc))), float(np.max(np.abs(dst - dc)))
     if min(ss, ds) < 1e-8:
         raise ValueError("zero-size rectangle")
-    xy, uv = (src - sc) / ss, (dst - dc) / ds
+    xy, uv = (src - sc) / ss, (dst - dc) / ds                 # 归一化坐标
     a = np.zeros((8, 8), np.float64)
-    a[0::2, :3] = np.column_stack((xy, np.ones(4)))
-    a[1::2, 3:6] = a[0::2, :3]
-    a[0::2, 6:] = -uv[:, :1] * xy
+    a[0::2, :3] = np.column_stack((xy, np.ones(4)))           # 偶数行：x 分量方程
+    a[1::2, 3:6] = a[0::2, :3]                                # 奇数行：y 分量方程
+    a[0::2, 6:] = -uv[:, :1] * xy                             # 第 3 列（透视项）
     a[1::2, 6:] = -uv[:, 1:] * xy
     v = _gaussian_solve(a, uv.reshape(-1))
-    hn = np.append(v, 1.0).reshape(3, 3)
+    hn = np.append(v, 1.0).reshape(3, 3)                      # 归一化域下的 H
     ts = np.array([[1 / ss, 0, -sc[0] / ss], [0, 1 / ss, -sc[1] / ss], [0, 0, 1]])
     td_inv = np.array([[ds, 0, dc[0]], [0, ds, dc[1]], [0, 0, 1]])
-    h = td_inv @ hn @ ts
+    h = td_inv @ hn @ ts                                      # 还原到原坐标域
     return h / h[2, 2] if abs(h[2, 2]) > 1e-12 else h
 
 
 def homography_8x8(src_quad, width_mm, height_mm):
+    """把物理矩形 (0,0)-(w,h) 映射到图像四边形 src_quad 的单应（mm → px）。"""
     return _homography(src_quad, [[0, 0], [width_mm, 0],
                                  [width_mm, height_mm], [0, height_mm]])
 
 
 def project_points(matrix, points):
+    """齐次投影：把 (N,2) 点经 3×3 矩阵映射，做透视除法得 (N,2)。落无穷远点抛错。"""
     p = np.asarray(points, np.float64).reshape(-1, 2)
     z = np.column_stack((p, np.ones(len(p)))) @ np.asarray(matrix).T
     if np.any(np.abs(z[:, 2]) < 1e-9):
@@ -77,21 +119,32 @@ def project_points(matrix, points):
 
 
 def inverse_map_points(h, points):
+    """单应逆映射（px → mm）；不做透视除法前的越界检查，由调用方负责。"""
     return project_points(np.linalg.inv(h), points)
 
 
 def standard_circle(width_mm, height_mm, radius_mm, samples=72):
+    """正视面坐标下、以矩形中心为圆心、半径 radius_mm 的等分圆采样点（(samples,2)）。
+
+    用途：把该圆逆映射回原图，用于可视化/交叉校验中心；**圆心本身直接取矩形中心投影**，
+    不用圆周平均（见 process 内注释）。
+    """
     a = np.arange(samples) * (2 * np.pi / samples)
     return np.array([width_mm / 2, height_mm / 2]) + radius_mm * np.column_stack((np.cos(a), np.sin(a)))
 
 
 def _rectangle(w, h, inset=0.0):
+    """物理矩形四角（mm），inset>0 时向内缩进（用于取胶带内沿 = 内框）。顺序 LL→LR→UR→UL。"""
     return np.array([[inset, inset], [w - inset, inset],
                      [w - inset, h - inset], [inset, h - inset]], np.float64)
 
 
 def _sample(gray, points):
-    """一次 OpenCV remap 双线性采样整批点，越界由调用方拒绝。"""
+    """一次 OpenCV remap 双线性采样整批点，越界由调用方拒绝。
+
+    相比逐点 Python 循环，remap 一次调用即可采样成百上千个点（四边验证/精修的关键提速）。
+    borderMode=REPLICATE 保证边缘点也能返回数值（越界判据在调用方单独做）。
+    """
     shape = points.shape[:-1]
     p = points.reshape(-1, 2).astype(np.float32)
     values = cv2.remap(gray, p[:, 0].reshape(1, -1), p[:, 1].reshape(1, -1),
@@ -100,6 +153,17 @@ def _sample(gray, points):
 
 
 class RectangleCenterDetector:
+    """有状态检测器：跨帧记住锁定框(_track)与平滑中心(_smooth)，稳态只做窄带精修。
+
+    状态字段：
+        _track       上一帧验证通过的外框（dict 候选）；None = 未锁定
+        _smooth      上一帧输出中心，用于 CENTER_ALPHA 一阶平滑（仅显示口径）
+        _locked_th   上次成功的二值化阈值（下次优先复用，减少阈值轮换）
+        _roi_retry   失锁后是否还允许一次"ROI 搜索"（用一次即置 False，防反复局部搜）
+        _search_jobs 每 ROI 的阈值轮换进度（持续失败时跨帧轮换候选）
+    每帧重置的临时量：_search_count / _threshold_count / _proposals / _deadline（时间预算）。
+    """
+
     def __init__(self, config):
         self.cfg = config
         self.last = None
@@ -107,13 +171,24 @@ class RectangleCenterDetector:
         self._track = None
         self._locked_th = None
         self._frame = 0
-        self._kernel = np.ones((3, 3), np.uint8)
+        self._kernel = np.ones((3, 3), np.uint8)               # 二值化后闭运算核
+        # 四边上均匀分布的参数 t ∈ (0.12, 0.88)：避开四角（角点附近因透视最易模糊）。
         self._t = np.linspace(0.12, 0.88, config.EDGE_SAMPLES, dtype=np.float32)
-        self._circle_cache = {}
+        self._circle_cache = {}                                # 正视面圆周采样点缓存（按尺存）
         self._search_count = 0
         self._threshold_count = 0
+        self._search_jobs = {}
+        self._proposals = 0
+        self._deadline = float("inf")
+        self._roi_retry = True
 
     def _valid_quad(self, q, shape, margin=1):
+        """四边形体检：不越界、凸、边长下限、无明显退化尖角。
+
+        允许任意透视（不要求接近直角/矩形），只排除两类坏形状：
+          · 贴边/出界：角点落在图像边缘 margin 内 → 采样会越界、中心不可信；
+          · 退化尖角：相邻边几乎平行（sin 很小）→ 四角拟合不稳定。
+        """
         h, w = shape
         if (q[:, 0].min() < margin or q[:, 1].min() < margin or
                 q[:, 0].max() >= w - margin or q[:, 1].max() >= h - margin):
@@ -122,14 +197,20 @@ class RectangleCenterDetector:
             return False
         e = np.roll(q, -1, axis=0) - q
         lengths = np.linalg.norm(e, axis=1)
-        if lengths.min() < 12:
+        if lengths.min() < 12:                                 # 最短边至少 12px
             return False
         # 透视图不要求四角接近 90 度，只排除退化尖角和过扁的四边形。
+        # 相邻边向量叉积 / (边长积) = sin(夹角)，要求每个角 > ~11.5°。
         sine = np.abs(e[:, 0] * np.roll(e[:, 1], -1) -
                       e[:, 1] * np.roll(e[:, 0], -1)) / (lengths * np.roll(lengths, -1))
         return bool(sine.min() > 0.20)
 
     def _layout(self, q, kind):
+        """由四边形朝向推断物理长宽比，并给出该 kind 对应的物理矩形四角。
+
+        horizontal：两条"横向边长之和" > 两条"纵向边长之和" → 长边水平 → w=长边(mm)。
+        kind=="inner" 时物理矩形向内缩进一个胶带宽度 BLACK_FRAME_MM（对应内框角点）。
+        """
         lengths = _side_lengths(q)
         horizontal = lengths[0] + lengths[2] > lengths[1] + lengths[3]
         w, h = ((self.cfg.TARGET_LONG_MM, self.cfg.TARGET_SHORT_MM) if horizontal
@@ -150,11 +231,14 @@ class RectangleCenterDetector:
         if tape <= 0 or 2 * tape >= min(w, h):
             raise ValueError("BLACK_FRAME_MM must be between 0 and half the short side")
         try:
+            # 求 mm → px 单应：把物理矩形映射到图像候选四边形 q。
             rect_to_image = _homography(physical_quad, q)
             t = self._t
-            # 三个点覆盖黑带的中部，再在内边缘后采两个亮面点。
+            # 沿每条边的法向采 5 个偏移：0.20/0.40/0.60×胶带宽 = 黑带内部三点（应为暗），
+            # 1.22/1.45×胶带宽 = 越过内沿的亮面两点（应为亮）。暗亮对比即边证据。
             offsets = tape * np.array([0.20, 0.40, 0.60, 1.22, 1.45])
             p = np.empty((4, len(t), 5, 2), np.float64)
+            # 四条边分别参数化：(边0 上/边1 右/边2 下/边3 左)，每条边沿 t 铺采样点。
             p[0, :, :, 0] = (tape + t * (w - 2 * tape))[:, None]
             p[0, :, :, 1] = offsets
             p[1, :, :, 0] = w - offsets
@@ -167,13 +251,16 @@ class RectangleCenterDetector:
         except (ValueError, np.linalg.LinAlgError):
             return None
         gh, gw = gray.shape
+        # 任何采样点落到图像外 → 该候选不可信（中心也无法可靠外推）。
         if (mapped[..., 0].min() < 0 or mapped[..., 1].min() < 0 or
                 mapped[..., 0].max() >= gw - 1 or mapped[..., 1].max() >= gh - 1):
             return None
         samples = _sample(gray, mapped).astype(np.float32)
+        # 每条边、每个 t：暗带取三点最大值（黑带里最亮的那个仍应暗），亮面取两点中位数。
         dark = np.max(samples[:, :, :3], axis=2)
         bright = np.median(samples[:, :, 3:], axis=2)
         delta = bright - dark
+        # "该证据成立" = 对比度达标 且 暗带确实比亮面暗（比值约束，排除两侧都亮的纸边）。
         coverage = ((delta >= self.cfg.MIN_EDGE_CONTRAST) &
                     (dark <= bright * self.cfg.MAX_DARK_BRIGHT_RATIO)).mean(axis=1)
         edge_contrast = np.median(delta, axis=1)
@@ -187,6 +274,8 @@ class RectangleCenterDetector:
         outer = project_points(rect_to_image, _rectangle(w, h)).astype(np.float32)
         if not self._valid_quad(outer, gray.shape):
             return None
+        # 返回候选：外框(图像)、内框(胶带内沿)、mm→px 单应、四边剖面、质量分。
+        # 打分 = 中位对比度 + 60×平均覆盖率，用于多候选时择优（分数越高越像真靶纸）。
         return dict(quad=q, outer_quad=outer,
                     inner_quad=project_points(rect_to_image, _rectangle(w, h, tape)).astype(np.float32),
                     kind=kind, rect_to_image=rect_to_image, width_mm=w, height_mm=h,
@@ -195,55 +284,75 @@ class RectangleCenterDetector:
                     score=float(np.median(edge_contrast) + 60 * coverage.mean()))
 
     def _refine(self, gray, q, kind, radius):
-        """当前帧四条灰度窄带 -> 有方向的边缘跳变 -> fitLine -> 四角交点。"""
+        """当前帧四条灰度窄带 → 有方向的边缘跳变 → fitLine → 四角交点。
+
+        与 _verify 的区别：_verify 只判"像不像"，_refine 才真正**重新定位**每条边。
+        步骤：沿四边已有点 (base) 的法向 ±radius 采样灰度 → 求有向梯度 → 每列取
+        "最近预测位置"的跳变（offset 越小越优先，防止误锁到内侧印刷圆或另一侧胶带边）
+        → 用 fitLine 拟合四条直线 → 相邻直线两两求交 = 亚像素四角。
+        精修结果偏离原 q 超过 radius*2.8 或四角体检不过 → 判失败（返回 None）。
+        """
         q = np.asarray(q, np.float32)
         nxt = np.roll(q, -1, axis=0)
         e = nxt - q
         lengths = np.linalg.norm(e, axis=1)
         if lengths.min() < 10:
             return None
-        normal = np.column_stack((-e[:, 1], e[:, 0])) / lengths[:, None]
+        normal = np.column_stack((-e[:, 1], e[:, 0])) / lengths[:, None]   # 各边外/内法向
         base = q[:, None, :] * (1 - self._t[None, :, None]) + nxt[:, None, :] * self._t[None, :, None]
         offsets = np.arange(-radius, radius + 1, dtype=np.float32)
+        # 每条边、每个 t、每个法向偏移 → 采样点网格 (4, len(t), 2r+1, 2)。
         points = base[:, :, None, :] + normal[:, None, None, :] * offsets[None, None, :, None]
         gh, gw = gray.shape
         inside = ((points[..., 0] >= 1) & (points[..., 0] < gw - 1) &
                   (points[..., 1] >= 1) & (points[..., 1] < gh - 1)).all(axis=2)
         values = _sample(gray, points).astype(np.float32)
-        gradient = values[:, :, 2:] - values[:, :, :-2]
+        gradient = values[:, :, 2:] - values[:, :, :-2]                    # 中心差分近似梯度
         if kind == "outer":
-            gradient *= -1
+            gradient *= -1                                                 # 外框要求暗→亮方向相反
         # 近预测边缘优先，避免捕获靶纸内部印刷圆或另一侧的胶带边缘。
-        penalty = np.abs(offsets[1:-1])[None, None, :] * 0.45
-        indices = np.argmax(gradient - penalty, axis=2)
+        penalty = np.abs(offsets[1:-1])[None, None, :] * 0.45              # 偏离预测位置的惩罚
+        indices = np.argmax(gradient - penalty, axis=2)                    # 每股取最强跳变
         strength = np.take_along_axis(gradient, indices[..., None], axis=2)[..., 0]
         selected = offsets[indices + 1]
         lines = []
         for i in range(4):
-            good = inside[i] & (strength[i] >= self.cfg.MIN_EDGE_CONTRAST * 0.7)
+            good = inside[i] & (strength[i] >= self.cfg.MIN_EDGE_CONTRAST * 0.7)   # 有效采样
             if good.sum() < max(5, len(self._t) * self.cfg.WEAK_EDGE_COVERAGE):
-                return None
+                return None                                                # 证据太少，整框弃用
             shifts = selected[i, good]
             med = float(np.median(shifts))
+            # 去掉偏离中位数过大的离群跳变（反光/杂物），再确认仍够点。
             good &= np.abs(selected[i] - med) <= max(2.5, float(np.median(np.abs(shifts - med))) * 3)
             if good.sum() < 5:
                 return None
             samples = base[i, good] + selected[i, good, None] * normal[i]
+            # 用鲁棒 Huber 回归拟合该边直线；fitLine 返回 (vx, vy, x0, y0)。
             vx, vy, x, y = cv2.fitLine(samples, cv2.DIST_HUBER, 0, 0.01, 0.01).reshape(4)
             # 直线 ax+by+c=0。
             lines.append(np.array([-vy, vx, vy * x - vx * y], np.float64))
         lines = np.asarray(lines)
+        # 相邻两条直线（roll 1 使其错位一位）叉积求交点：交点齐次坐标 = 两直线系数叉积。
         crosses = np.cross(np.roll(lines, 1, axis=0), lines)
         if np.any(np.abs(crosses[:, 2]) < 1e-8):
-            return None
+            return None                                                    # 有平行边 → 退化
         refined = (crosses[:, :2] / crosses[:, 2:]).astype(np.float32)
         if (np.linalg.norm(refined - q, axis=1).max() > radius * 2.8 or
                 not self._valid_quad(refined, gray.shape)):
-            return None
+            return None                                                    # 跑太远或形状不合法
         return refined
 
     def _candidate_quads(self, mask):
-        """用轮廓树的孔/黑环关系代替候选两两组合。"""
+        """用轮廓树的孔/黑环关系代替候选两两组合。
+
+        输入是二值掩膜（暗区为前景）。输出 [(quad, kind), ...]：
+          · 借 findContours 的 RETR_TREE 层级：黑胶带环 = 一个"孔"（有子级）；
+            深度奇偶决定 kind —— 偶数深度=outer(外框)，奇数=inner(内框)。
+          · 用**包围框/面积**先廉价预筛（剔过小、过扁），只对最大若干个轮廓做 approxPolyDP，
+            控制昂贵的多边形逼近次数。
+          · 排除"实心黑块"（outer 却没有亮孔），因为靶纸黑环中心必是亮的。
+        返回排序把 inner 排前：亮面孔比与背景粘连的黑环更稳定。
+        """
         contours, hierarchy = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)[-2:]
         if hierarchy is None:
             return []
@@ -252,28 +361,32 @@ class RectangleCenterDetector:
         candidates = []
         # 先用廉价的包围框/面积筛选，仅拟合最大的少数轮廓。
         eligible = []
-        for i, cnt in enumerate(contours):
+        # findContours 本身是原子调用；后续 Python 遍历只看最大的有限个轮廓。
+        ids = sorted(range(len(contours)), key=lambda i: abs(cv2.contourArea(contours[i])),
+                     reverse=True)[:self.cfg.MAX_CONTOURS]
+        for i in ids:
+            cnt = contours[i]
             x, y, cw, ch = cv2.boundingRect(cnt)
             if min(cw, ch) < 15 or cw * ch < w * h * self.cfg.MIN_AREA_RATIO:
-                continue
+                continue                                   # 太小/太扁：不是候选框
             area = abs(cv2.contourArea(cnt))
             if w * h * self.cfg.MIN_AREA_RATIO <= area <= w * h * self.cfg.MAX_AREA_RATIO:
                 eligible.append((area, i))
         for area, i in sorted(eligible, reverse=True)[:self.cfg.MAX_CANDIDATES]:
             cnt = contours[i]
             peri = cv2.arcLength(cnt, True)
-            approx = cv2.approxPolyDP(cnt, self.cfg.APPROX_EPSILON * peri, True)
+            approx = cv2.approxPolyDP(cnt, self.cfg.APPROX_EPSILON * peri, True)   # 多边形逼近
             # 不使用凸包修补任意背景：凸包可把桌面阴影拼成错误大四边形。
             if len(approx) != 4 or not cv2.isContourConvex(approx):
-                continue
+                continue                                   # 只接受凸四边形
             q = _order_quad(approx)
             if not self._valid_quad(q, mask.shape):
                 continue
-            parent, depth = int(hierarchy[i][3]), 0
+            parent, depth = int(hierarchy[i][3]), 0        # 沿父链数深度
             while parent >= 0:
                 depth += 1
                 parent = int(hierarchy[parent][3])
-            kind = "inner" if depth % 2 else "outer"
+            kind = "inner" if depth % 2 else "outer"       # 奇偶定内外框
             if kind == "outer" and hierarchy[i][2] < 0:
                 continue  # 实心黑块没有亮孔。
             candidates.append((q, kind))
@@ -281,7 +394,83 @@ class RectangleCenterDetector:
         return sorted(candidates, key=lambda c: c[1] != "inner")
 
     def _search(self, gray, roi=None):
+        """在缩小图上找候选并验证；**合作式**：每帧只推进有限步，跨帧延续。
+
+        关键设计（性能与鲁棒性的平衡）：
+          · 缩小到 SEARCH_WIDTH 宽再阈值化，全图扫描代价大幅下降；坐标末了乘回原分辨率。
+          · 阈值列表 = [上次成功阈值] + [Otsu] + DARK_THRESHOLDS；持续失败时**跨帧轮换**
+            （job["index"] 在 _search_jobs 里记进度），避免单帧把全部阈值跑一遍。
+          · SEARCH_MAX_PROPOSALS=1：每帧最多验证一个候选；时间预算 SEARCH_BUDGET_MS 是软预算
+            （至少验证一个，防止原子调用稍慢导致永远不推进）。
+          · 全部阈值候选耗尽后，才用 Canny 轮廓兜底（最贵，只在彻底找不到时用）。
+        找到即锁定 _locked_th 并清空该 ROI 的待验证队列，下次直接复用。
+        """
         self._search_count += 1
+        x, y, w, h = roi if roi is not None else (0, 0, gray.shape[1], gray.shape[0])
+        crop = gray[y:y + h, x:x + w]
+        scale = min(1.0, self.cfg.SEARCH_WIDTH / float(w))
+        sw, sh = max(32, int(round(w * scale))), max(24, int(round(h * scale)))
+        small = cv2.resize(crop, (sw, sh), interpolation=cv2.INTER_AREA) if scale < 1 else crop
+        sx, sy = w / float(sw), h / float(sh)              # 缩小图 → 原图 的坐标比例
+        # 阈值候选：优先复用上次成功值，再并入 Otsu 与固定档位（去掉与已有值太接近的）。
+        thresholds = [self._locked_th] if self._locked_th is not None else []
+        otsu, _ = cv2.threshold(small, 0, 255, cv2.THRESH_BINARY_INV | cv2.THRESH_OTSU)
+        for th in (int(otsu),) + tuple(self.cfg.DARK_THRESHOLDS):
+            if not any(abs(th - t) < 6 for t in thresholds):
+                thresholds.append(th)
+        # 持续失败时跨帧轮换阈值；只缓存候选几何，不保存旧图像或旧验证结果。
+        key = tuple(roi) if roi is not None else "full"
+        job = self._search_jobs.setdefault(key, dict(index=0, pending=[], threshold=None))
+        if len(self._search_jobs) > 4:
+            self._search_jobs = {key: job}                 # 最多只留 4 个 ROI 的进度
+        pending = job["pending"]
+        if not pending:
+            index = job["index"] % (len(thresholds) + 1)   # 最后一档留作 Canny 兜底
+            job["index"] += 1
+            if index < len(thresholds):
+                th = thresholds[index]
+                job["threshold"] = th
+                self._threshold_count += 1
+                _, mask = cv2.threshold(small, th, 255, cv2.THRESH_BINARY_INV)   # 暗区为前景
+                mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, self._kernel)     # 闭运算补断线
+                # 候选坐标从缩小图坐标乘回原图（+ROI 偏移）。
+                pending.extend((q * np.array([sx, sy], np.float32) + [x, y], kind)
+                               for q, kind in self._candidate_quads(mask))
+            else:
+                job["threshold"] = None
+                # Canny 兜底：边缘图直接找四边形轮廓，内/外框都试。
+                edges = cv2.Canny(small, self.cfg.CANNY_LOW, self.cfg.CANNY_HIGH)
+                contours = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)[-2]
+                for cnt in sorted(contours, key=cv2.contourArea, reverse=True)[:self.cfg.MAX_CANDIDATES]:
+                    if cv2.contourArea(cnt) < sw * sh * self.cfg.MIN_AREA_RATIO:
+                        continue
+                    ap = cv2.approxPolyDP(cnt, self.cfg.APPROX_EPSILON * cv2.arcLength(cnt, True), True)
+                    if len(ap) == 4 and cv2.isContourConvex(ap):
+                        q = _order_quad(ap) * [sx, sy] + [x, y]
+                        pending.extend(((q, "inner"), (q, "outer")))
+        # 逐个验证候选；每帧最多 SEARCH_MAX_PROPOSALS 个。
+        while pending and self._proposals < self.cfg.SEARCH_MAX_PROPOSALS:
+            # 至少验证一个候选，避免原子轮廓扫描稍慢导致永远没有进展。
+            if self._proposals and time.perf_counter() >= self._deadline:
+                break
+            q, kind = pending.pop(0)
+            self._proposals += 1
+            verified = self._verify(gray, q, kind)         # 四边暗带验证
+            if verified is None:
+                continue
+            refined = self._refine(gray, q, kind, self.cfg.REFINE_RADIUS)   # 亚像素精修
+            if refined is not None:
+                precise = self._verify(gray, refined, kind)                 # 精修后再验证
+                if precise is not None:
+                    verified = precise                    # 精修通过则用更准的结果
+            self._locked_th = job["threshold"]             # 记住本次成功阈值
+            job["pending"] = []
+            job["index"] = 0
+            return verified
+        return None
+
+    def _legacy_search(self, gray, roi=None):
+        """保留可选线段恢复路径使用的完整搜索；常规帧不调用。"""
         x, y, w, h = roi if roi is not None else (0, 0, gray.shape[1], gray.shape[0])
         crop = gray[y:y + h, x:x + w]
         scale = min(1.0, self.cfg.SEARCH_WIDTH / float(w))
@@ -397,6 +586,7 @@ class RectangleCenterDetector:
         return best
 
     def process(self, gray, timestamp=None):
+        """单帧入口：按"track → roi_search → full_search"三级降级找框，输出中心与结果 dict。"""
         started = time.perf_counter()
         g = np.asarray(gray)
         if g.ndim == 3 and g.shape[2] == 1:
@@ -404,43 +594,58 @@ class RectangleCenterDetector:
         if g.ndim != 2 or g.dtype != np.uint8:
             raise ValueError("process expects a uint8 grayscale image")
         self._frame += 1
+        # 每帧重置的临时统计与时间预算（预算内没找到就留给下一帧继续）。
         self._search_count = self._threshold_count = 0
+        self._proposals = 0
+        self._deadline = started + self.cfg.SEARCH_BUDGET_MS / 1000.0
         candidate, stage = None, "search"
+        # ---- ① track：上一帧已锁定 → 只用四边窄带精修（最省，稳态走这里）----
         if self._track is not None:
             q, kind = self._track["quad"], self._track["kind"]
             q = self._refine(g, q, kind, self.cfg.TRACK_RADIUS)
             if q is not None:
                 candidate = self._verify(g, q, kind)
                 stage = "track"
-        if candidate is None and self._track is not None:
+        # ---- ② roi_search：刚失锁 → 在上一帧外框外扩的窗口内搜一次 ----
+        if candidate is None and self._track is not None and self._roi_retry:
             q = self._track["outer_quad"]
             lo, hi = q.min(axis=0), q.max(axis=0)
-            pad = np.maximum((hi - lo) * self.cfg.ROI_PADDING, 24)
+            pad = np.maximum((hi - lo) * self.cfg.ROI_PADDING, 24)         # 外扩量（至少 24px）
             lo = np.maximum(0, np.floor(lo - pad)).astype(int)
             hi = np.minimum([g.shape[1], g.shape[0]], np.ceil(hi + pad)).astype(int)
             candidate = self._search(g, (int(lo[0]), int(lo[1]), int(hi[0] - lo[0]), int(hi[1] - lo[1])))
             stage = "roi_search"
-        if candidate is None:
+            self._roi_retry = False                                        # 只允许一次 ROI 搜索
+        elif candidate is None:
+            # ---- ③ full_search：彻底丢失 → 全图多阈值 + Canny 兜底 ----
             candidate = self._search(g)
             stage = "full_search"
         if candidate is None:
-            self._track = self._smooth = None
-            self._locked_th = None
+            # 三路都没找到：清空平滑中心，返回无效结果（不沿用旧框，避免"粘住"）。
+            self._smooth = None
             self.last = dict(valid=False, stage="no_black_frame", search_count=self._search_count,
-                             thresholds=self._threshold_count, detector_ms=(time.perf_counter() - started) * 1000)
+                             thresholds=self._threshold_count, proposals=self._proposals,
+                             detector_ms=(time.perf_counter() - started) * 1000)
             return self.last
+        # ---- 找到：锁定、清进度、算中心 ----
         self._track = candidate
+        self._roi_retry = True
+        self._search_jobs.clear()
         w, h = candidate["width_mm"], candidate["height_mm"]
         matrix = candidate["rect_to_image"]
         # 直接映射正视面圆心才是正确中心，圆周采样不用于平均中心。
+        # （中心 = 矩形中心的对角线交点；由 mm→px 单应把 (w/2,h/2) 投回原图即得。）
         raw = project_points(matrix, [[w / 2, h / 2]])[0]
         alpha = float(self.cfg.CENTER_ALPHA)
+        # 一阶低通：平滑值只在显示口径使用；raw 供闭环（见 config.AIM_USE_RAW）。
+        # 跳变过大（FILTER_RESET_PX）直接重置，避免平滑把真运动拖成滞后。
         if (self._smooth is None or alpha <= 0 or
                 np.linalg.norm(raw - self._smooth) > self.cfg.FILTER_RESET_PX):
             center = raw
         else:
             center = self._smooth + alpha * (raw - self._smooth)
         self._smooth = center
+        # 圆周采样点（仅可视化/交叉校验用）按尺寸缓存，避免每帧重算。
         key = (w, h, self.cfg.CIRCLE_RADIUS_MM, self.cfg.CIRCLE_SAMPLES)
         if key not in self._circle_cache:
             self._circle_cache[key] = standard_circle(*key)
@@ -450,7 +655,8 @@ class RectangleCenterDetector:
                       outer_inferred=candidate["kind"] == "inner",
                       circle_points=project_points(matrix, self._circle_cache[key]),
                       stage=stage, threshold=self._locked_th, search_count=self._search_count,
-                      thresholds=self._threshold_count, detector_ms=(time.perf_counter() - started) * 1000)
+                      thresholds=self._threshold_count, proposals=self._proposals,
+                      detector_ms=(time.perf_counter() - started) * 1000)
         self.last = result
         return result
 
@@ -460,29 +666,37 @@ def draw_result(gray, result, show_width=480, top_offset=0):
 
     top_offset：屏幕上方的文字整体下移量（像素）。激光读数面板占用左上角时由
     main.py 传 vision.laser_spot.PANEL_H，避免两处文字叠在一起。
+
+    绘制元素（均按 scale 换算到缩小图坐标，避免在原始分辨率上画）：
+        · 绿色外框 quad、青色内框 inner_quad
+        · 洋红四角圆点 + "P1..P4 (x,y)" 标签（原图坐标）
+        · 蓝色靶心十字 + "(u,v) stage 耗时" 文字
+    返回 BGR 画布，交由 _Preview.render 再 letterbox 到屏幕画布。
     """
     g = np.asarray(gray).squeeze()
-    scale = min(1.0, float(show_width) / g.shape[1])
+    scale = min(1.0, float(show_width) / g.shape[1])        # 原图 → 缩小图 的比例
     if scale < 1:
         g = cv2.resize(g, (int(round(g.shape[1] * scale)), int(round(g.shape[0] * scale))))
     canvas = cv2.cvtColor(g, cv2.COLOR_GRAY2BGR)
     if not result.get("valid"):
+        # 无效：只提示一行红字，不画任何框（过期结果已在 main._display_result 降级）。
         cv2.putText(canvas, "NO BLACK RECTANGLE", (8, 24 + top_offset), cv2.FONT_HERSHEY_SIMPLEX, .55, (0, 0, 255), 1)
         return canvas
-    q = np.rint(result["quad"] * scale).astype(np.int32)
-    iq = np.rint(result["inner_quad"] * scale).astype(np.int32)
+    q = np.rint(result["quad"] * scale).astype(np.int32)          # 外框（缩小图坐标）
+    iq = np.rint(result["inner_quad"] * scale).astype(np.int32)   # 内框（缩小图坐标）
     cv2.polylines(canvas, [q], True, (0, 255, 0), 2, cv2.LINE_AA)
     cv2.polylines(canvas, [iq], True, (0, 220, 220), 1)
     for i, (x, y) in enumerate(result["quad"]):
         p = tuple(q[i])
-        cv2.circle(canvas, p, 4, (255, 0, 255), -1)
+        cv2.circle(canvas, p, 4, (255, 0, 255), -1)               # 洋红实心点
+        # 标签用**原图坐标**（x,y），便于与日志/回算对照；位置做边界夹取防出画。
         label = "P%d (%d,%d)" % (i + 1, round(float(x)), round(float(y)))
         tw = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, .36, 1)[0][0]
         pos = (max(0, min(int(p[0]) + 5, canvas.shape[1] - tw - 1)),
                max(12, min(int(p[1]) - 7, canvas.shape[0] - 5)))
         cv2.putText(canvas, label, pos, cv2.FONT_HERSHEY_SIMPLEX, .36, (255, 255, 0), 1, cv2.LINE_AA)
     c = tuple(np.rint(np.array([result["u"], result["v"]]) * scale).astype(int))
-    cv2.drawMarker(canvas, c, (255, 0, 0), cv2.MARKER_CROSS, 14, 2)
+    cv2.drawMarker(canvas, c, (255, 0, 0), cv2.MARKER_CROSS, 14, 2)   # 蓝色靶心十字
     cv2.putText(canvas, "(%d,%d) %s %.1fms" % (round(result["u"]), round(result["v"]),
                 result["stage"], result["detector_ms"]), (8, 22 + top_offset), cv2.FONT_HERSHEY_SIMPLEX, .45, (255, 220, 0), 1)
     return canvas
