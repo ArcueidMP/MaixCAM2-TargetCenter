@@ -9,9 +9,24 @@
 | 轨 | 目录 | BUILD_ID | 状态 |
 |---|---|---|---|
 | A（DeepSeek） | 根 | `2026-10-05-r7` | 性能治理 + 抗抖跟踪已完成 |
-| B（名义 GPT） | `maixcam2_rect_center/` | `2026-10-11-display-thread-v0.4.3` | v0.4.0 修轴映射 → v0.4.1 按钮式自检+画面流转 → v0.4.3 显示移出主循环修「1.5 帧」 |
+| B（名义 GPT） | `maixcam2_rect_center/` | `2026-10-11-show-probe-v0.4.4` | v0.4.0 修轴映射 → v0.4.1 按钮自检+画面流转 → v0.4.3 显示移出主循环 → v0.4.4 锁定「板上 ~2fps」= MaixCDK 图传 500ms 忙等 + 开机探针 |
 
-**B 轨 v0.4.3（10-11，当前）** —— 修「画面只有 1.5 帧」：
+**B 轨 v0.4.4（10-11，当前）** —— 板上恒 ~2.5fps 的**根因已源码级锁定**：
+- **症状**：`capture=2.5 disp=1.9 detect_fps=0 | read=106.9 loop=321.2ms | show avg=505.8 p95=508.4 max=509.1ms`。
+- **根因**：show 的 avg/p95/max 挤在 505~509ms = **固定超时**，不是算力。MaixCDK `vision/src/maix_image_trans.cpp`
+  的 `send_image()`：`if(!handle->init){ while(!init){ if(ticks-t>500) return NOT_READY; } }` ——
+  **MaixVision 模式下图传 websocket 未连上时，每次 show() 忙等 500ms 且空转 CPU**；
+  而 `Display::show()` 首件事就是 `if(img_trans) img_trans->send_image(img)`，`img_trans` 仅在
+  `maixvision_mode()`（用 MaixVision 运行代码）时才创建。⇒ 1.9 次/秒 × 500ms ≈ **烧掉 ~95% 一个核** →
+  相机 read 被抢到 107~175ms、识别线程饿死。**本地屏本身官方只要 1~5ms**。
+- **改法**：`_Preview` 构造时做 `show()` 计时探针（`_probe_show()`，≥300ms 打根因 + 对策）；
+  周期性 `show slow` 改 `warn_slow_once()`（只打一次、点名 MaixVision 图传）。
+- **给用户的三条真解**：① **从设备本地启动应用**（不经 MaixVision 运行）⇒ `maixvision_mode()` 假 ⇒
+  show ≈1~5ms ⇒ 跑满帧率（日志 `/maixapp/tmp/last_run.log`）；② 让 MaixVision 画面预览真正连上（异步入队）；③ `SHOW=False`。
+- ⚠ **两条被证伪的直觉（别再走）**：降 `SHOW_FPS` 无效；「关掉预览丢帧」也无效 —— 丢帧是 show 慢的**结果**。
+- **已排除**：`touchscreen.read()` 非阻塞（FIONBIO + 直读 input event）；`Camera.skip_frames(n)` 是一次性预热（非每帧跳帧）。
+
+**B 轨 v0.4.3（10-11）** —— 修「画面只有 1.5 帧」：
 - **根因**：`Display.show()` 仍在主循环同步调用，`cam.read→submit→绘制→show` 串行 ⇒ show 慢多少整条链就慢多少，
   `capture`/`disp`/`detect_fps` **三路一起**掉到同一低位而 `read=` 仍很小。
   ⚠ **降 `SHOW_FPS` 无效**（show 阻塞后 `now>=_t_show` 恒真，`due()` 固定时间轴被架空）—— 别再靠调它治。
@@ -22,8 +37,18 @@
   ④ 恢复分相计时：`read/draw/loop`=主循环、`show avg/p95/max n`=显示线程、`drop(show)`/`drop(vision)` 分开。
 - **回归**：新增 `test_slow_show_does_not_block_main_loop`（show 故意 300ms → render 最坏 0.27ms）；
   `test_main_self_test` 补 `[perf]` 日志分支覆盖（该 print 板上每 2s 跑，格式错会打死主循环）。
-- ⚠ **待上板**：启动应见 `[preview] mode=display-thread screen=640x480 canvas=640x480`，`[perf]` 里 `loop≈34ms`、`capture≈30`。
-  若 MaixVision 看不到画面（=历史 v16 的坑）→ 立刻 `SHOW_ASYNC=False` 退回主进程内同步 show。
+- ⚠ **上板实测否掉了当时的预期**：`loop` 未回到 34ms 而是 321ms —— 原因见上面的 v0.4.4（图传忙等抢 CPU）。
+  若 MaixVision 看不到画面（=历史 v16 的坑）→ `SHOW_ASYNC=False` 退回主进程内同步 show。
+
+**B 轨 main.py 模块化重构（方案已出 · 未执行）** —— 用户要求把识别/追踪等功能像 `target_api.py` 一样各自成独立文件，
+便于按模块审查、降低入口复杂度。方案页 `25Efork/B轨main模块化重构方案.html`。
+- 定案：新增 `vision/{rate_meter,camera_source,vision_worker,preview,aim_control,telemetry}.py` 六模块，
+  入口 **843 行 → 约 230 行**；`main.py` **保留旧私有名别名** ⇒ 两个入口测试**零改动**。
+- **开工前置**：① 确认并发写入者停手（≥5min `sha1sum main.py` 不变）；② 把已 staged 的 v0.4.3 **真正 commit**
+  （10-11 23:03 实测 `HEAD` 仍 `72a011d`、文件 `M `=已 add 未 commit ⇒ **回滚点尚未落地**，别看日志写"已提交"就信）；
+  ③ 拍板 `SHOW_ASYNC` 上板默认并同步 `AGENTS §6.9`（该条 v18 结论已被 v0.4.3 推翻）。
+- 硬约束：`build_single.py` 的 `MODULES` 新增 6 项且 **`vision.aim_control` 须排在 `vision.gimbal_self_test` 之后**；
+  包内清单 **12 → 18 文件**；`[ui] 上电自检已改为屏幕按钮` 等日志串逐字冻结。
 
 ## 1 · 项目一句话
 2025 电赛 E 题视觉模块：靶心 = A4 靶纸四周 1.8cm 黑胶带矩形**对角线交点**（射影不变量），
@@ -119,6 +144,7 @@
 - 未决：FAULT 需手动重启恢复（有意保守）；`ENABLE_SCAN` 默认关（防上电甩头）；光斑极性（405nm 打紫外感光纸可能是暗斑，fixed 模式已绕过）。
 
 ## 10 · 下一步（板端）
-① 上板验证 v0.4.3 显示线程：启动见 `[preview] mode=display-thread`、`[perf]` 的 `loop≈34ms`/`capture≈30`；MaixVision 若黑屏 → `SHOW_ASYNC=False`。
+① **先解决显示链路**：跑 v0.4.4，看开机那行 `[preview] show 探针 ?ms` —— 若 ≈505ms，改**从设备本地启动应用**
+   （不经 MaixVision 运行）；探针回到 1~5ms 后，`[perf]` 的 `read/loop/capture` 应一并恢复正常。
 ② 验证屏幕右上角 `SELF-TEST` 按钮点击命中；③ 标定成功后打印"闭环已解锁"；追踪停下瞬间若晃 → `ACC_TRACK` 调小或 `RPM_FINE` 再降；
 ④ P4 依实测回差调 `DEADBAND_PX`；P7 移动中瞄准需 3507 经 SPI 给角速度前馈（接口预留）。
