@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>25Efork 当前版本视觉代码功能检查</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --ink:#1f2328; --sub:#5a6169; --line:#e3e6ea;
+    --accent:#0b62d6; --accent2:#7a3fd6; --ok:#12873f; --warn:#b26a00; --bad:#c0392b;
+    --a:#0b62d6; --b:#0a8f7a; --code:#f0f2f5;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font-family:"Segoe UI","Microsoft YaHei",-apple-system,Arial,sans-serif;
+       line-height:1.65;font-size:15px;}
+  .wrap{max-width:1080px;margin:0 auto;padding:32px 22px 80px;}
+  h1{font-size:26px;margin:0 0 6px;}
+  h2{font-size:20px;margin:38px 0 14px;padding-bottom:8px;border-bottom:2px solid var(--line);}
+  h3{font-size:16px;margin:22px 0 8px;}
+  p{margin:8px 0;}
+  .muted{color:var(--sub);}
+  .lead{color:var(--sub);font-size:14px;}
+  code{background:var(--code);padding:1px 5px;border-radius:4px;font-size:13px;
+       font-family:"Cascadia Code",Consolas,monospace;}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
+        padding:18px 20px;margin:14px 0;box-shadow:0 1px 2px rgba(0,0,0,.03);}
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px;}
+  .stat b{font-size:22px;display:block;}
+  .stat span{font-size:12.5px;color:var(--sub);}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px;background:var(--card);}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top;}
+  th{background:#eef1f5;font-weight:600;}
+  tr:nth-child(even) td{background:#fafbfc;}
+  .tag{display:inline-block;font-size:11.5px;padding:1px 8px;border-radius:20px;
+       border:1px solid var(--line);color:var(--sub);background:#f4f6f8;margin-right:4px;}
+  .tag.a{color:var(--a);border-color:#bcd6f7;background:#eef4fd;}
+  .tag.b{color:var(--b);border-color:#b3e0d6;background:#ebf8f4;}
+  .tag.ok{color:var(--ok);border-color:#b9e3c7;background:#eefaf2;}
+  .tag.warn{color:var(--warn);border-color:#f0d8ac;background:#fdf6e8;}
+  .tag.bad{color:var(--bad);border-color:#f0c0b8;background:#fdeeeb;}
+  ul{margin:8px 0 8px 20px;padding:0;}
+  li{margin:4px 0;}
+  .toc{columns:2;column-gap:26px;font-size:14px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  .toc a:hover{text-decoration:underline;}
+  .note{border-left:3px solid var(--accent);background:#eef4fd;padding:10px 14px;
+        border-radius:0 8px 8px 0;margin:12px 0;font-size:13.5px;}
+  .warnbox{border-left:3px solid var(--warn);background:#fdf6e8;padding:10px 14px;
+        border-radius:0 8px 8px 0;margin:12px 0;font-size:13.5px;}
+  footer{margin-top:44px;color:var(--sub);font-size:12.5px;text-align:center;}
+  .kbd{font-size:12px;color:var(--sub);}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>25Efork 当前版本视觉代码功能检查</h1>
+  <p class="lead">分支 <code>v0.3.1</code>（= B 轨 v3 基线 <code>2026-10-08-target-api-v3</code>）· 2026-10-11 · 覆盖两轨全部视觉模块</p>
+
+  <div class="grid">
+    <div class="stat"><b>2 轨</b><span>A 轨根目录 / B 轨 maixcam2_rect_center</span></div>
+    <div class="stat"><b>9 模块</b><span>~3900 行视觉源码（不含 main/config）</span></div>
+    <div class="stat"><b>29 / 30</b><span>B 轨场景检出（fixture#2 强反光安全失败）</span></div>
+    <div class="stat"><b>0.80 px</b><span>B 轨最大中心误差 · 0 误检</span></div>
+    <div class="stat"><b>0.06 px</b><span>A 轨默认斜视中心误差</span></div>
+    <div class="stat"><b>全通过</b><span>target_api / laser / gimbal 回归</span></div>
+  </div>
+
+  <h2 id="toc">目录</h2>
+  <div class="card toc">
+    <a href="#s0">0 · 检查范围与方法</a><br>
+    <a href="#s1">1 · 总体架构（双轨对照）</a><br>
+    <a href="#s2">2 · A 轨视觉模块功能</a><br>
+    <a href="#s3">3 · B 轨视觉模块功能</a><br>
+    <a href="#s4">4 · 功能矩阵（对外能力）</a><br>
+    <a href="#s5">5 · 现场可调参数面</a><br>
+    <a href="#s6">6 · 实测验证结果</a><br>
+    <a href="#s7">7 · 两轨互补与差异</a><br>
+    <a href="#s8">8 · 风险与待办</a>
+  </div>
+
+  <h2 id="s0">0 · 检查范围与方法</h2>
+  <div class="card">
+    <ul>
+      <li><b>对象</b>：当前检出分支 <code>v0.3.1</code> 下全部视觉代码 —— A 轨 <code>vision/{geometry,detector,tracker,overlay}.py</code>；B 轨 <code>maixcam2_rect_center/vision/{rectangle_center,laser_spot,stepper_link,gimbal_aim,gimbal_calibrate,gimbal_self_test}.py</code> 及 <code>target_api.py</code>。</li>
+      <li><b>方法</b>：逐模块通读源码（含 docstring 与参数注释）+ 实际执行两轨回归门禁，以运行结果佐证功能可用性。</li>
+      <li><b>口径说明</b>：本次检查的代码与 <code>b32cd08</code>（v3 原始提交）应用源码逐字等价（<code>git diff</code> 为空），即"当前版本"就是 B 轨 v3 基线；B 轨更晚的 v17~v20 帧率治理 <b>不在此版本内</b>。</li>
+    </ul>
+  </div>
+
+  <h2 id="s1">1 · 总体架构（双轨对照）</h2>
+  <div class="card">
+    <p>两条轨实现<b>同一个视觉子任务</b>：由 A4 靶纸四周 1.8cm 黑胶带矩形的几何，反算靶心像素坐标 <code>(u,v)</code>（B 轨另给像素↔毫米）。技术路线根本不同，可互为对照。</p>
+    <table>
+      <tr><th style="width:120px">维度</th><th><span class="tag a">A 轨（根，DeepSeek）</span></th><th><span class="tag b">B 轨（maixcam2_rect_center，GPT）</span></th></tr>
+      <tr><td>分割</td><td>灰度固定/Otsu 阈值二值化 + 形态学，扫描表择优并锁定</td><td>Canny + <code>approxPolyDP</code>；失锁时 Otsu/多档暗阈值掩膜兜底</td></tr>
+      <tr><td>候选</td><td><b>ring（深色环）/ paper（亮面矩形）双族</b> + 结构打分选优</td><td><b>内/外凸四边形配对</b> + 四边灰度剖面校验</td></tr>
+      <tr><td>中心解算</td><td><b>对角线交点</b>（射影不变量，不解单应）+ 角点亚像素精修</td><td><b>显式 8×8 单应</b>，正视面圆心逆映射回原图</td></tr>
+      <tr><td>尺度</td><td>A4 边长反算 <code>px_per_cm</code>（外沿/内沿两口径）</td><td>像素↔毫米单应（<code>homography_8x8</code>/<code>project_points</code>，mm→px 已写）</td></tr>
+      <tr><td>时序</td><td><b>抗抖跟踪</b>：常数速度卡尔曼 + 新息门限 + 尺度/清晰度一致性</td><td>窄带四边跟踪 + <code>CENTER_ALPHA</code> 一阶低通（显示口径）</td></tr>
+      <tr><td>下游</td><td>输出 <code>(u,v)</code> + <code>px_per_cm</code>（串口默认关）</td><td><b>激光偏差 + 双轴 ZDT 云台闭环 + 开环标定 + 上电自检</b></td></tr>
+    </table>
+  </div>
+
+  <h2 id="s2">2 · A 轨视觉模块功能</h2>
+
+  <div class="card">
+    <h3>2.1 <code>geometry.py</code> — 纯 NumPy 几何层 <span class="tag">不依赖 cv2/maix</span></h3>
+    <p class="muted">对应需求流程 ③④⑤⑥，并承担"退化姿态兜底"与"合法性裁判"。</p>
+    <table>
+      <tr><th>功能</th><th>实现</th><th>要点</th></tr>
+      <tr><td>③ 取四顶点</td><td><code>extreme_corners</code></td><td>x/y 极值四顶点；轴对齐时退化，由下一级兜底</td></tr>
+      <tr><td>④ 排序 [TL,TR,BR,BL]</td><td><code>order_corners</code> / <code>order_corners_by_sumdiff</code> / <code>_best_quad</code></td><td>质心<b>极角排序</b>（避免 x±y 在旋转 45° 时并列退化）；多方向极值 + 最大凸包面积</td></tr>
+      <tr><td>退化识别</td><td><code>_too_thin</code> / <code>quad_fit_error</code></td><td>轮廓点到四边形边界平均距离当<b>裁判</b>，自动在极值法/多方向法间择优</td></tr>
+      <tr><td>③④ 组合</td><td><code>extract_ordered_corners</code></td><td>三级兜底 + 裁判，返回 (角点, 方法名)</td></tr>
+      <tr><td>⑤ 求对角线交点</td><td><code>diagonal_intersection</code> / <code>seg_intersect</code></td><td><b>射影不变量</b>：直线映射为直线、交点映射为交点 ⇒ 交点是精确靶心，免解 H</td></tr>
+      <tr><td>合法性</td><td><code>is_valid_quad</code> / <code>opp_side_convergence</code></td><td>面积下限 + 凸性 + 对边比 + 长宽比 + <b>对边收敛自洽性</b>（挡"凸/面积正常但中心偏 20px"的假四边形）</td></tr>
+      <tr><td>⑥ 尺度</td><td><code>estimate_scale</code> / <code>scale_quad</code></td><td>A4 边长反算 <code>px_per_cm</code>；支持外沿(21×29.7)/内沿(17.4×26.1)</td></tr>
+      <tr><td>⑦ One Euro</td><td><code>OneEuroFilter</code></td><td>低延迟滤波，<b>现仅用于尺度通道</b>（中心改用卡尔曼）</td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>2.2 <code>detector.py</code> — OpenCV 主流程 <span class="tag a">A 轨核心</span></h3>
+    <ul>
+      <li><b>① 二值化</b>：<code>binarize</code>（固定/Otsu）、<code>_morph</code>（常规核 / 精细核两档，远距离救细环）、<code>_mask_specs</code>（"锁定值优先 + 固定/Otsu + 扫描表"的掩膜规格表）、<code>_masks</code>（<b>生成器</b> + 每帧预算 + 游标轮转，命中即 break 真省事）。</li>
+      <li><b>② 候选 + 结构打分</b>：<code>contour_features</code> 提取 <b>ring/paper 两族</b>，三趟走（<code>boundary_estimate</code> 判碎渣 → <code>_survivor_contours</code> 连通域预筛 → <code>_top_contours</code> 截断）；<code>score_candidate</code> 按"外沿近矩形 / 内孔占比像环 / 环厚像 1.8cm 胶带 / 长宽比像 A4 / 实际灰度对比度"打分。</li>
+      <li><b>灰度探针</b>：<code>_patch_mean</code>（孔内亮面）、<code>_band_gray</code>（带向探针）、<code>ring_thickness_px</code>（按目标尺度自适应步长，远距离不跨过细胶带）。</li>
+      <li><b>候选选择</b>：<code>select_frame_contour</code>（结构分选优 + <b>族迟滞 <code>KIND_BONUS</code></b> 防 ring/paper 逐帧乱切；<code>largest</code> 仅作对照/兜底）。</li>
+      <li><b>③④⑤ 解算</b>：<code>_quad_from_pts</code>（extreme → sumdiff → hull+approxPolyDP 三级）、<code>refine_corners_subpixel</code>（四边 fitLine 求交，压角点量化抖动到亚像素）。</li>
+      <li><b>主流程</b> <code>process</code>/<code>_solve</code>：整幅清晰度（Laplacian 方差）→ <b>帧间 ROI 跟踪</b> → 缩小图粗定位（<code>WORK_SCALE</code>）→ 全分辨率升级（force_sweep + 掩膜预算）→ 粗定位框内全分辨率精算 → 尺度 → <b>抗抖跟踪</b> → coast 短时外推。</li>
+    </ul>
+    <div class="note"><b>性能治理</b>：<code>boundary_estimate</code>(0.3ms) 预判 + 连通域预筛 + 掩膜预算，专治"某输入下复杂度爆炸"（掩膜 2 万条轮廓 → findContours 190ms）导致的 0.1fps。触发阈值 <code>FRAG_BOUNDARY_EST=13000</code> 为两路径实测交叉点。<b>"干净掩膜走原路径、零行为变化"</b>是设计约束。</div>
+  </div>
+
+  <div class="card">
+    <h3>2.3 <code>tracker.py</code> — 抗抖跟踪器 <span class="tag a">A 轨亮点</span></h3>
+    <ul>
+      <li><code>_CV1D</code>：单轴<b>常数速度卡尔曼</b>(位置+速度)，手写 2×2 协方差免矩阵开销；<code>update</code> 带 <b>dv_max 速度修正上限</b>（防坏点把速度带飞）。</li>
+      <li><code>TargetTracker.update</code> 四重机制：
+        <ol>
+          <li><b>自适应过程噪声 q</b>：由"新息²/meas_var − 1"的机动倍率经<b>对数</b>映射到 [q_min,q_max]，静止重平滑、晃动跟手（判据必须扣掉测量噪声，否则滤波器追噪声）。</li>
+          <li><b>新息门限（硬跳变）</b>：<code>gate=max(ABS, K·近期新息尺度)</code>，连续拒信时<b>主动放开</b>防级联锁死。</li>
+          <li><b>尺寸/尺度一致性</b>：框尺寸、<code>px_per_cm</code> 突变超限即判误锁。</li>
+          <li><b>清晰度自适应</b>：运动模糊帧放大测量噪声 r，更依赖预测。</li>
+        </ol>
+      </li>
+      <li><code>coast</code>：本帧完全没检出时用预测值顶 ≤<code>TRACK_MAX_COAST</code> 帧。</li>
+      <li><b>核心结论</b>（已实测证伪旧做法）：抖动位移是<b>必须跟踪的真实运动</b>，"一刀切低通"会拖出系统性偏移（One Euro static 均值 8.06px / 最大 27px，原始解算仅 0.10/0.39px）。</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>2.4 <code>overlay.py</code> — 可视化 <span class="tag">零逐帧分配</span></h3>
+    <p>预分配灰度/画布缓冲复用；绘制板框(绿)、对角线(蓝)、四顶点(TL/TR/BR/BL 黄)、靶心十字(红)、中心/尺度/stage 文本与 fps。</p>
+  </div>
+
+  <h2 id="s3">3 · B 轨视觉模块功能</h2>
+
+  <div class="card">
+    <h3>3.1 <code>vision/rectangle_center.py</code> — 黑框识别与中心追踪 <span class="tag b">B 轨核心</span></h3>
+    <ul>
+      <li><b>几何求解</b>：<code>_homography</code>（<b>显式 8×8 方程</b> + 坐标归一化提高稳定性）、<code>project_points</code> / <code>inverse_map_points</code>、<code>standard_circle</code>（72 点圆）、<code>_order_quad</code>。</li>
+      <li><b>四边稀疏验证</b> <code>_verify</code>：每边 3 点黑带 + 2 点内侧亮面采样，不生成整幅 warp；判据含覆盖率、暗/亮比、对比度中位数；背景允许为黑（不强制外侧白），普通纸边与实心黑块会失败。</li>
+      <li><b>窄带精修</b> <code>_refine</code>：当前帧四边灰度窄带 → 有向边缘跳变（近预测边缘优先，避捕获印刷圆）→ <code>fitLine</code> → 四角交点。</li>
+      <li><b>候选生成</b> <code>_candidate_quads</code>：轮廓树孔/环关系替代两两组合；亮面孔优先。</li>
+      <li><b>搜索</b> <code>_search</code>：缩小图多阈值（锁定值优先 + Otsu + <code>DARK_THRESHOLDS</code>）→ Canny 兜底 → <code>_line_search</code> 长线段拼四边（透明膜反光切断黑环时的恢复，默认 <code>ENABLE_LINE_RECOVERY=False</code>）。</li>
+      <li><b>主入口</b> <code>process</code>：<b>track → roi_search → full_search</b> 三级；中心 = 正视面圆心 <code>(w/2,h/2)</code> 直接映射（非圆周平均），<code>CENTER_ALPHA</code> 一阶低通；输出含 <code>raw_u/raw_v</code>、<code>circle_points</code>、<code>stage</code>、<code>outer_inferred</code> 等。</li>
+      <li><code>draw_result</code>：缩放后描边，屏幕文字下移避开激光面板。</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>3.2 <code>vision/laser_spot.py</code> — 激光光斑读数</h3>
+    <ul>
+      <li><code>LaserSpotDetector</code>：标称位置邻域 <code>LASER_ROI_RADIUS</code> 内找最亮点，亚像素质心；<b>限频</b>（<code>LASER_INTERVAL_S</code>，未更新帧沿用上次）、<b>跳变门限</b>（防误检）、背景 1/4 子采样中位数、面积上下限挡高光/噪点。</li>
+      <li><b>两种取位</b>：<code>fixed</code>（默认，写死常量零检测）/ <code>detect</code>（自校准）。</li>
+      <li><code>deviation(laser, result, use_raw)</code>：<b>dx=靶心−光斑</b>（正=靶心在光斑右/下），与云台"误差为正发 CCW"同符号；闭环必须 <code>use_raw=True</code>。</li>
+      <li><code>draw_laser_overlay</code>：左上角面板 + 光斑圆叉 + 到靶心连线。</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <h3>3.3 云台链路与控制（非视觉，但与视觉闭环直连）</h3>
+    <table>
+      <tr><th>模块</th><th>功能</th></tr>
+      <tr><td><code>stepper_link.py</code></td><td>ZDT Emm_V5.0 双串口。帧构造纯函数（F3 使能 / F6 速度 / FD 位置 / FE 停止 / FF 同步），<code>StepperLink</code> 双 UART + pinmap、<b>非阻塞收发</b>；<code>_ingest</code> 解析 ACK(0x02)/E2(0xE2)，E2 自动补使能、E2 洪水与 ACK 超时判 <b>FAULT</b>。<code>fault_reason()</code>（None=无故障）是正确判据。</td></tr>
+      <tr><td><code>gimbal_aim.py</code></td><td>两轴增量比例控制器 + 状态机（BOOT/COARSE/FINE/SETTLE/HOLD/SCAN/FAULT）；<b>三重保护</b>：离群拒收(<code>JUMP_REJECT_PX</code>)、死区(<code>DEADBAND_PX</code>)、指令限频 + 单帧限幅；<code>controller</code> 可注入（前馈/PID 预留）。</td></tr>
+      <tr><td><code>gimbal_calibrate.py</code></td><td>开环标定状态机：正/反走 N 脉冲实测 <b>PULSE_PER_PX / DIR_SIGN / 交叉项 / 回差</b>，把齿轮比·细分·焦距·安装角一次吸收。非阻塞，不挡视觉。</td></tr>
+      <tr><td><code>gimbal_self_test.py</code></td><td>上电小幅自检（yaw ±15°、pitch ±30° 往返回位）；未标定脉冲/度时<b>安全跳过</b>（不用错比例撞限位）；<code>probe_imu</code> 尽力读一次 IMU。</td></tr>
+    </table>
+  </div>
+
+  <div class="card">
+    <h3>3.4 <code>target_api.py</code> — 对外 API 门面 <span class="tag b">跨小问复用</span></h3>
+    <ul>
+      <li><code>Result</code>（dict 子类）：<code>res["u"]</code> 与 <code>res.u</code> 双写法，<code>bool(res)==res.valid</code>。</li>
+      <li><b>API ①</b> <code>detect_black_frame(frame)</code>：<b>无状态</b>，每帧全图搜索，适合"取一次框"。</li>
+      <li><b>API ②</b> <code>CenterTracker</code> / <code>track_center</code> / <code>reset</code>：<b>有状态</b>窄带跟踪 + 失锁重捕获；<code>with_laser=True</code> 额外带 <code>laser_u/v</code>、<code>dx/dy</code>。</li>
+      <li><b>API ③</b> <code>AimLoop</code>：追踪 → 偏差 → 发脉冲的完整闭环（<b>会驱动电机</b>；无电机时只出视觉结果）。</li>
+      <li>辅助：<code>to_gray</code>（numpy / MaixPy image → 灰度）、<code>load_config(**overrides)</code>（不改磁盘造覆盖配置）；<b>顶层不 import maix</b>，PC 可离线跑。</li>
+    </ul>
+  </div>
+
+  <h2 id="s4">4 · 功能矩阵（对外能力）</h2>
+  <div class="card">
+    <table>
+      <tr><th>能力</th><th>A 轨</th><th>B 轨</th><th>备注</th></tr>
+      <tr><td>黑框识别（取一次）</td><td><code>TargetCenterDetector.process</code></td><td><code>detect_black_frame</code></td><td>均无状态</td></tr>
+      <tr><td>连续中心追踪</td><td>ROI 跟踪 + 卡尔曼抗抖</td><td><code>CenterTracker.track</code> 窄带跟踪</td><td>B 轨 API 更完整</td></tr>
+      <tr><td>失锁重捕获</td><td>缩小图/全分辨率/ROI 多级回退</td><td>full_search + 可选线段恢复</td><td></td></tr>
+      <tr><td>中心精度</td><td>亚像素角点精修 + 对角线交点</td><td>单应 + 四边窄带精修</td><td>均 &lt;1.5px</td></tr>
+      <tr><td>尺度 / 毫米</td><td><code>px_per_cm</code></td><td>像素↔毫米单应</td><td>B 轨更完整</td></tr>
+      <tr><td>抗抖（车晃）</td><td><b>有</b>（卡尔曼）</td><td>弱（一阶低通，仅显示口径）</td><td>A 轨成熟</td></tr>
+      <tr><td>激光偏差</td><td>—</td><td><b>有</b>（fixed/detect）</td><td>B 轨独有</td></tr>
+      <tr><td>云台闭环 / 标定 / 自检</td><td>—（串口默认关）</td><td><b>有</b>（stepper/aim/calibrate/self_test）</td><td>B 轨独有</td></tr>
+      <tr><td>对外 API 门面</td><td>无</td><td><b>有</b>（target_api）</td><td>B 轨差异化</td></tr>
+    </table>
+  </div>
+
+  <h2 id="s5">5 · 现场可调参数面</h2>
+  <div class="card">
+    <p class="lead">两轨均只有 <code>config.py</code> 需现场修改。</p>
+    <h3><span class="tag a">A 轨</span> 关键参数组</h3>
+    <ul>
+      <li><b>相机/内存</b>：<code>PROFILES</code>(3 档) / <code>WORK_SCALE</code> / <code>LOCK_AE_AWB</code> / <code>EXPOSURE</code> / <code>GAIN</code>。</li>
+      <li><b>二值化</b>：<code>BLACK_THRESH</code> / <code>THRESH_CANDIDATES</code> / <code>THRESH_SWEEP</code> / <code>THRESH_RELOCK*</code> / <code>MORPH_*</code>。</li>
+      <li><b>结构打分</b>：<code>SCORE_*</code>（fill/hole/ring/aspect/contrast）· <code>PAPER_*</code> · <code>RING_BONUS</code> · <code>SCORE_FALLBACK_LARGEST</code>(默认关)。</li>
+      <li><b>几何</b>：<code>MIN_AREA_RATIO</code> / <code>MIN_QUAD_AREA_RATIO</code> / <code>OPP_ANGLE_SLACK</code> / <code>ASPECT_MIN/MAX</code> / <code>REFINE_*</code>。</li>
+      <li><b>性能预算</b>：<code>FRAG_BOUNDARY_EST</code> / <code>MAX_SCAN_*</code> / <code>MAX_MASKS_FULL</code> / <code>ROI_TRACK*</code>。</li>
+      <li><b>抗抖</b>：<code>TRACK_PRESETS</code>(static/dynamic) / <code>TRACK_JUMP_*</code> / <code>TRACK_DV_K</code> / <code>TRACK_SIZE_TOL</code> / <code>KIND_BONUS</code>。</li>
+    </ul>
+    <h3><span class="tag b">B 轨</span> 关键参数组</h3>
+    <ul>
+      <li><b>视觉</b>：<code>CANNY_LOW/HIGH</code> / <code>DARK_THRESHOLDS</code> / <code>SEARCH_WIDTH</code> / <code>MIN_EDGE_CONTRAST/COVERAGE</code> / <code>BLACK_FRAME_MM=18</code> / <code>TARGET_*_MM</code> / <code>CENTER_ALPHA</code>。</li>
+      <li><b>激光</b>：<code>LASER_MODE(fixed/detect)</code> / <code>LASER_U/V_NOMINAL</code> / <code>LASER_ROI_RADIUS</code> / <code>LASER_MIN_*</code>。</li>
+      <li><b>云台</b>：<code>U1/U2_DEV·PINS</code> / <code>ADDR_*</code> / <code>DIR_SIGN_*</code> / <code>PULSE_PER_PX_*</code> / <code>GAIN_*</code> / <code>DEADBAND_PX</code> / <code>RPM_FINE/COARSE</code> / <code>ACC_DEFAULT</code>。</li>
+      <li><b>安全/标定</b>：<code>ENABLE_GIMBAL</code> / <code>ENABLE_ACK_WATCHDOG</code> / <code>E2_*</code> / <code>ENABLE_SCAN</code> / <code>CALIBRATE_AXIS</code> / <code>SELF_TEST_*</code> / <code>GIMBAL_GEAR_RATIO</code>。</li>
+    </ul>
+    <div class="warnbox"><b>已知死参数</b>（改了无效，别浪费时间）：<code>SEARCH_BUDGET_MS</code> <code>SEARCH_MAX_PROPOSALS</code> <code>SEARCH_GEOMETRY_STEPS</code> <code>MAX_CONTOURS</code> <code>LINE_MAX_PROPOSALS</code> <code>LINE_SEARCH_INTERVAL</code> <code>ACQUIRE_CONFIRM_FRAMES</code> <code>CONFIRM_CORNER_PX</code> <code>RECHECK_INTERVAL</code> <code>MAX_LINE_RESIDUAL_PX</code> <code>MIN_TRANSITION_COVERAGE</code> <code>MAX_BOUNDARY_WIDTH_ERROR</code>。</div>
+  </div>
+
+  <h2 id="s6">6 · 实测验证结果</h2>
+  <div class="card">
+    <table>
+      <tr><th>测试</th><th>结果</th><th>关键指标</th></tr>
+      <tr><td>B · <code>test_target_api</code></td><td><span class="tag ok">全部通过</span></td><td>无状态识别每帧 full_search、空白/实心黑块正确拒绝、跟踪精度 &lt;1.5px、大跳重捕获 &lt;2px、<b>deviation 符号正确(dx=+12.0,dy=-8.9)</b>、load_config 覆盖、AimLoop 无电机只出视觉</td></tr>
+      <tr><td>B · <code>test_performance</code></td><td><span class="tag ok">29/30</span></td><td>max_center_error <b>0.803px</b>、0 误检、motion_max 0.637px、稳态 median <b>0.816ms</b>/p95 1.435ms；仅 fixture#2 强反光安全失败</td></tr>
+      <tr><td>B · <code>test_laser</code></td><td><span class="tag ok">全部通过</span></td><td>固定/检测两模式、质心误差 0.25px、跳变门限、墙面不误报、高光按面积拒、限频 4 次/30 帧、单次 0.081ms</td></tr>
+      <tr><td>B · <code>test_gimbal_aim</code></td><td><span class="tag ok">PASS (10)</span></td><td>自检 6 步往返、标定输出 PULSE_PER_PX/DIR_SIGN/交叉项/回差、协议/闭环/看门狗</td></tr>
+      <tr><td>A · <code>test_pc</code></td><td><span class="tag ok">通过</span></td><td>默认斜视中心误差 <b>0.061px=0.0030cm</b>；6 姿态全检出；100 帧加噪+失焦检出 100%、滤波后 σ&lt;0.01px；抗干扰锁定靶纸；WORK_SCALE 0.375~1.0 精度一致</td></tr>
+    </table>
+  </div>
+
+  <h2 id="s7">7 · 两轨互补与差异</h2>
+  <div class="card">
+    <ul>
+      <li><b>中心解算的独立性</b>：A 轨用"对角线交点"（<b>不用单应</b>，四角准即精确）；B 轨用"显式 8×8 单应 + 72 点圆"。两条数学路径互不依赖，可作为交叉验证。</li>
+      <li><b>成熟度分布</b>：A 轨在<b>跟踪/抗抖/性能治理</b>上更成熟；B 轨在<b>几何/毫米单应/激光+云台闭环/对外 API</b> 上更完整。工程上"补短板去另一轨抄已验证结论"。</li>
+      <li><b>同一现象的不同解释</b>：A 轨"车一晃中心就偏"= 滤波器跟不动（需卡尔曼）；B 轨把该问题落在 <code>CENTER_ALPHA</code> 平滑滞后 ≈28ms，并要求<b>闭环必须用 raw_u/raw_v</b>（A 轨用卡尔曼解耦）。</li>
+    </ul>
+  </div>
+
+  <h2 id="s8">8 · 风险与待办</h2>
+  <div class="card">
+    <div class="warnbox"><b>v3 基线特有风险（上板前务必处理）</b>
+      <ul>
+        <li><b>轴映射/方向是 v3 旧值</b>：<code>U1_DEV=/dev/ttyS1</code>=yaw、<code>U2_DEV=/dev/ttyS2</code>=pitch，<code>DIR_SIGN_YAW/PITCH=+1/+1</code>、<code>PULSE_PER_PX=3.67</code> 均为<b>占位/未经 v8 实测校正</b>。这与"实测 ttyS0=pitch、ttyS2=yaw"的结论相反，<b>上板前必须重新跑开环标定并核对接线</b>，否则可能 yaw 不动或反向跑飞。</li>
+        <li><code>ACC_DEFAULT=0</code>（无曲线加减速，瞬时启停，<b>卡顿根源</b>）；v3 无上电自检优先/帧率计量修复。</li>
+        <li><b>工具陷阱</b>：<code>tools/apply_gimbal_track_patch.py</code> 与 <code>tools/git_round.py</code> 是 v9+ 专用，对 v3 代码会误报/挡提交，<b>勿运行</b>。</li>
+      </ul>
+    </div>
+    <ul>
+      <li>B 轨 <code>LENS_CORR=True</code>（未调参的镜头畸变校正）在 v3 下开启，v19 才改为关闭；若上板见画面畸变需注意。</li>
+      <li>A 轨串口默认 <code>ENABLE_UART=False</code>；云台闭环能力在 B 轨。</li>
+      <li>B 轨 <code>ENABLE_LINE_RECOVERY=False</code>、<code>ENABLE_SCAN=False</code>、<code>CALIBRATE_AXIS=""</code> 均为默认关闭的安全态。</li>
+    </ul>
+  </div>
+
+  <footer>25Efork · 当前版本视觉代码功能检查 · 整理自源码通读 + 两轨回归门禁实测 · 分支 v0.3.1</footer>
+</div>
+</body>
+</html>

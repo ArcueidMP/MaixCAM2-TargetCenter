@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>江南大学 E 题云台（国一）锁定/追踪逻辑分析</title>
+<style>
+  :root{
+    --bg:#f7f8fa; --card:#ffffff; --ink:#1f2328; --sub:#57606a;
+    --line:#e3e6ea; --accent:#1a6ddf; --accent2:#b54708; --ok:#1a7f37;
+    --code-bg:#f2f4f7; --code-ink:#24292f; --tag:#eef3fb;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei","PingFang SC",sans-serif;
+    line-height:1.75;font-size:15px}
+  .wrap{max-width:960px;margin:0 auto;padding:36px 24px 80px}
+  header{border-bottom:3px solid var(--accent);padding-bottom:18px;margin-bottom:8px}
+  h1{font-size:25px;margin:0 0 8px;letter-spacing:.3px}
+  .meta{color:var(--sub);font-size:13px}
+  h2{font-size:19px;margin:38px 0 12px;padding-left:11px;border-left:4px solid var(--accent)}
+  h3{font-size:16px;margin:24px 0 8px;color:#2b3138}
+  p{margin:10px 0}
+  ul,ol{margin:10px 0;padding-left:24px}
+  li{margin:5px 0}
+  code{background:var(--code-bg);color:var(--code-ink);padding:1.5px 6px;border-radius:5px;
+    font-family:"JetBrains Mono",Consolas,Monaco,monospace;font-size:13px}
+  pre{background:var(--code-bg);border:1px solid var(--line);border-radius:8px;padding:14px 16px;
+    overflow:auto;font-family:"JetBrains Mono",Consolas,Monaco,monospace;font-size:12.5px;line-height:1.6}
+  pre code{background:none;padding:0}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin:16px 0;
+    box-shadow:0 1px 2px rgba(0,0,0,.03)}
+  table{border-collapse:collapse;width:100%;margin:12px 0;font-size:13.5px;background:var(--card)}
+  th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+  th{background:#f0f3f7;font-weight:600}
+  tr:nth-child(even) td{background:#fafbfc}
+  .tag{display:inline-block;background:var(--tag);color:var(--accent);border-radius:20px;
+    padding:1px 10px;font-size:12px;margin-right:6px;font-weight:600}
+  .flow{display:flex;flex-wrap:wrap;gap:8px;align-items:stretch;margin:14px 0}
+  .node{flex:1 1 130px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px 12px;
+    text-align:center;font-size:13px;box-shadow:0 1px 2px rgba(0,0,0,.03)}
+  .node b{display:block;font-size:13.5px;color:var(--accent);margin-bottom:3px}
+  .node small{color:var(--sub);font-size:12px}
+  .arrow{align-self:center;color:var(--sub);font-weight:700}
+  .hl{background:#fff8e6;border-left:3px solid var(--accent2);padding:10px 14px;border-radius:6px;margin:12px 0}
+  .ok{color:var(--ok);font-weight:600}
+  .kbd{font-family:monospace;background:#eef0f3;border:1px solid #d0d7de;border-bottom-width:2px;
+    border-radius:4px;padding:0 5px;font-size:12.5px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:720px){.grid2{grid-template-columns:1fr}}
+  .num{font-variant-numeric:tabular-nums}
+  footer{margin-top:48px;padding-top:16px;border-top:1px solid var(--line);color:var(--sub);font-size:12.5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>江南大学 2025 电赛 E 题云台（国一）—— 锁定 / 追踪逻辑分析</h1>
+  <div class="meta">
+    分析对象：<code>云台代码.7z</code> → 工程 <code>diansai_yuntai_mc02-yuntai_karman</code>（达妙 MC02 云台板，带卡尔曼滤波版本，作者 ggllxx）<br>
+    分析结论：<b>该方案“稳定追踪”本质 = IMU 姿态闭环（快内环）× 视觉误差卡尔曼滤波（抗抖）× 增益调度 PID（防超调）× 状态机（防丢帧甩头）</b>，四者叠加。
+  </div>
+</header>
+
+<h2>0 · 一句话结论</h2>
+<div class="card">
+它不是“视觉直接驱动电机”，而是把**视觉只当作一个缓慢、带噪声的角度误差传感器**：视觉给出的 <code>(Δx, Δy, 距离)</code> 先经过<b>卡尔曼滤波</b>平滑，再经<b>随距离自适应的 PID</b> 转成“目标角度的微调量”，叠加到 IMU 闭环的云台参考角上；云台内环始终由 <b>BMI088 + 四元数 EKF</b> 以 1kHz 做角度/角速度双闭环。视觉慢、内环快，二者解耦——这是它稳的核心。
+</div>
+
+<h2>1 · 技术栈全景</h2>
+<div class="card">
+<table>
+<tr><th style="width:130px">层次</th><th>技术选型</th></tr>
+<tr><td><b>主控硬件</b></td><td>达妙 <b>MC02</b> 开发板，MCU = <b>STM32H7</b>（Cortex-M7，高算力，跑得动复杂滤波与小信号处理）</td></tr>
+<tr><td><b>基础软件</b></td><td>STM32CubeMX + <b>HAL 库</b>；<b>FreeRTOS</b>（CMSIS-OS v1 封装）多任务</td></tr>
+<tr><td><b>算法库</b></td><td><b>CMSIS-DSP</b>（<code>arm_math.h</code>，矩阵/向量运算）、自研矩阵库、<b>四元数 EKF 姿态解算</b>、<b>卡尔曼滤波器</b>、PID 控制器</td></tr>
+<tr><td><b>执行机构</b></td><td>Yaw = <b>DJI GM6020</b>（CAN）；Pitch = <b>达妙 DM 电机</b>（CAN）</td></tr>
+<tr><td><b>传感</b></td><td><b>BMI088</b> 六轴 IMU（SPI/SPI+DMA），1kHz 采样做姿态反馈</td></tr>
+<tr><td><b>通信</b></td><td>视觉：<b>UART10</b>（54 字节帧）；板间：<b>UART1</b>（22 字节帧）；调试：<b>VOFA+</b>（UART7 justfloat）；遥控：DBUS(UART5)</td></tr>
+<tr><td><b>工程框架</b></td><td>湖南大学跃鹿战队 <b>basic_framework</b>（bsp / module / app 三层，pub-sub 消息中心解耦）</td></tr>
+<tr><td><b>工具链</b></td><td>arm-none-eabi-gcc + VSCode/Clion + Ozone 调试/示波</td></tr>
+</table>
+</div>
+
+<h2>2 · 系统架构与数据流</h2>
+<p>工程分三层，应用层之间用<b>发布/订阅</b>（message_center）解耦，四个 app 互不包含：</p>
+<div class="flow">
+  <div class="node"><b>上位机 / 视觉</b><small>52B 数据帧<br>Δx、Δy、距离 + 12 float</small></div>
+  <div class="arrow">→</div>
+  <div class="node"><b>robot_cmd</b><small>核心决策<br>状态机 + 滤波 + 追踪 PID</small></div>
+  <div class="arrow">→</div>
+  <div class="node"><b>gimbal</b><small>角度/角速度双闭环<br>GM6020 + DM 电机</small></div>
+</div>
+<p style="color:var(--sub);font-size:13px">另有 chassis（底盘，本作品里多为零力）与 shoot（激光/发射，<code>laser_on()</code> 打激光）。gimbal 通过 <code>gimbal_feed</code> 回传 IMU 姿态给 cmd，形成闭环协同。</p>
+
+<h3>任务节拍（FreeRTOS）</h3>
+<table>
+<tr><th>任务</th><th>频率</th><th>职责</th></tr>
+<tr><td>INS Task</td><td>1kHz</td><td>BMI088 采样 + 四元数 EKF 姿态解算（YawTotalAngle / Pitch / Gyro）</td></tr>
+<tr><td>Motor Task</td><td>~1kHz</td><td>电机 PID 与 CAN 收发</td></tr>
+<tr><td class="hl"><b>Robot core Task</b></td><td class="hl"><b>200~500Hz</b></td><td class="hl">robot_cmd：读取视觉、滤波、追踪 PID、发布云台目标角 —— <b>锁定逻辑主战场</b></td></tr>
+<tr><td>Daemon Task</td><td>100Hz</td><td>看门狗（视觉/遥控离线检测）</td></tr>
+</table>
+<div class="hl">关键设计：<b>云台控制频率（200~500Hz）必须高于视觉发送帧率</b>（源码注释明确要求）。视觉慢帧由内环“兜底保持”，不受丢帧拖累。</div>
+
+<h2>3 · “锁定”逻辑到底怎么写 —— 状态机驱动</h2>
+<p>锁定不是单一函数，而是一个按<b>题号 + 板间通信指令</b>推进的<b>有限状态机</b>（<code>enum YunTaiState_e</code>）。核心状态：</p>
+<table>
+<tr><th>状态</th><th>行为</th><th>设计意图</th></tr>
+<tr><td>WAITING</td><td>零力抱闸，记录起始 IMU 角、记时、关激光</td><td>待命，`<b>yawtarget = round(YawTotalAngle/360)*360</b>` 归到最近整圈，避免多圈跳变</td></tr>
+<tr><td>TURING</td><td>以固定步长（0.8°/拍）转向 <code>yawtarget−45°</code></td><td>开局先“预瞄”到靶纸一侧，缩短首次搜索时间</td></tr>
+<tr><td>TRACKING</td><td><b>视觉误差 → 卡尔曼 → PID → 微调</b>云台目标角</td><td>锁定主状态</td></tr>
+<tr><td>SEARCHING</td><td>在 ±60° 内以 0.2°/拍 往返扫描</td><td>丢失目标后主动找回，而不是傻等</td></tr>
+<tr><td>TRACKING_RUNNING</td><td>边画圆/边运动边锁定，按圆周进度设动态目标</td><td>动态题（移动靶/画圆）</td></tr>
+</table>
+
+<div class="hl"><b>防丢帧甩头的关键判据</b>（TRACKING 状态）：<br>
+<code>if (Vison_revc_flag &amp;&amp; Vison_Frequency &gt;= 20.0f)</code> —— 只有「收到帧 <b>且</b> 帧率 ≥20Hz」才刷新控制；否则降级到 SEARCHING。<br>
+这样视觉偶发丢帧时，云台保持上一次目标角（内环继续稳），不会因为一次脏数据乱甩。</div>
+
+<h3>锁定核心代码（每拍执行）</h3>
+<pre><code>// 1) 限幅，防止脏数据/异常值冲击
+LIMIT_MIN_MAX(opencv_Vision_data[0], -100.0f, 100.0f);   // Δx
+LIMIT_MIN_MAX(opencv_Vision_data[1], -100.0f, 100.0f);   // Δy
+LIMIT_MIN_MAX(opencv_Vision_data[2],  500.0f, 1560.0f);  // 距离(用于增益调度)
+
+// 2) 卡尔曼滤波（位置+速度 2 状态）
+yaw_error_kf.MeasuredVector[0]  = opencv_Vision_data[0];
+filtered_yaw_error   = Kalman_Filter_Update(&amp;yaw_error_kf)[0];
+pitch_error_kf.MeasuredVector[0]= opencv_Vision_data[1];
+filtered_pitch_error = Kalman_Filter_Update(&amp;pitch_error_kf)[0];
+
+// 3) 追踪 PID（目标 = 0）
+yaw_tracking_pid_output   = PIDCalculate(&amp;yaw_tracking_pid,   filtered_yaw_error,   0);
+pitch_tracking_pid_output = PIDCalculate(&amp;pitch_tracking_pid, filtered_pitch_error, 0);
+
+// 4) 增量式角度修正 —— 注意是 "目标角 -= 增益 * 输出" ，且增益随距离自适应
+gimbal_cmd_send.yaw   -= yaw_tracking_pid_output
+                          * mapping(opencv_Vision_data[2], 500.0f, 1560.0f,
+                                    yaw_control_kxmax,   // 近：0.001
+                                    yaw_control_kxmin);  // 远：0.0005
+gimbal_cmd_send.pitch += 0.001f * pitch_tracking_pid_output;</code></pre>
+<p><b>本质</b>：把“图像误差”当作闭环偏差，用 PI(D) 把偏差驱动到 0；误差→0 即“锁定”。云台从不直接信视觉的绝对位置，只信视觉的“还要往哪边挪一点”。</p>
+
+<h2>4 · 为什么稳 —— 四个可复用的工程决策</h2>
+
+<h3>① 卡尔曼滤波：把视觉误差当带速度的状态来估（抗抖/抗丢帧）</h3>
+<div class="grid2">
+<div class="card" style="margin:0">
+<b>模型</b>
+<pre><code>状态 x = [误差, 误差变化率]
+F = [1, 0.005]   // dt=5ms(200Hz)
+    [0, 1    ]
+Q = diag(0.1, 1.0)
+R = 1.0
+P0 = diag(5, 5)
+StateMinVariance = 0.001  // 防过度收敛
+UseAutoAdjustment = 1</code></pre>
+</div>
+<div class="card" style="margin:0">
+<b>为什么有效</b>
+<ul style="margin:0">
+<li>2 状态<b>常速模型</b>：滤掉图像抖动噪声，又保留运动趋势（不迟钝）。</li>
+<li><code>UseAutoAdjustment=1</code>：某一帧 <code>z=0</code>（无效/丢帧）时，滤波器<b>只预测不更新</b>，自动退化——丢帧不跳变。</li>
+<li><code>StateMinVariance</code> 防止 P 收敛过小后“迟钝、跟不上缓慢漂移”。</li>
+</ul>
+</div>
+</div>
+<p style="color:var(--sub);font-size:13px">注：dt 取 5ms（对应 200Hz 控制节拍），与 Robot 任务节拍一致；这是“视觉低频、内环高频”解耦的量化体现。</p>
+
+<h3>② 增益调度（Gain Scheduling）：远近距离用不同控制力度防超调</h3>
+<table>
+<tr><th>参数</th><th>含义</th><th>值</th></tr>
+<tr><td><code>yaw_control_kxmax / kxmin</code></td><td>yaw 误差→目标角 的换算增益（近 / 远）</td><td class="num">0.0010 / 0.0005</td></tr>
+<tr><td><code>pitch_control_kxmax / kxmin</code></td><td>pitch 误差→目标角 的换算增益（近 / 远）</td><td class="num">0.0010 / 0.0004</td></tr>
+</table>
+<p>用 <code>mapping(距离, 500, 1560, kxmax, kxmin)</code> 把“同一像素误差”按距离折算：<b>近距小步、远距更稳</b>，避免远距离时一个像素抖动被放大成大幅摆动。这是它比“固定增益”稳的关键调度之一。</p>
+
+<h3>③ 追踪 PID 与“分段/复位”策略</h3>
+<table>
+<tr><th>环</th><th>Kp</th><th>Ki</th><th>Kd</th><th>限幅</th><th>备注</th></tr>
+<tr><td>yaw_tracking_pid</td><td class="num">1.5</td><td class="num">3.0</td><td class="num">0.07</td><td class="num">±100 / MaxOut 200</td><td>用 <code>PID_ChangingIntegrationRate</code> 变积分抗饱和</td></tr>
+<tr><td>pitch_tracking_pid</td><td class="num">1.0</td><td class="num">2.0</td><td class="num">0.05</td><td class="num">±100 / MaxOut 200</td><td>同上</td></tr>
+</table>
+<p>动态题里还用了<b>在线改增益</b>的巧招：转向瞬间 <code>Kp=3.0, Ki=0, Iout=0</code>（纯比例快速跟），稳定后切回 <code>Kp=2.0, Ki=4.0</code>（加积分消静差）——相当于“粗调/精调”两套参数自动切换。</p>
+
+<h3>④ 内环：IMU 姿态闭环 + 前馈，把“稳”做扎实</h3>
+<p>gimbal 应用里 yaw/pitch 都不是“位置环”，而是<b>以 IMU 角度为反馈</b>的双闭环，并叠加前馈：</p>
+<pre><code>// Yaw = GM6020，反馈来自 IMU（OTHER_FEED）
+outer_loop_type = ANGLE_LOOP; close_loop_type = SPEED_LOOP | ANGLE_LOOP;
+.other_angle_feedback_ptr = &amp;gimba_IMU_data-&gt;YawTotalAngle; // 角度反馈=IMU
+.other_speed_feedback_ptr = &amp;gimba_IMU_data-&gt;Gyro[2];      // 角速度反馈=陀螺
+.feedforward_flag = SPEED_FEEDFORWARD | CURRENT_FEEDFORWARD; // 速度+电流前馈
+
+// 速度前馈：由目标角变化率算，限幅 ±10
+yaw_speed_feedforward = DEGREE_2_RAD*(yaw - yaw_last_ref)*500.0f;
+LIMIT_MIN_MAX(yaw_speed_feedforward, -10.0f, 10.0f);
+// 电流前馈：按速度环设定值分三段给，弥补 GM6020 静摩擦
+if      (ref &gt;=  0.5f) yaw_current_feedforward =  500.0f;
+else if (ref &lt;= -0.5f) yaw_current_feedforward = -500.0f;
+else yaw_current_feedforward = 500.0f * ref / 0.5f;   // 线性过渡区</code></pre>
+<ul>
+<li><b>用 IMU 而非编码器做反馈</b>：直接稳“绝对指向”，隔断齿轮回差、机械弹性对指向精度的影响。</li>
+<li><b>速度/电流前馈</b>：在误差出现前先给动力，减小相位滞后与静差，起停更“跟手”不拖沓。</li>
+<li>pitch 用达妙 DM 电机（自带更高带宽），同样以 IMU <code>Pitch</code> + <code>Gyro[0]</code> 闭环。</li>
+</ul>
+
+<h2>5 · 稳定性来源总结（可迁移清单）</h2>
+<table>
+<tr><th>#</th><th>决策</th><th>作用</th></tr>
+<tr><td>1</td><td>视觉误差卡尔曼滤波（位置+速度 2 态，自动降级）</td><td>抗图像抖动；丢帧只预测不更新，不跳变</td></tr>
+<tr><td>2</td><td>增益随距离调度（mapping 500→1560）</td><td>远近距离都不超调</td></tr>
+<tr><td>3</td><td>帧率门控（≥20Hz 才更新）+ 数据限幅</td><td>脏数据/掉帧不甩头</td></tr>
+<tr><td>4</td><td>状态机（TURING→TRACKING→SEARCHING）</td><td>丢目标主动扫回，全程无“死等”</td></tr>
+<tr><td>5</td><td>IMU 姿态闭环（1kHz）+ 速度/电流前馈</td><td>快内环稳指向，隔离机械误差</td></tr>
+<tr><td>6</td><td>控制频率（200~500Hz）&gt; 视觉帧率</td><td>慢视觉不拖累快内环</td></tr>
+<tr><td>7</td><td>看门狗 Daemon（视觉/遥控离线检测）</td><td>异常自动回安全态</td></tr>
+<tr><td>8</td><td>多圈角归并 <code>round(θ/360)*360</code></td><td>避免 ±180° 翻转跳变</td></tr>
+</table>
+
+<h2>6 · 与我们 25Efork 工程的对照启示</h2>
+<div class="card">
+<ul>
+<li><b>同思路已具备</b>：我们 B 轨也是“视觉误差 → 闭环 → 云台”，并已用 IMU 做反馈、加前馈。本项目印证了这条路线的正确性。</li>
+<li><b>可直接借鉴点</b>：
+  <ol>
+  <li><b>视觉误差的卡尔曼滤波</b>：我们现在用 One Euro / 低通，可评估换 2 状态 KF（位置+速度）——对“丢帧不跳变”和“保留趋势”更友好（B 轨已有 <code>CenterTracker</code>，可在误差域再叠一层 KF）。</li>
+  <li><b>距离自适应增益</b>：把 <code>px→角度</code> 增益按距离调度，替代固定 <code>PULSE_PER_PX</code>，可显著改善远近一致的跟手/防超调手感。</li>
+  <li><b>帧率门控</b>：我们已有 <code>Vison_Frequency</code> 类似量（B 轨有帧率计量），可加“≥阈值才刷新、否则保持”的门控，替代“丢帧即乱发”。</li>
+  <li><b>分段增益（粗调/精调切换）</b>：与我们在“跟手 ↔ 柔和”跷跷板上的取舍同源，可用状态切换而非一个固定折中值。</li>
+  </ol>
+</li>
+<li><b>注意差异</b>：该项目用“云台 IMU 绝对角闭环 + 视觉增量微调”，属于<b>相对瞄准</b>；我们若也用绝对角闭环，需注意与底盘运动解耦（其底盘多为零力）。</li>
+</ul>
+</div>
+
+<footer>
+  报告基于源码静态分析生成 · 工程路径 <code>云台代码_extract/diansai_yuntai_mc02-yuntai_karman</code> ·
+  关键文件：<code>application/cmd/robot_cmd.c</code>（锁定状态机/滤波/PID）、
+  <code>application/gimbal/gimbal.c</code>（内环+前馈）、
+  <code>modules/algorithm/kalman_filter.c</code>、<code>modules/opencv/opencv.c</code>（视觉帧解析）。
+</footer>
+
+</div>
+</body>
+</html>

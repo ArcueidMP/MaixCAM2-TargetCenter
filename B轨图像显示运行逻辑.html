@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>25Efork · B 轨图像显示运行逻辑</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --card:#ffffff; --ink:#1f2328; --ink2:#4a5560; --ink3:#78828c;
+    --line:#e3e6ea; --teal:#0f8a8a; --teal-bg:#e7f5f4; --blue:#2f6fdb; --blue-bg:#eaf1fd;
+    --amber:#b7791f; --amber-bg:#fdf4e3; --red:#c0392b; --red-bg:#fdeceb;
+    --green:#2f8f4e; --green-bg:#eaf6ee; --purple:#7c4dbe; --purple-bg:#f1ebfa;
+    --mono:"Cascadia Code","Consolas","SFMono-Regular",Menlo,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif;
+    line-height:1.65;font-size:15px}
+  .wrap{max-width:1080px;margin:0 auto;padding:32px 22px 72px}
+  header.top{border-bottom:3px solid var(--teal);padding-bottom:18px;margin-bottom:26px}
+  h1{font-size:26px;margin:0 0 8px;letter-spacing:.3px}
+  .sub{color:var(--ink2);font-size:14px}
+  .meta{margin-top:12px;display:flex;flex-wrap:wrap;gap:8px}
+  .chip{display:inline-block;background:var(--card);border:1px solid var(--line);
+    border-radius:999px;padding:3px 12px;font-size:12.5px;color:var(--ink2)}
+  .chip b{color:var(--teal)}
+  h2{font-size:19px;margin:38px 0 14px;padding-left:11px;border-left:4px solid var(--teal)}
+  h3{font-size:15.5px;margin:22px 0 8px;color:var(--ink)}
+  p{margin:8px 0}
+  code{font-family:var(--mono);background:#eef1f4;color:#243b53;padding:1px 6px;
+    border-radius:4px;font-size:13px}
+  .muted{color:var(--ink2)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:18px 20px;margin:14px 0;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media(max-width:820px){.grid2{grid-template-columns:1fr}}
+  .grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  @media(max-width:980px){.grid3{grid-template-columns:1fr}}
+  .axis{border-radius:12px;padding:16px 18px;border:1px solid var(--line);background:var(--card)}
+  .axis.a{border-top:4px solid var(--blue)}
+  .axis.b{border-top:4px solid var(--purple)}
+  .axis.c{border-top:4px solid var(--teal)}
+  .axis h3{margin-top:0}
+  .tag{display:inline-block;font-size:11.5px;font-weight:600;border-radius:6px;
+    padding:2px 9px;margin-right:6px;letter-spacing:.4px}
+  .t-blue{background:var(--blue-bg);color:var(--blue)}
+  .t-purple{background:var(--purple-bg);color:var(--purple)}
+  .t-teal{background:var(--teal-bg);color:var(--teal)}
+  .t-amber{background:var(--amber-bg);color:var(--amber)}
+  .t-red{background:var(--red-bg);color:var(--red)}
+  .t-green{background:var(--green-bg);color:var(--green)}
+  table{width:100%;border-collapse:collapse;margin:12px 0;font-size:13.5px;background:var(--card)}
+  th,td{border:1px solid var(--line);padding:8px 11px;text-align:left;vertical-align:top}
+  th{background:#f0f3f6;font-weight:600;color:var(--ink)}
+  td code{font-size:12.5px}
+  .step{display:flex;gap:14px;align-items:flex-start;padding:12px 4px;border-bottom:1px dashed var(--line)}
+  .step:last-child{border-bottom:none}
+  .num{flex:0 0 30px;height:30px;border-radius:50%;background:var(--teal);color:#fff;
+    display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px}
+  .step .body{flex:1}
+  .step .ttl{font-weight:600}
+  .step .fn{font-family:var(--mono);font-size:12.5px;color:var(--teal)}
+  .note{border-left:4px solid var(--amber);background:var(--amber-bg);
+    padding:11px 14px;border-radius:0 8px 8px 0;margin:12px 0;font-size:13.5px}
+  .note.red{border-color:var(--red);background:var(--red-bg)}
+  .note.green{border-color:var(--green);background:var(--green-bg)}
+  .legend{display:flex;flex-wrap:wrap;gap:14px;font-size:12.5px;color:var(--ink2);margin:6px 0 2px}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .dot{width:11px;height:11px;border-radius:3px;display:inline-block}
+  figure{margin:16px 0;background:var(--card);border:1px solid var(--line);
+    border-radius:12px;padding:10px 10px 4px;overflow-x:auto}
+  figcaption{font-size:12.5px;color:var(--ink3);padding:6px 6px 8px;text-align:center}
+  ul{margin:8px 0 8px 4px;padding-left:20px}
+  li{margin:5px 0}
+  .kbd{font-family:var(--mono);font-size:12.5px;background:#fff;border:1px solid var(--line);
+    border-bottom-width:2px;border-radius:5px;padding:1px 6px}
+  footer{margin-top:48px;padding-top:18px;border-top:1px solid var(--line);
+    color:var(--ink3);font-size:12.5px}
+  .flow-note{font-size:12.5px;color:var(--ink3);margin-top:4px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <h1>B 轨 · 图像显示运行逻辑</h1>
+  <div class="sub">25Efork / <code>maixcam2_rect_center</code> —— 从「相机取帧」到「屏幕上屏」的完整链路、线程模型与节拍控制</div>
+  <div class="meta">
+    <span class="chip">BUILD_ID <b>2026-10-11-display-thread-v0.4.3</b></span>
+    <span class="chip">范围 <b>显示链路 + 算法核心</b></span>
+    <span class="chip">入口 <b>main.py</b></span>
+    <span class="chip">显示路径 <b>独立显示线程 display.show()</b></span>
+    <span class="chip">图像 <b>灰度 640×480 @30fps</b></span>
+  </div>
+</header>
+
+<div class="note">
+  <b>一句话结论：</b>B 轨的画面有<b>三条独立时间轴</b>——主循环负责「取帧 + 绘制 + 投递」，识别线程负责「识别 + 光斑偏差 + 云台闭环」，
+  显示线程负责「<code>show()</code> 上屏」。三者各自只取<b>最新</b>数据、以「最新槽位」解耦，任一侧变慢只表现为<b>丢帧 / 标注滞后</b>，不会互相拖垮。
+  显示层任何失败（无 <code>maix</code>、建屏失败、<code>show</code> 抛异常）都<b>只停用预览</b>，绝不影响识别与闭环。
+</div>
+
+<!-- ============================================================= -->
+<h2>1 · 显示管线数据流</h2>
+<p class="muted">主循环（蓝色）与识别线程（紫色）通过 <code>submit()</code> / <code>snapshot()</code> 两个「最新槽位」交互。
+绘制阶段（橙色）发生在主线程，画完只把画布<b>投递</b>给显示线程 —— <code>Display.show()</code> 由显示线程执行，主循环<b>不等它</b>。</p>
+
+<figure>
+<svg viewBox="0 0 1000 470" width="100%" role="img" aria-label="图像显示管线数据流图">
+  <defs>
+    <marker id="arw" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 z" fill="#78828c"/>
+    </marker>
+    <marker id="arwB" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 z" fill="#2f6fdb"/>
+    </marker>
+    <marker id="arwP" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 z" fill="#7c4dbe"/>
+    </marker>
+  </defs>
+
+  <!-- lane labels -->
+  <text x="14" y="30" font-size="13" font-weight="700" fill="#2f6fdb">主循环（主线程）</text>
+  <text x="14" y="238" font-size="13" font-weight="700" fill="#7c4dbe">识别线程（rect-vision）</text>
+
+  <!-- row 1 : main loop -->
+  <g font-size="12.5">
+    <rect x="30" y="44" width="150" height="52" rx="9" fill="#eaf1fd" stroke="#2f6fdb"/>
+    <text x="105" y="66" text-anchor="middle" font-weight="700" fill="#1f2328">cam.read()</text>
+    <text x="105" y="83" text-anchor="middle" fill="#4a5560">灰度帧 640×480</text>
+
+    <rect x="212" y="44" width="150" height="52" rx="9" fill="#eaf1fd" stroke="#2f6fdb"/>
+    <text x="287" y="66" text-anchor="middle" font-weight="700" fill="#1f2328">_to_gray()</text>
+    <text x="287" y="83" text-anchor="middle" fill="#4a5560">零拷贝借用缓冲</text>
+
+    <rect x="394" y="44" width="170" height="52" rx="9" fill="#e7f5f4" stroke="#0f8a8a"/>
+    <text x="479" y="66" text-anchor="middle" font-weight="700" fill="#1f2328">worker.submit()</text>
+    <text x="479" y="83" text-anchor="middle" fill="#4a5560">拷贝后投最新帧槽</text>
+
+    <rect x="596" y="44" width="150" height="52" rx="9" fill="#fdf4e3" stroke="#b7791f"/>
+    <text x="671" y="66" text-anchor="middle" font-weight="700" fill="#1f2328">snapshot()</text>
+    <text x="671" y="83" text-anchor="middle" fill="#4a5560">取最新识别结果</text>
+
+    <rect x="778" y="44" width="180" height="52" rx="9" fill="#fdf4e3" stroke="#b7791f"/>
+    <text x="868" y="66" text-anchor="middle" font-weight="700" fill="#1f2328">_display_result()</text>
+    <text x="868" y="83" text-anchor="middle" fill="#4a5560">超龄→降级 stale</text>
+  </g>
+  <line x1="180" y1="70" x2="210" y2="70" stroke="#2f6fdb" stroke-width="2" marker-end="url(#arwB)"/>
+  <line x1="362" y1="70" x2="392" y2="70" stroke="#2f6fdb" stroke-width="2" marker-end="url(#arwB)"/>
+  <line x1="564" y1="70" x2="594" y2="70" stroke="#b7791f" stroke-width="2" marker-end="url(#arw)"/>
+  <line x1="746" y1="70" x2="776" y2="70" stroke="#b7791f" stroke-width="2" marker-end="url(#arw)"/>
+
+  <!-- row 1.5 : draw & show -->
+  <g font-size="12.5">
+    <rect x="596" y="128" width="362" height="46" rx="9" fill="#fdf4e3" stroke="#b7791f"/>
+    <text x="777" y="148" text-anchor="middle" font-weight="700" fill="#1f2328">preview.due(now) ？ → draw_result() + draw_laser_overlay()</text>
+    <text x="777" y="165" text-anchor="middle" fill="#4a5560">按 SHOW_FPS 限频；画外/内框、四角、靶心十字、光斑面板与连线</text>
+
+    <rect x="596" y="196" width="362" height="46" rx="9" fill="#e7f5f4" stroke="#0f8a8a"/>
+    <text x="777" y="216" text-anchor="middle" font-weight="700" fill="#1f2328">preview.render() → letterbox → 投递显示线程 → display.show()</text>
+    <text x="777" y="233" text-anchor="middle" fill="#4a5560">画布＝屏幕尺寸（零缩放）→ 显示线程上屏（屏幕 / MaixVision）</text>
+  </g>
+  <line x1="868" y1="96" x2="868" y2="126" stroke="#b7791f" stroke-width="2" marker-end="url(#arw)"/>
+  <line x1="777" y1="174" x2="777" y2="194" stroke="#0f8a8a" stroke-width="2" marker-end="url(#arw)"/>
+
+  <!-- row 2 : vision thread -->
+  <g font-size="12.5">
+    <rect x="394" y="252" width="170" height="52" rx="9" fill="#f1ebfa" stroke="#7c4dbe"/>
+    <text x="479" y="274" text-anchor="middle" font-weight="700" fill="#1f2328">controller.process()</text>
+    <text x="479" y="291" text-anchor="middle" fill="#4a5560">识别 + 偏差 + 闭环</text>
+
+    <rect x="212" y="252" width="150" height="52" rx="9" fill="#f1ebfa" stroke="#7c4dbe"/>
+    <text x="287" y="274" text-anchor="middle" font-weight="700" fill="#1f2328">detector.process()</text>
+    <text x="287" y="291" text-anchor="middle" fill="#4a5560">黑框 → 靶心 (u,v)</text>
+
+    <rect x="596" y="252" width="170" height="52" rx="9" fill="#f1ebfa" stroke="#7c4dbe"/>
+    <text x="681" y="274" text-anchor="middle" font-weight="700" fill="#1f2328">_control()</text>
+    <text x="681" y="291" text-anchor="middle" fill="#4a5560">状态机 → 发脉冲</text>
+
+    <rect x="394" y="330" width="372" height="42" rx="9" fill="#eaf6ee" stroke="#2f8f4e"/>
+    <text x="580" y="356" text-anchor="middle" fill="#1f2328">写回「最新结果槽」_latest（含 result / laser / 计时 / 状态串）</text>
+  </g>
+  <line x1="479" y1="96" x2="479" y2="250" stroke="#0f8a8a" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#arw)"/>
+  <text x="491" y="176" font-size="11.5" fill="#0f8a8a">最新帧副本</text>
+  <line x1="392" y1="278" x2="364" y2="278" stroke="#7c4dbe" stroke-width="2" marker-end="url(#arwP)"/>
+  <line x1="564" y1="278" x2="594" y2="278" stroke="#7c4dbe" stroke-width="2" marker-end="url(#arwP)"/>
+  <line x1="681" y1="304" x2="681" y2="328" stroke="#2f8f4e" stroke-width="2" marker-end="url(#arw)"/>
+  <path d="M766,351 L868,351 L868,98" fill="none" stroke="#b7791f" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#arw)"/>
+  <text x="800" y="343" font-size="11.5" fill="#b7791f">最新结果</text>
+
+  <!-- camera -> vision submit copy -->
+  <text x="300" y="180" font-size="11" fill="#78828c">主循环不等待识别结果（非阻塞）</text>
+</svg>
+<figcaption>图 1 · 图像显示管线：主循环（蓝）→ 识别线程（紫）→ 绘制上屏（橙/青）。虚线为跨线程的「最新槽位」传递。</figcaption>
+</figure>
+
+<!-- ============================================================= -->
+<h2>2 · 三条时间轴（务必分清）</h2>
+<div class="grid3">
+  <div class="axis a">
+    <h3><span class="tag t-blue">轴 A</span>主循环</h3>
+    <p class="muted" style="margin-top:2px">决定<b>屏幕刷新节奏</b>。<code>main()</code> 内 <code>while not app.need_exit()</code>。</p>
+    <ul>
+      <li>取帧、转灰度、读触摸</li>
+      <li>把当帧副本投给识别线程（不等待）</li>
+      <li>取最新识别结果并按节拍绘制上屏</li>
+      <li>周期打印 <code>[perf]</code> 日志</li>
+    </ul>
+    <p class="flow-note">帧率口径：<code>capture</code>（取帧）/ <code>disp</code>（显示）</p>
+  </div>
+  <div class="axis b">
+    <h3><span class="tag t-purple">轴 B</span>识别线程</h3>
+    <p class="muted" style="margin-top:2px">决定<b>识别吞吐</b>。类 <code>_LatestVision</code>，daemon 线程。</p>
+    <ul>
+      <li>从最新帧槽取一帧 → 识别 + 光斑偏差 + 闭环</li>
+      <li>结果写回最新结果槽</li>
+      <li>无帧时走 <code>idle()</code>：收 ACK / 推进按钮自检</li>
+      <li><b>独占 UART</b>（收发不可并发）</li>
+    </ul>
+    <p class="flow-note">帧率口径：<code>detect_fps</code></p>
+  </div>
+  <div class="axis c">
+    <h3><span class="tag t-teal">轴 C</span>显示线程</h3>
+    <p class="muted" style="margin-top:2px">决定<b>屏幕刷新</b>。类 <code>_Preview._show_loop</code>，daemon 线程（<code>SHOW_ASYNC=True</code>）。</p>
+    <ul>
+      <li>取「待上屏画布」槽 → <code>display.show()</code> → 画布还池</li>
+      <li>画布池固定 <b>2 张</b>；池空时主循环直接跳过该帧</li>
+      <li>慢只慢预览本身，<b>不回流</b>拖累主循环 / 识别 / 闭环</li>
+      <li>关停顺序：先停线程（等当前 show 做完）再 <code>display.close()</code></li>
+    </ul>
+    <p class="flow-note">帧率口径：<code>disp</code>；耗时口径：<code>show avg/p95/max</code></p>
+  </div>
+</div>
+
+<div class="note red">
+  <b>为什么要拆三条轴：</b><code>Display.show()</code> 走屏幕驱动 / MaixVision 图传，单次可达数百毫秒；识别（Canny / 轮廓 / 单应）耗时不确定。
+  若同线程，则显示一慢就拖死识别、识别一慢屏幕就卡成幻灯片。<br>
+  <b>历史教训（v0.4.2）：</b>只把「识别」拆出去是<b>不够</b>的 —— 只要 <code>show()</code> 还在主循环里同步调用，
+  主循环就被它按在地上，<code>submit()</code> 的节奏随之被拖死，识别线程再快也<b>无帧可算</b>（表现为三路帧率一起掉到同一低位）。
+  故 v0.4.3 把显示也拆出去。
+</div>
+
+<!-- ============================================================= -->
+<h2>3 · 主循环 8 步详解</h2>
+<div class="card">
+  <div class="step">
+    <div class="num">1</div>
+    <div class="body"><div class="ttl">取帧</div>
+      <div class="fn">img = cam.read() &nbsp;<span class="muted">（灰度 FMT_GRAYSCALE，640×480 @30fps）</span></div>
+      <div class="muted">读不到帧直接 <code>continue</code>，不污染后续统计。</div></div>
+  </div>
+  <div class="step">
+    <div class="num">2</div>
+    <div class="body"><div class="ttl">转灰度</div>
+      <div class="fn">gray = _to_gray(img, image)</div>
+      <div class="muted">优先 <code>image2cv(copy=False)</code> 零拷贝借用相机缓冲；<b>跨线程前必须 copy</b>（下一步完成）。</div></div>
+  </div>
+  <div class="step">
+    <div class="num">3</div>
+    <div class="body"><div class="ttl">触摸输入（按下沿）</div>
+      <div class="fn">if touch.poll(preview) == "selftest": controller.request_test.set()</div>
+      <div class="muted">只识别「上一帧未按、这一帧按下」，避免按住连触发；自检在线程内安全启动。</div></div>
+  </div>
+  <div class="step">
+    <div class="num">4</div>
+    <div class="body"><div class="ttl">提交识别</div>
+      <div class="fn">worker.submit(gray, captured)</div>
+      <div class="muted">拷贝一份灰度图投入「最新帧槽」并唤醒识别线程。<b>不等待</b>；槽内已有旧帧则记一次 <code>dropped</code>。</div></div>
+  </div>
+  <div class="step">
+    <div class="num">5</div>
+    <div class="body"><div class="ttl">取最新结果</div>
+      <div class="fn">snapshot, vision_fps, vision_low1 = worker.snapshot(now)</div>
+      <div class="muted">取回<b>最近一次</b>识别结果（可能滞后于本帧）。若识别线程报错则抛出终止。</div></div>
+  </div>
+  <div class="step">
+    <div class="num">6</div>
+    <div class="body"><div class="ttl">过期降级</div>
+      <div class="fn">result, laser_state, age = _display_result(snapshot, now, RESULT_MAX_AGE_S)</div>
+      <div class="muted"><code>age &gt; RESULT_MAX_AGE_S</code>（默认 0.2s）→ 用 <code>{"valid":False,"stage":"stale"}</code> 占位，<b>不把旧框画成有效定位</b>；视频原帧照常刷新。</div></div>
+  </div>
+  <div class="step">
+    <div class="num">7</div>
+    <div class="body"><div class="ttl">绘制 + 上屏（节拍）</div>
+      <div class="fn">if preview.due(now): … preview.render(view, now, status=…)</div>
+      <div class="muted">按 <code>SHOW_FPS</code> 限频，<b>且画布池有空位</b>（否则本帧直接丢，不排队）。绘制顺序：<code>draw_result</code> 画框/角点/靶心 → <code>draw_laser_overlay</code> 画光斑面板与连线 → 左下角一行小字 → <code>render</code> letterbox 后<b>投递</b>给显示线程（不等 <code>show</code>）。</div></div>
+  </div>
+  <div class="step">
+    <div class="num">8</div>
+    <div class="body"><div class="ttl">周期日志</div>
+      <div class="fn">每 LOG_INTERVAL（2s）打印 [perf] 行</div>
+      <div class="muted">三路帧率 + <b>分相耗时</b>：<code>read / draw / loop</code> 属主循环，<code>show avg/p95/max</code> 属显示线程；另有 <code>drop(show)</code>（显示来不及）与 <code>drop(vision)</code>（识别来不及）。<code>show p95 &gt; 100ms</code> 提示显示侧瓶颈，<code>loop &gt; 66ms</code> 提示主循环侧瓶颈。</div></div>
+  </div>
+</div>
+
+<!-- ============================================================= -->
+<h2>4 · 线程与节拍时序</h2>
+<p class="muted">下面示意「识别较快」与「图传较慢（show 卡顿）」两种情形下的实际行为：慢帧只让画面丢帧/滞后，识别与闭环不受影响。</p>
+<figure>
+<svg viewBox="0 0 1000 330" width="100%" role="img" aria-label="线程节拍时序图">
+  <defs>
+    <marker id="arw2" markerWidth="8" markerHeight="8" refX="6.5" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 z" fill="#78828c"/>
+    </marker>
+  </defs>
+  <!-- lanes -->
+  <line x1="150" y1="40" x2="150" y2="300" stroke="#cfd6dd" stroke-width="2"/>
+  <line x1="520" y1="40" x2="520" y2="300" stroke="#cfd6dd" stroke-width="2"/>
+  <line x1="820" y1="40" x2="820" y2="300" stroke="#cfd6dd" stroke-width="2"/>
+  <text x="150" y="28" text-anchor="middle" font-size="13" font-weight="700" fill="#2f6fdb">主循环</text>
+  <text x="520" y="28" text-anchor="middle" font-size="13" font-weight="700" fill="#7c4dbe">识别线程</text>
+  <text x="820" y="28" text-anchor="middle" font-size="13" font-weight="700" fill="#0f8a8a">Display.show</text>
+
+  <!-- ticks -->
+  <g font-size="11.5" fill="#78828c">
+    <line x1="150" y1="60" x2="960" y2="60" stroke="#eef1f4"/>
+    <line x1="150" y1="120" x2="960" y2="120" stroke="#eef1f4"/>
+    <line x1="150" y1="180" x2="960" y2="180" stroke="#eef1f4"/>
+    <line x1="150" y1="240" x2="960" y2="240" stroke="#eef1f4"/>
+  </g>
+  <!-- main loop reads -->
+  <g>
+    <circle cx="200" cy="90" r="6" fill="#2f6fdb"/><text x="200" y="80" text-anchor="middle" font-size="11" fill="#2f6fdb">取帧</text>
+    <circle cx="290" cy="90" r="6" fill="#2f6fdb"/><text x="290" y="80" text-anchor="middle" font-size="11" fill="#2f6fdb">取帧</text>
+    <circle cx="380" cy="90" r="6" fill="#2f6fdb"/><text x="380" y="80" text-anchor="middle" font-size="11" fill="#2f6fdb">取帧</text>
+    <circle cx="470" cy="90" r="6" fill="#2f6fdb"/><text x="470" y="80" text-anchor="middle" font-size="11" fill="#2f6fdb">取帧</text>
+    <circle cx="600" cy="90" r="6" fill="#2f6fdb"/><text x="600" y="80" text-anchor="middle" font-size="11" fill="#2f6fdb">取帧</text>
+    <circle cx="690" cy="90" r="6" fill="#2f6fdb"/><text x="690" y="80" text-anchor="middle" font-size="11" fill="#2f6fdb">取帧</text>
+    <circle cx="780" cy="90" r="6" fill="#2f6fdb"/><text x="780" y="80" text-anchor="middle" font-size="11" fill="#2f6fdb">取帧</text>
+  </g>
+  <!-- submit arrows -->
+  <g stroke="#0f8a8a" stroke-width="1.6" marker-end="url(#arw2)">
+    <line x1="205" y1="95" x2="512" y2="130"/>
+    <line x1="295" y1="95" x2="512" y2="160"/>
+    <line x1="385" y1="95" x2="512" y2="190"/>
+  </g>
+  <g stroke="#b7791f" stroke-width="1.6" marker-end="url(#arw2)">
+    <line x1="205" y1="100" x2="952" y2="130"/>
+  </g>
+  <text x="640" y="120" font-size="11" fill="#b7791f">show（落在显示节拍上）</text>
+  <!-- vision processing bars -->
+  <g>
+    <rect x="540" y="128" width="60" height="14" rx="4" fill="#7c4dbe"/>
+    <rect x="540" y="158" width="70" height="14" rx="4" fill="#7c4dbe"/>
+    <rect x="540" y="188" width="60" height="14" rx="4" fill="#7c4dbe"/>
+  </g>
+  <text x="560" y="220" font-size="11" fill="#7c4dbe">识别 + 闭环（每条 ~1ms 级）</text>
+  <!-- slow show -->
+  <rect x="640" y="128" width="190" height="26" rx="6" fill="#fdf4e3" stroke="#b7791f" stroke-dasharray="4 3"/>
+  <text x="735" y="145" text-anchor="middle" font-size="11" fill="#b7791f">show 慢帧（图传卡顿，数百 ms）</text>
+  <text x="640" y="180" font-size="11" fill="#c0392b">此期间：识别线程照常跑、闭环照常发指令；仅画面丢帧 →</text>
+  <text x="640" y="198" font-size="11" fill="#c0392b">[perf] show p95 升高、drop(show) 增加，但 detect_fps 不受影响。</text>
+  <!-- next show -->
+  <circle cx="870" cy="90" r="6" fill="#2f6fdb"/>
+  <g stroke="#0f8a8a" stroke-width="1.6" marker-end="url(#arw2)"><line x1="875" y1="96" x2="952" y2="240"/></g>
+  <text x="905" y="270" font-size="11" fill="#0f8a8a">下一节拍 show</text>
+  <text x="820" y="298" text-anchor="middle" font-size="11" fill="#78828c">固定时间轴：错过的节拍直接跳过，只画最新</text>
+</svg>
+<figcaption>图 2 · 时序示意。识别线程持续工作，图传慢只吃掉「显示帧」，不占用识别或闭环。</figcaption>
+</figure>
+
+<!-- ============================================================= -->
+<h2>5 · 屏幕元素布局</h2>
+<p class="muted">画布尺寸 = 物理屏幕尺寸（触摸坐标与按钮 1:1）。标注画面按等比例 letterbox 居中，两侧留黑边，<b>不拉伸</b>。</p>
+<figure>
+<svg viewBox="0 0 720 470" width="100%" role="img" aria-label="屏幕布局示意">
+  <!-- screen -->
+  <rect x="40" y="30" width="640" height="400" rx="16" fill="#0d1117" stroke="#2b3340" stroke-width="3"/>
+  <text x="360" y="22" text-anchor="middle" font-size="12" fill="#78828c">物理屏幕（触摸坐标 = 画布坐标）</text>
+  <!-- letterbox video -->
+  <rect x="70" y="60" width="580" height="340" rx="6" fill="#1b2430" stroke="#3a4657"/>
+  <text x="360" y="235" text-anchor="middle" font-size="13" fill="#5b6b7d">标注画面 letterbox 居中（等比，不拉伸）</text>
+  <!-- top-left laser panel -->
+  <rect x="82" y="72" width="230" height="46" rx="4" fill="#20262e" stroke="#3a4657"/>
+  <text x="92" y="92" font-size="11.5" fill="#00ffff" font-family="monospace">LASER (294,202) [fixed/calib]</text>
+  <text x="92" y="108" font-size="11.5" fill="#78ff78" font-family="monospace">D-CENTER dx=+12.0 dy=-8.9 px</text>
+  <text x="322" y="96" font-size="10.5" fill="#78828c">← draw_laser_overlay 面板</text>
+  <!-- selftest button -->
+  <rect x="560" y="72" width="80" height="40" rx="6" fill="#2e963c" stroke="#ececec"/>
+  <text x="600" y="97" text-anchor="middle" font-size="12" fill="#fff" font-weight="700">SELF-TEST</text>
+  <text x="600" y="126" text-anchor="middle" font-size="10.5" fill="#78828c">右上角可点按钮</text>
+  <!-- center crosshair -->
+  <g stroke="#4a90e2" stroke-width="2">
+    <line x1="345" y1="215" x2="375" y2="215"/><line x1="360" y1="200" x2="360" y2="230"/>
+  </g>
+  <circle cx="360" cy="215" r="26" fill="none" stroke="#2e963c" stroke-width="2"/>
+  <text x="360" y="268" text-anchor="middle" font-size="10.5" fill="#8aa0b5">外框(绿) / 内框(青) / 靶心十字(蓝)</text>
+  <!-- laser marker -->
+  <g stroke="#ff4d4d" stroke-width="1.6">
+    <circle cx="330" cy="290" r="7" fill="none"/>
+    <line x1="322" y1="290" x2="338" y2="290"/><line x1="330" y1="282" x2="330" y2="298"/>
+  </g>
+  <line x1="330" y1="290" x2="360" y2="215" stroke="#ff9e00" stroke-width="1.4"/>
+  <text x="300" y="312" font-size="10.5" fill="#c98d8d">光斑标记 + 连线</text>
+  <!-- bottom-left status -->
+  <text x="86" y="384" font-size="11.5" fill="#ffff00" font-family="monospace">track</text>
+  <text x="140" y="384" font-size="10.5" fill="#78828c">← 左下角状态串（self-test i/n / calibrate / FINE…）</text>
+  <!-- bottom line -->
+  <text x="86" y="404" font-size="11" fill="#ffff00" font-family="monospace">disp 29.8 low1 24.1 det 28.0 age 3ms</text>
+  <text x="420" y="404" font-size="10.5" fill="#78828c">← 主循环叠加的一行（disp/low1/det/age）</text>
+</svg>
+<figcaption>图 3 · 屏幕元素：左上角激光面板、右上角 SELF-TEST 按钮、画面中央靶心/框、左下角状态与帧率小字。</figcaption>
+</figure>
+
+<!-- ============================================================= -->
+<h2>6 · 三个坐标系与 letterbox 换算</h2>
+<table>
+  <tr><th>坐标系</th><th>尺寸来源</th><th>用途</th><th>关键点</th></tr>
+  <tr><td><b>相机原图</b></td><td><code>CAMERA_W × CAMERA_H</code>（640×480）</td>
+      <td>识别输出坐标 <code>(u,v)</code>、四角、光斑位置</td>
+      <td>所有对外坐标都是这一套；<code>detector.process</code> 的输出</td></tr>
+  <tr><td><b>屏幕坐标</b></td><td><code>display.width() × height()</code></td>
+      <td>触摸命中、按钮注册、画布尺寸</td>
+      <td>触摸返回的就是屏幕坐标 → 画布必须 = 屏幕尺寸才能 1:1</td></tr>
+  <tr><td><b>画布坐标</b></td><td><code>render_width/height</code>（<code>SHOW_WIDTH=0</code> ⇒ 就等于屏幕尺寸）</td>
+      <td>实际送去 <code>show()</code> 的图</td>
+      <td>画布＝屏幕时 <code>show()</code> <b>零缩放</b>，且与触摸坐标天然 1:1</td></tr>
+</table>
+<div class="note">
+  <b>letterbox 换算（<code>_Preview.render</code>）：</b>
+  <code>scale = min(rw/vw, rh/vh)</code> → 缩放到 <code>(nw,nh)</code> → 居中偏移 <code>ox=(rw-nw)/2, oy=(rh-nh)/2</code> → 贴入画布。
+  相机 640×480 与屏幕 640×480 宽高比一致时，<code>nw,nh == rw,rh</code>：<b>不缩放、不刷黑边</b>，只剩一次整块拷贝。
+  两处「scale」不要混：<br>
+  · <code>draw_result</code> 内部 <code>scale = show_width / 原图宽</code>（原图→缩小图）；<br>
+  · <code>draw_laser_overlay</code> 的 <code>scale = render_width / 原图宽</code>（原图→画布），使光斑标记与框对齐。
+</div>
+
+<!-- ============================================================= -->
+<h2>7 · 关键配置项</h2>
+<table>
+  <tr><th>配置</th><th>默认</th><th>作用</th></tr>
+  <tr><td><code>SHOW</code></td><td><code>True</code></td><td>是否建显示。False = 纯串口/头部模式，不流转画面。</td></tr>
+  <tr><td><code>SHOW_WIDTH</code></td><td><code>0</code></td><td>画布宽度；<b>0 = 用屏幕原始宽度</b>（画布＝屏幕 ⇒ show 零缩放，触摸 1:1）。&gt;0 才缩小（省 MaixVision 带宽，但本机屏幕会被放大回全屏）。</td></tr>
+  <tr><td><code>SHOW_ASYNC</code></td><td><code>True</code></td><td>显示是否走独立线程。<b>False = 旧行为</b>：主循环内同步 <code>show()</code>，慢就整体卡住。</td></tr>
+  <tr><td><code>SHOW_FPS</code></td><td><code>30</code></td><td>显示节拍上限；控制 <code>preview.due()</code> 的限频周期。</td></tr>
+  <tr><td><code>SHOW_JPEG_QUALITY</code></td><td><code>70</code></td><td>仅影响 MaixVision JPEG 图传质量，检测始终用原始灰度。</td></tr>
+  <tr><td><code>VISION_ASYNC</code></td><td><code>True</code></td><td>识别是否走独立线程。False = 主线程内同步识别。</td></tr>
+  <tr><td><code>RESULT_MAX_AGE_S</code></td><td><code>0.20</code></td><td>结果保鲜期；超龄→屏幕降级 stale，且不驱动闭环。</td></tr>
+  <tr><td><code>LOG_INTERVAL</code></td><td><code>2.0</code></td><td><code>[perf]</code> 日志周期。</td></tr>
+  <tr><td><code>ENABLE_TOUCH_BUTTON</code></td><td><code>True</code></td><td>是否画并启用右上角 SELF-TEST 按钮。</td></tr>
+  <tr><td><code>AIM_USE_RAW</code></td><td><code>True</code></td><td>屏幕连线终点与闭环是否都用未平滑中心。</td></tr>
+</table>
+
+<!-- ============================================================= -->
+<h2>8 · 隔离与降级边界</h2>
+<div class="note green">
+  <b>设计原则：显示是「最好有」，识别与闭环是「必须有」。</b>显示层任何失败都只降级为「无预览」，绝不冒泡到识别/串口/电机。
+</div>
+<table>
+  <tr><th>失败点</th><th>行为</th><th>日志</th></tr>
+  <tr><td><code>SHOW=False</code></td><td>不建 Display，直接 return</td><td><code>[preview] SHOW=False -> 不建显示</code></td></tr>
+  <tr><td>建 Display 抛异常（无 maix / 设备占用）</td><td><code>enabled=False</code>，主循环不再绘制</td><td><code>[preview] 显示初始化失败…</code></td></tr>
+  <tr><td><code>show()</code> 抛异常（VO/fb0 卡死）</td><td>就地停用显示</td><td><code>[preview] show 失败，停用显示</code></td></tr>
+  <tr><td>无触摸屏 / 未启用</td><td>按钮不可用，其余照常</td><td><code>[touch] …（按钮禁用）</code></td></tr>
+  <tr><td>识别线程异常</td><td>记录 <code>worker.error</code>，主循环下一轮抛出终止（不放任带病运行）</td><td><code>[vision] worker failed: …</code></td></tr>
+</table>
+
+<!-- ============================================================= -->
+<h2>9 · 代码位置索引</h2>
+<table>
+  <tr><th>环节</th><th>文件 · 位置</th></tr>
+  <tr><td>图像显示总纲</td><td><code>main.py</code> 模块 docstring「图像显示运行逻辑」</td></tr>
+  <tr><td>帧率计（三处复用）</td><td><code>main.py · _FrameRate</code></td></tr>
+  <tr><td>识别线程 + 最新槽位</td><td><code>main.py · _LatestVision</code></td></tr>
+  <tr><td>显示层：letterbox + 按钮 + 画布池 + 投递</td><td><code>main.py · _Preview</code>（<code>render</code> / <code>_publish</code> / <code>_take_canvas</code> / <code>take_show_stats</code>）</td></tr>
+  <tr><td><b>显示线程</b>：<code>show()</code> 上屏</td><td><code>main.py · _Preview._show_loop</code> / <code>_do_show</code></td></tr>
+  <tr><td>触摸按下沿</td><td><code>main.py · _Touch.poll</code></td></tr>
+  <tr><td>过期降级</td><td><code>main.py · _display_result</code></td></tr>
+  <tr><td>主循环 8 步</td><td><code>main.py · main()</code>（时间轴 A 区段）</td></tr>
+  <tr><td>识别结果绘制</td><td><code>vision/rectangle_center.py · draw_result</code></td></tr>
+  <tr><td>识别算法核心</td><td><code>vision/rectangle_center.py · process / _search / _verify / _refine / _candidate_quads</code></td></tr>
+  <tr><td>光斑面板与连线绘制</td><td><code>vision/laser_spot.py · draw_laser_overlay</code></td></tr>
+  <tr><td>偏差口径（展示 ↔ 闭环）</td><td><code>vision/laser_spot.py · deviation</code></td></tr>
+</table>
+
+<!-- ============================================================= -->
+<h2>10 · 「只有 1.5 帧」的归因：一道串行阻塞链</h2>
+<p class="muted">2026-10-11 现场：屏幕画面约 <b>1.5 fps</b>。根因不是识别慢 —— 识别本身只占毫秒级；
+真正的瓶颈是 <code>Display.show()</code><b>当时仍在主循环里同步调用</b>，把「取帧 → 提交识别 → 绘制 → 上屏」
+串成了一条链：show 慢多少，整条链就慢多少。</p>
+<figure>
+<svg viewBox="0 0 1000 214" width="100%" role="img" aria-label="串行阻塞链与显示线程化对照">
+  <defs>
+    <marker id="arwS" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto">
+      <path d="M0,0 L9,4.5 L0,9 z" fill="#c0392b"/>
+    </marker>
+  </defs>
+  <g font-size="12.5" font-family="-apple-system,BlinkMacSystemFont,'Segoe UI','Microsoft YaHei',sans-serif">
+    <text x="12" y="20" font-weight="700" fill="#c0392b">v0.4.2（修前）：show 在主循环里同步调用</text>
+    <rect x="12" y="32" width="152" height="46" rx="8" fill="#eaf1fd" stroke="#2f6fdb"/>
+    <text x="88" y="60" text-anchor="middle" fill="#1f2328">cam.read()</text>
+    <rect x="184" y="32" width="152" height="46" rx="8" fill="#f1ebfa" stroke="#7c4dbe"/>
+    <text x="260" y="60" text-anchor="middle" fill="#1f2328">submit()</text>
+    <rect x="356" y="32" width="152" height="46" rx="8" fill="#fdf4e3" stroke="#b7791f"/>
+    <text x="432" y="60" text-anchor="middle" fill="#1f2328">draw</text>
+    <rect x="528" y="32" width="200" height="46" rx="8" fill="#fdeceb" stroke="#c0392b" stroke-width="2"/>
+    <text x="628" y="52" text-anchor="middle" font-weight="700" fill="#c0392b">show() 阻塞（可达数百 ms）</text>
+    <text x="628" y="69" text-anchor="middle" fill="#8a4038">主循环就在此处干等</text>
+    <path d="M628 80 C 628 118, 88 118, 88 80" fill="none" stroke="#c0392b" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#arwS)"/>
+    <text x="358" y="136" text-anchor="middle" fill="#c0392b" font-weight="600">⇒ capture / disp / detect_fps 一起掉到同一低位，而 read= 仍很小</text>
+
+    <text x="12" y="174" font-weight="700" fill="#2f8f4e">v0.4.3（修后）：show 交给显示线程</text>
+    <rect x="12" y="184" width="152" height="26" rx="6" fill="#eaf1fd" stroke="#2f6fdb"/>
+    <text x="88" y="201" text-anchor="middle" font-size="11.5" fill="#1f2328">cam.read()</text>
+    <rect x="184" y="184" width="152" height="26" rx="6" fill="#f1ebfa" stroke="#7c4dbe"/>
+    <text x="260" y="201" text-anchor="middle" font-size="11.5" fill="#1f2328">submit()</text>
+    <rect x="356" y="184" width="152" height="26" rx="6" fill="#fdf4e3" stroke="#b7791f"/>
+    <text x="432" y="201" text-anchor="middle" font-size="11.5" fill="#1f2328">draw → 投递</text>
+    <rect x="528" y="184" width="200" height="26" rx="6" fill="#e7f5f4" stroke="#0f8a8a"/>
+    <text x="628" y="201" text-anchor="middle" font-size="11.5" fill="#1f2328">立即返回，不等待</text>
+    <text x="744" y="201" font-size="11.5" fill="#2f8f4e">← 显示线程并行 show()</text>
+  </g>
+</svg>
+<figcaption>图 5 · 阻塞链与它的拆解：主循环不再经过 show，识别/闭环恢复相机帧率；预览按显示能力自行刷新。</figcaption>
+</figure>
+<table>
+  <tr><th>症状</th><th>读数特征</th><th>该动哪里</th></tr>
+  <tr><td>画面约 1.5 fps</td><td><code>capture</code> / <code>disp</code> / <code>detect_fps</code> <b>同时</b>偏低，而 <code>read=</code> 很小</td><td>show 在主循环里阻塞 → <code>SHOW_ASYNC=True</code></td></tr>
+  <tr><td>只有 <code>disp</code> 低</td><td><code>capture≈30</code>、<code>loop</code> 正常、<code>show p95</code> 偏大</td><td>显示侧瓶颈：降 <code>SHOW_FPS</code>，正式追踪 <code>SHOW=False</code></td></tr>
+  <tr><td>只有 <code>detect_fps</code> 低</td><td><code>loop</code> 正常、<code>drop(vision)</code> 增大</td><td>识别吞吐瓶颈（与本页显示链路无关）</td></tr>
+</table>
+<div class="note">
+  <b>顺带修掉的一处浪费：</b>相机 640×480 与 MaixCAM2 屏幕 640×480 宽高比一致，旧默认 <code>SHOW_WIDTH=480</code>
+  却把画面先缩到 480×360、再由 <code>show()</code> 放大回 640×480 —— 一次毫无收益的"缩了又放"。
+  现默认 <code>SHOW_WIDTH=0</code>（画布 = 屏幕）：<b>零缩放</b>，触摸坐标也不必再做比例换算。
+</div>
+<div class="note green">
+  <b>为什么这不算过度设计：</b>三个线程各自只保留<b>最新</b>一份数据 —— 没有队列、没有背压、没有跨线程等待，
+  任一侧变慢只表现为"丢帧"，永不阻塞另一侧。这是实时视觉系统应有的形态：<b>宁可丢帧，不可积压</b>。
+</div>
+
+<footer>
+  本页由代码注释同步生成，仅供工程理解与交接使用。<br>
+  对应源码：<code>maixcam2_rect_center/{main.py, vision/rectangle_center.py, vision/laser_spot.py}</code> ·
+  BUILD_ID <code>2026-10-11-display-thread-v0.4.3</code><br>
+  注意：<code>[perf]</code> 中 <code>capture / disp / detect_fps</code> 是三路不同口径 —— 眼睛看到的刷新率看 <code>disp</code>，识别吞吐看 <code>detect_fps</code>，切勿互相换算。
+</footer>
+
+</div>
+</body>
+</html>

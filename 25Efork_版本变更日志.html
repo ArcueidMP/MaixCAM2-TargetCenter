@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>25Efork 双轨版本变更日志</title>
+<style>
+  :root{
+    --bg:#f6f7f9; --panel:#ffffff; --ink:#1c2430; --sub:#5b6675; --line:#e3e7ec;
+    --a:#2563eb; --b:#0f9d76; --warn:#c2410c; --warnbg:#fff5ee; --tag:#eef2f7;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,"Segoe UI","PingFang SC","Microsoft YaHei",Roboto,sans-serif;
+    line-height:1.65;font-size:15px;}
+  .wrap{max-width:1080px;margin:0 auto;padding:40px 24px 80px;}
+  header.top{border-left:5px solid var(--a);padding:6px 0 6px 18px;margin-bottom:8px}
+  h1{font-size:27px;margin:0 0 6px}
+  .sub{color:var(--sub);font-size:14px}
+  h2{font-size:20px;margin:40px 0 14px;padding-bottom:8px;border-bottom:2px solid var(--line)}
+  h2 .badge{font-size:12px;font-weight:600;padding:2px 9px;border-radius:20px;color:#fff;vertical-align:middle;margin-left:8px}
+  .bA{background:var(--a)} .bB{background:var(--b)}
+  .lead{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:18px 20px;margin:18px 0}
+  table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line);
+    border-radius:12px;overflow:hidden;font-size:13.5px}
+  th{background:var(--tag);text-align:left;padding:10px 12px;font-weight:600;color:#33414f;
+    border-bottom:1px solid var(--line);white-space:nowrap}
+  td{padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  code{background:#eef1f5;border-radius:5px;padding:1px 6px;font-family:"SFMono-Regular",Consolas,monospace;
+    font-size:12.5px;color:#0b3a67}
+  .ver{font-family:Consolas,monospace;font-size:12.5px;font-weight:600;color:#0b3a67;white-space:nowrap}
+  .date{white-space:nowrap;color:var(--sub);font-size:12.5px}
+  .note{margin-top:14px;background:var(--warnbg);border:1px solid #f5d9c4;border-left:4px solid var(--warn);
+    border-radius:10px;padding:14px 18px;font-size:13.5px}
+  .note b{color:var(--warn)}
+  .pill{display:inline-block;font-size:11.5px;background:var(--tag);border:1px solid var(--line);
+    border-radius:20px;padding:1px 9px;margin:2px 4px 2px 0;color:#40505f}
+  ul{margin:6px 0 0 0;padding-left:20px}
+  li{margin:3px 0}
+  footer{margin-top:48px;color:var(--sub);font-size:12.5px;text-align:center}
+  .kpi{display:flex;gap:12px;flex-wrap:wrap;margin:16px 0}
+  .kpi div{flex:1;min-width:170px;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+  .kpi b{display:block;font-size:20px;color:var(--a)}
+  .kpi span{font-size:12.5px;color:var(--sub)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <h1>25Efork 双轨版本变更日志</h1>
+  <div class="sub">2025 电赛 E 题 · 靶心识别（MaixCAM2 / MaixPy v4）｜依据 <code>.workbuddy/memory/2026-10-04 ~ 10-10</code> 与 git 提交整理</div>
+</header>
+
+<div class="lead">
+  <b>一句话总览：</b>本仓库同一道题维护了<b>两份并行实现</b>。
+  <b>A 轨（DeepSeek，仓库根）</b>走「二值化 + 环/亮面双族轮廓 + 结构打分 + 亚像素精修」；
+  <b>B 轨（GPT，<code>maixcam2_rect_center/</code>）</b>走「Canny + 凸四边形配对 + 8×8 单应 + 72 点圆映射」，
+  后期在视觉之外扩展了<b>串口直控云台</b>（ZDT 步进闭环）。
+  下方按时间列出每个构建号改了什么。
+</div>
+
+<div class="kpi">
+  <div><b>r1 → r8</b><span>A 轨构建号跨度（2026-10-04 ~ 10-05）</span></div>
+  <div><b>v1 → v20 → v3</b><span>B 轨构建号跨度（含一次整轨回退）</span></div>
+  <div><b>0.803px</b><span>B 轨视觉基线最大中心误差（30 场景检出 29、0 误检）</span></div>
+  <div><b>12 文件</b><span>B 轨应用包规模（A 轨 8 文件）</span></div>
+</div>
+
+<!-- ================= A 轨 ================= -->
+<h2>A 轨 <span class="badge bA">DeepSeek · 根目录</span></h2>
+<table>
+  <thead><tr><th>构建号</th><th>日期</th><th>主要改动</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="ver">2026-10-04-r1 ~ r4</td>
+      <td class="date">10-04</td>
+      <td>初版 <code>find_center.py</code> 起家，随后重构为 MaixPy 应用工程（<code>main.py</code>+<code>app.yaml</code>+<code>config.py</code>+<code>vision/</code>）；
+        四项关键修复：
+        <ul>
+          <li><b>内存</b>：相机灰度直出 + 两级解算（0.5 缩小图粗定位 + ROI 全分辨率精算），解 1280×720 帧缓冲不足；</li>
+          <li><b>单文件打包</b>：新增 <code>tools/build_single.py</code> 生成 <code>dist/main_single.py</code>，解决「运行当前文件」的 ModuleNotFoundError；</li>
+          <li><b>灰度形状</b>：MaixCAM2 的 <code>image2cv</code> 对灰度返回 <code>(H,W,1)</code> → 修 <code>cv2 scn is 1</code> 崩溃，改按 shape 判断；</li>
+          <li><b>引入 BUILD_ID</b> 机制 + 预检 0（源码版本自检），专治「main.py 被静默回退、板上跑旧代码」。</li>
+        </ul>
+      </td>
+    </tr>
+    <tr>
+      <td class="ver">2026-10-04-r5</td>
+      <td class="date">10-04</td>
+      <td><b>描边策略重构</b>（真机「框选不出」）：由「取最大黑轮廓」改为 <b>ring（深色环外沿）/ paper（亮面矩形内沿）双族互补候选</b> + 结构打分择优 + 阈值自动标定/锁定；
+        <span class="pill">硬场景 8/12 失败 → 12/12 检出</span><span class="pill">误检 2/5 → 5/5 拒检</span>。同时定位「绕光轴 45° 漏检」并改质心极角排序修复。</td>
+    </tr>
+    <tr>
+      <td class="ver">2026-10-05-r6</td>
+      <td class="date">10-05</td>
+      <td><b>真机「远距离完全锁不住」</b> —— 五个根因全修：① <code>MIN_AREA_RATIO</code> 取值锁死约 2m 以上距离；② <code>MASK_FG_*</code> 前景占比区间越界；③ 形态学核腐蚀掉远距细环；④ 失败时误锁定阈值、把兜底重扫一起锁死；⑤ 极值法在小目标上取错角（给错中心，比漏检更糟）。
+        <span class="pill">远距 3.4m/5.2m 各 40/40 检出</span></td>
+    </tr>
+    <tr>
+      <td class="ver">2026-10-05-r7</td>
+      <td class="date">10-05</td>
+      <td><b>性能优化</b>（用户反馈只剩 0.1fps）：定位为「某些输入复杂度爆炸 + 单帧无上界」，非算法本质慢。
+        加天花板：<code>boundary_estimate()</code> 边界预筛（>13000 才走连通域预筛）、<code>_masks</code> 改生成器、每帧掩膜预算 <code>MAX_MASKS_FULL=8</code>、锁定值排扫描表最前、帧间 ROI 跟踪。
+        <span class="pill">远距小靶 506ms/28掩膜 → 85ms/12掩膜</span></td>
+    </tr>
+    <tr>
+      <td class="ver">2026-10-05-r8</td>
+      <td class="date">10-05</td>
+      <td><b>抗抖动跟踪</b>（用户反馈「车一晃锁框中心就偏」）：证伪「抖动是噪声」——抖动位移是<b>必须跟踪的真实运动</b>，重低通只会照旧位置打。
+        新增 <code>vision/tracker.py</code>（常数速度卡尔曼 + 自适应过程噪声 + 新息门限），把「跟运动」与「防误锁」解耦。
+        <span class="pill">抖动误差 8.06px → 0.14px</span><span class="pill">离群帧 113.9 → 11.4px</span></td>
+    </tr>
+    <tr>
+      <td class="ver">（工程侧）</td>
+      <td class="date">10-05</td>
+      <td>建立 <b>git 版本管理</b>（仓库根=25Efork，LF 强制、中文路径、精确 add）与 <b>AGENTS.md 双轨协作契约</b>；新增 <code>tools/pack_zip.py</code> 打包器并修掉应用包混入嵌套应用/参考资料的问题。
+        <b>当前 A 轨 BUILD_ID = <code>2026-10-05-r8</code></b>。</td>
+    </tr>
+  </tbody>
+</table>
+
+<!-- ================= B 轨 ================= -->
+<h2>B 轨 <span class="badge bB">GPT · maixcam2_rect_center/</span></h2>
+<table>
+  <thead><tr><th>构建号</th><th>日期</th><th>主要改动</th></tr></thead>
+  <tbody>
+    <tr>
+      <td class="ver">（早期快照）</td>
+      <td class="date">10-05/06</td>
+      <td><code>fe530c8</code>：<code>_line_search</code> 优化（专用高斯+Canny 边图、候选 32→64）。10-06 补齐技术解析文档、<code>MaixCAM应用代码规范.md</code> 与可执行门禁 <code>tools/check_app.py</code>（C1~C10）。</td>
+    </tr>
+    <tr>
+      <td class="ver">2026-10-07-laser-readout-v1<br>→ laser-spot-v1</td>
+      <td class="date">10-07</td>
+      <td>先<b>整轨回滚到 fe530c8 再撤销</b>，最终只摘除瞄准功能；随后新增 <b>激光光斑读数面板</b>（<code>vision/laser_spot.py</code> + <code>LASER_*</code> 配置，dx/dy=靶心−光斑）。
+        用户定为最终口径：<b>光斑写死固定位置</b>（<code>LASER_MODE="fixed"</code>，每帧只做两次减法，不做图像检测）。
+        <span class="pill">应用包 6→7 文件</span></td>
+    </tr>
+    <tr>
+      <td class="ver">2026-10-08-gimbal-self-test-v1<br>→ track-raw-ack-calib-v2<br>→ target-api-v3</td>
+      <td class="date">10-08</td>
+      <td><b>串口直控云台闭环</b>落地：
+        <ul>
+          <li>v1：新增 <code>stepper_link / gimbal_aim / gimbal_self_test</code>（ZDT 协议帧与官方 5 例逐字节一致）；</li>
+          <li>v2：闭环改用 <code>raw_u/raw_v</code>（消除 CENTER_ALPHA 约 28ms 滞后）、状态机 BOOT/COARSE/FINE/SETTLE/HOLD/SCAN/FAULT、离群拒收、E2/ACK 看门狗、新增 <code>gimbal_calibrate</code> 开环标定；</li>
+          <li>v3：封装<b>对外 API <code>target_api.py</code></b>（<code>detect_black_frame / CenterTracker / AimLoop</code>，<code>Result</code> 为 dict 子类）供各小问复用；
+            新增 <code>tools/build_single.py</code> 单文件打包器（B 轨对齐 A 轨「改完三件事」）。</li>
+        </ul>
+        <span class="pill">应用包 10→12 文件</span>
+      </td>
+    </tr>
+    <tr>
+      <td class="ver">2026-10-09-uart-diag-v1</td>
+      <td class="date">10-09</td>
+      <td>上电「电机使能但不自校」根因：接线口（丝印 U0 ≠ U1）与配置不匹配 + 自检易被跳过。pinmap 改严格判定、新增逐轴诊断 <code>health_lines()</code>、未标定兜底自检、<code>UNCALIBRATED</code> 未标定锁、<code>tools/uart_probe.py</code> 板端诊断。</td>
+    </tr>
+    <tr>
+      <td class="ver">2026-10-09-uart-u0-yaw-v2</td>
+      <td class="date">10-09</td>
+      <td>确认 MaixCAM2 无外接 UART1 → yaw 改到 U0；并修「一轴失败拖死另一轴」（某轴 move() 失败只剔除该轴剩余步骤，另一轴继续）。</td>
+    </tr>
+    <tr>
+      <td class="ver">2026-10-09-gimbal-fault-fix-v3</td>
+      <td class="date">10-09</td>
+      <td><b>★ 找到「模式对/接线对却完全不动」的真根因（代码 bug）</b>：<code>main.py</code> 把「无故障=False」误写成 <code>is not None</code> → 开机第 1 帧即 FAULT → 自检与闭环永不执行。
+        统一改走 <code>fault_reason()</code>（无故障返回 None），新增链路心跳日志。</td>
+    </tr>
+    <tr>
+      <td class="ver">2026-10-09-self-test-curve-v5</td>
+      <td class="date">10-09</td>
+      <td>自检「卡顿」根因=位置模式 <code>acc=0</code>（瞬时启停）→ 改「慢速+曲线」；<b>yaw 不通根因=A28/A29 并未默认复用为 UART0</b> → 必须显式 pinmap + 引脚回读日志（用户确认 yaw 随即可动）。</td>
+    </tr>
+    <tr>
+      <td class="ver">2026-10-09-auto-calib-track-v6</td>
+      <td class="date">10-09</td>
+      <td>新增 <code>AutoCalibrate</code>：<code>CALIBRATE_AXIS="auto"</code> 时自动标定两轴 → 写回运行时 cfg → <code>unlock()</code> 解锁闭环。任一轴失败则整体不解锁（安全口径）。标定动作同样改「慢+曲线」。</td>
+    </tr>
+    <tr>
+      <td class="ver">2026-10-09-self-test-pulse-v7</td>
+      <td class="date">10-09</td>
+      <td>关追踪（改回 <code>CALIBRATE_AXIS=""</code>）；自检改<b>固定脉冲、与视觉解耦</b>，顺序 pitch 上→下、yaw 左→右，步数 6→4。</td>
+    </tr>
+    <tr>
+      <td class="ver">2026-10-09-axis-map-fix-v8</td>
+      <td class="date">10-09</td>
+      <td><b>★ 修正轴映射（实测与预期相反）</b>：<code>ttyS0</code>(U0,ID=1)=<b>pitch</b>、<code>ttyS2</code>(U2,ID=2)=<b>yaw</b>；两轴正方向均 CCW。代码整体互换端口/引脚/地址。</td>
+    </tr>
+    <tr>
+      <td class="ver">2026-10-09-track-curve-v9</td>
+      <td class="date">10-09</td>
+      <td>追踪加回 + <b>闭环速度曲线</b>：新增 <code>ACC_TRACK=200</code>（避免急停时激光晃开，短行程自动退化三角曲线）、降速 <code>RPM 120/400</code>。此版是后来公认「最跟手」的追踪手感基线。</td>
+    </tr>
+    <tr>
+      <td class="ver">2026-10-10-selftest-first-v11</td>
+      <td class="date">10-10</td>
+      <td><b>上电自检优先</b>：不等黑框、上电立即自检 → 再自动标定 → 解锁追踪；修复 v9 在 auto 模式「只建标定不建自检」导致上电无动作的问题；保留 FAULT 门控。</td>
+    </tr>
+    <tr>
+      <td class="ver">2026-10-10-track-tune-v12</td>
+      <td class="date">10-10</td>
+      <td>追踪全面放缓（GAIN 0.5→0.3、RPM 120/400→60/150、MAX_STEP 360→150、死区 2.0→3.0）；<b>「像素→角度」提成宏</b>（<code>DEG_PER_PX</code> / <code>PULSES_PER_DEG</code>，用户主调项）+ 新增《B轨云台调参手册》。</td>
+    </tr>
+    <tr>
+      <td class="ver">2026-10-10-quick-selftest-v13<br>→ no-block-v14</td>
+      <td class="date">10-10</td>
+      <td>先试「3s 硬超时」，用户澄清后<b>改为根治阻塞</b>：新增 <code>CALIBRATE_VISUAL_TIMEOUT_S=3.0</code>（无视觉 3s 快速失败），默认跳过会卡住的自动标定环节，自检完直接追踪；新增发散看护 <code>DIVERGE_GUARD</code>。</td>
+    </tr>
+    <tr>
+      <td class="ver">2026-10-10-smooth-track-v15</td>
+      <td class="date">10-10</td>
+      <td>平滑追踪：输出时间低通（<code>τ=0.25s</code>）+ 增长限速（120 脉冲/s）+ 单帧限幅 60p + 等待运动完成；死区/换向/失锁时清滤波并发停止。</td>
+    </tr>
+    <tr>
+      <td class="ver">2026-10-10-fps-instrument-v17</td>
+      <td class="date">10-10</td>
+      <td><b>帧率治理 + 诚实计量</b>：修慢帧 2s 退避致预览 0.4fps、delay 未扣 show 耗时；新增 <code>[perf-max]</code>（单帧最大分段耗时）与 <code>[preview] 实测显示 FPS</code>。<b>确认：屏幕叠加的 FPS 是「主循环速率」，眼睛看到的是「预览刷新率」，二者必须分开看。</b></td>
+    </tr>
+    <tr>
+      <td class="ver">2026-10-10-sync-display-v18</td>
+      <td class="date">10-10</td>
+      <td><b>修 MaixVision 看不到画面</b>（v16 把 Display 放进子进程的架构缺陷 → <code>can_submit()</code> 恒 False、一帧不画）：默认改回<b>主进程内显示</b>（<code>SyncPreview</code> + <code>SHOW_ASYNC=False</code>），慢帧自动降速。</td>
+    </tr>
+    <tr>
+      <td class="ver">2026-10-10-lens-off-v19</td>
+      <td class="date">10-10</td>
+      <td><b>修画面畸变</b>：根因=主循环每帧对整图做未调参的镜头畸变校正（<code>LENS_CORR=True</code>+<code>strength=1.5</code>）→ 关闭并显式打印 lens 状态。</td>
+    </tr>
+    <tr>
+      <td class="ver">（v20 · 2a08703）</td>
+      <td class="date">10-10</td>
+      <td><b>修帧率「虚假显示 + 过低」</b>：屏幕 FPS 改画实测显示帧率（附 loop）、放宽降速迟滞（0.5→0.8×）、<code>SHOW_SLOW_MIN_FPS</code> 1.0→2.0。
+        另做工作区瘦身（10MB→1.12MB，新增 <code>clean_artifacts.py</code>）。</td>
+    </tr>
+    <tr>
+      <td class="ver">2026-10-08-target-api-v3<br>（整轨回退）</td>
+      <td class="date">10-10 23:2x</td>
+      <td><b>用户指令「回退到 v9 重新调试」</b>，但 <b>git 里不存在 v9 快照</b>（v9 是被外部进程覆写的未入库中间态）→ 改选回退到 v9 前最后一个提交 <code>b32cd08 = target-api-v3</code>。
+        只回退应用源码+v3 自带测试，保留 build 工具/文档/dist；安全分支 <code>backup/b-track-v20-pre-v9-rollback</code> 可一键还原。
+        <b>当前 B 轨 BUILD_ID = <code>2026-10-08-target-api-v3</code></b>。</td>
+    </tr>
+  </tbody>
+</table>
+
+<div class="note">
+  <b>⚠ 回退后必须知道的「已回退掉的修复」</b>（正式上板前需按需逐条补回）：
+  <ul>
+    <li><b>轴映射/方向是 v3 旧值</b>（未经 v8 实测校正）：<code>ttyS1</code>=yaw（无引脚通道）、<code>ttyS0</code> 未用、<code>DIR_SIGN=+1/+1</code> —— <b>上板前务必重新核对接线与标定</b>，否则 yaw 可能完全不动或反向跑飞。</li>
+    <li>闭环用 <code>ACC_DEFAULT=0</code>（瞬时启停）→「停下瞬间激光晃开」问题回归；追踪手感参数比 v9 更猛（GAIN 0.5/0.9、MAX_STEP 360、RPM 300/1200）。</li>
+    <li>无上电自检优先/自动标定解锁、无主进程内显示（v18）、无关闭镜头校正（v19）、无帧率诚实计量（v17/v20）。</li>
+    <li><b>工具陷阱</b>：<code>tools/apply_gimbal_track_patch.py</code> 与 <code>tools/git_round.py</code> 是 v9+ 专用，对 v3 代码会误报/挡提交，<b>勿运行</b>。</li>
+  </ul>
+</div>
+
+<div class="note" style="border-left-color:#2563eb;border-color:#cfe0fb;background:#f2f7ff">
+  <b style="color:#2563eb">贯穿全程的两条工程教训</b>
+  <ul>
+    <li><b>B 轨 <code>main.py</code> 被外部进程反复整份覆写</b>（实测至少退回 v6 一次、v9 两次，最极端时距 build 仅 35s）——只有入口文件受影响，<code>vision/*</code>/<code>config.py</code> 不受影响。
+      → 对策：改完入口<b>立刻</b> <code>build_single</code> + <code>check_app --manifest</code>（C8 是覆盖探针）；B 轨<b>每轮交 git</b>（<code>git_round.py</code>）作为唯一可靠回滚点。</li>
+    <li><b>「跟手 ↔ 柔和」是跷跷板，不是 bug</b>：v9 又猛又快（现场抱怨超调）→ v12 起逐版放缓并加滤波 → 变得柔和但滞后。属响应速度与柔和度的取舍，未擅自改回。</li>
+  </ul>
+</div>
+
+<footer>25Efork · 双轨版本变更日志 · 整理自 .workbuddy/memory 与 git 提交历史</footer>
+</div>
+</body>
+</html>
