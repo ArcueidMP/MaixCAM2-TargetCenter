@@ -91,6 +91,17 @@
   `MAX_LINE_RESIDUAL_PX` `MIN_TRANSITION_COVERAGE` `MAX_BOUNDARY_WIDTH_ERROR`。
 - 基线：30 场景检出 29（fixture#2 强反光属安全失败）、max 0.803px、0 误检、稳态 ~1ms。
 - 两轨互补：A 轨跟踪/性能成熟，B 轨几何/毫米完整 —— 补短板去另一轨抄已验证结论。
+- ★ **"换 Canny 会不会更稳/更准"定论（10-12 只读核查，结论已固化，别再重复调研）**：
+  A 轨文档里的"Canny 路线"(`reference/upstream_2025E` + `exp_alt_pipeline.py` 头注释的"另一条技术路线")
+  **就是 B 轨现行路线**（Canny兜底/8×8单应/72点圆逐条对应）；A 轨自己从无 Canny 版本。
+  复跑 `exp_alt_pipeline.py`：**检测算子对中心贡献同量级（阈值 0.8285px vs Canny 0.7496px），
+  真正到 0.061px（13.6×）的是 `fitLine` 亚像素精修**。B 轨同图 A/B（只换候选生成器）：**29/30 对 29/30、
+  0 误检、track 命中都 12/13** ⇒ **换纯 Canny 是等价搬迁**。
+  两条防弯路：① **追踪不走 Canny/二值化**（走 `_refine` 窄带灰度梯度+fitLine，与捕获算子解耦）；
+  ② A 轨"全分辨率多 3~4MB"的内存顾虑**在 B 轨不成立**（B 的 Canny 跑在 `SEARCH_WIDTH=320` 缩小图上，≈0.46MB）。
+  详见根目录 `A轨黑框方案对比与Canny可行性.html`。
+- ⚠ 参数有效性更新（v0.5.1/v0.5.2 后）：`SEARCH_BUDGET_MS` 仅在 `SEARCH_SPLIT_FRAMES=True` 时生效；
+  `SEARCH_MAX_PROPOSALS` 现为单帧候选硬上限（128）；搜索相关新增 `ENABLE_MOTION_PREDICT`/`PREDICT_MAX_PX`/`SEARCH_SPLIT_FRAMES`。
 - 对外 API `target_api.py`：`detect_black_frame`/`CenterTracker`/`AimLoop`，返回 `Result` 是 dict 子类。
 
 ## 8 · B 轨版本演进速查（细节在各提交信息 / B 轨 README）
