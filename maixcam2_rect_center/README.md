@@ -1,11 +1,42 @@
 # MaixCAM2 黑框中心：四边精修、快速跟踪与双轴云台瞄准
 
-构建号 `2026-10-11-show-probe-v0.4.4`，应用版本 `0.4.4`。在 MaixVision 中打开本文件夹，选择“运行项目”。
+构建号 `2026-10-11-maixvision-off-v0.4.5`，应用版本 `0.4.5`。在 MaixVision 中打开本文件夹，选择“运行项目”。
 必须一起下发应用包内的 **12 个文件**（`app.yaml` / `main.py` / `config.py` / `target_api.py` /
 `assets/icon.png` / `vision/` 下 7 个 `.py`），不能只运行当前 `main.py`。
 
 > 只想临时试参数时，也可以先 `python tools/build_single.py` 生成 `dist/main_single.py`，
 > 再用「运行当前文件」—— 那是自包含的单文件版，语义与分模块完全一致。改了源码记得重新生成。
+
+## 2026-10-11 改动（v0.4.5）：代码层掐断 MaixVision 图传——默认即全帧
+
+**动机**：v0.4.4 把根因锁在「MaixVision 模式 + 图传未连上 ⇒ `show()` 忙等 500ms」，但当时只能靠
+“改从设备本地启动”来规避。既然 `maixvision_mode()` 的实现就是**读环境变量**，那就能在代码里直接拆掉：
+
+```cpp
+// components/vision/src/maix_image_trans.cpp
+bool maixvision_mode() {
+    char *env = getenv("MAIXVISION");
+    return (env && strcmp(env, "1") == 0);      // ← 只看 MAIXVISION 是否等于 "1"
+}
+```
+
+**改法**：新增 `Config.DISABLE_MAIXVISION_STREAM`（默认 `True`）。`main()` 在**创建 `display.Display()`
+之前**把 `MAIXVISION` 置 `"0"` ⇒ `maixvision_mode()` 为假 ⇒ MaixCDK 不创建 `img_trans` ⇒
+`show()` 只剩本地屏绘制（官方 1~5ms）⇒ **默认就是全帧**。启动日志多两行：
+
+```text
+[preview] 已禁用 MaixVision 图传（MAIXVISION 1->0）：本地屏恢复 1~5ms ⇒ 全帧；MaixVision 画面预览将无图……
+[preview] mode=display-thread screen=640x480 canvas=640x480 show_fps=30 jpeg=70 maixvision=off
+```
+
+**三个必须知道的点**
+
+- ⚠ **`display.send_to_maixvision()` 不能绕开忙等**：它虽是独立 API（不画本地屏），但内部与 `show()`
+  共用同一个 `ImageTrans::send_image()` —— 只要 `img_trans` 在、连接不在，照样忙等 500ms。
+- ⚠ **必须在建 `Display` 之前置 0**：`img_trans` 是 `Display` 构造时一次性创建，建好再改环境变量无效。
+- 代价：MaixVision 的**画面预览面板**收不到图像（终端日志照常）。想用 MaixVision 看画面时，设
+  `Config.DISABLE_MAIXVISION_STREAM=False`，并确保预览已真正连上（连上后走异步 JPEG 入队，不忙等）。
+  从设备本地启动应用时本就没有图传，此开关**无副作用**。
 
 ## 2026-10-11 改动（v0.4.4）：定位「板上一律 ~2fps」= MaixCDK 图传忙等，并加开机探针
 
@@ -47,12 +78,15 @@ err::Err ImageTrans::send_image(image::Image &img) {
 [preview] show 探针 2.6ms —— 显示链路健康（本地屏典型 1~5ms）
 # 或命中忙等分支：
 [preview] ⚠ show 探针 505ms —— 命中 MaixCDK「MaixVision 图传未就绪」忙等分支 ...
-[preview] ⚠ 对策①：改从**设备本地**启动本应用（应用菜单 / 开机自启），不要用 MaixVision 的“运行”按钮 ...
-[preview] ⚠ 对策②：确认 MaixVision 的画面预览已真正连上 ...
+[preview] ⚠ 对策①：把 Config.DISABLE_MAIXVISION_STREAM 设回 True（默认即 True）……
+[preview] ⚠ 对策②：或改从**设备本地**启动本应用（应用菜单 / 开机自启）……
+[preview] ⚠ 对策③：或让 MaixVision 的画面预览真正连上（连上后走异步 JPEG 入队，不再忙等）……
 ```
 
-**拿到全帧显示的真正办法（三选一）**
+**拿到全帧显示的真正办法（v0.4.5 起默认已解决，此处列全）**
 
+0. **保持 `Config.DISABLE_MAIXVISION_STREAM=True`（默认）** —— 代码层在 `Display` 之前把
+   `MAIXVISION` 置 0，`img_trans` 不创建，`show()` 只走屏幕 ≈1~5ms。**这是推荐做法。**
 1. **从设备本地启动应用**（把应用装到设备 / 从应用菜单启动 / 开「开机自启」）——此时 `maixvision_mode()`
    为假，`img_trans` 根本不创建，`show()` 只走屏幕 ≈1~5ms，**可跑满相机帧率**。
    日志落在设备 `/maixapp/tmp/last_run.log`。

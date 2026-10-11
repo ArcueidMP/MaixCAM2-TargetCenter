@@ -1,5 +1,6 @@
 """真实完成帧计数、最新帧线程、过期追踪阻断、慢识别下视频连续性、显示线程不阻塞主循环。"""
 import json
+import os
 import sys
 import threading
 import time
@@ -11,7 +12,8 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from config import Config
-from main import _FrameRate, _LatestVision, _Preview, _VisionControl, _display_result
+from main import (_FrameRate, _LatestVision, _Preview, _VisionControl, _display_result,
+                  _apply_maixvision_stream_policy)
 from vision.rectangle_center import RectangleCenterDetector
 from vision.gimbal_aim import GimbalAim
 from vision.stepper_link import StepperLink
@@ -214,11 +216,39 @@ def test_slow_show_does_not_block_main_loop():
                                         elapsed_s=elapsed)))
 
 
+def test_maixvision_stream_policy():
+    """MaixVision 图传策略：默认必须把 MAIXVISION 置 0（从源头不建图传、拆掉 500ms 忙等）。
+
+    契约与 MaixCDK 对齐：maixvision_mode() 只在 MAIXVISION=="1" 时为真；图传通道在建 Display
+    时按它创建。故这里锁死三种情形：默认置 0、显式关闭策略则保持 1、非 MaixVision 模式不动。
+    """
+    old = os.environ.get("MAIXVISION")
+    try:
+        os.environ["MAIXVISION"] = "1"
+        assert _apply_maixvision_stream_policy(Config) is True       # 默认 DISABLE_MAIXVISION_STREAM=True
+        assert os.environ.get("MAIXVISION") == "0", "默认策略必须掐断图传"
+
+        os.environ["MAIXVISION"] = "1"
+        keep = type("Cfg", (Config,), dict(DISABLE_MAIXVISION_STREAM=False))
+        assert _apply_maixvision_stream_policy(keep) is False        # 显式保留图传
+        assert os.environ.get("MAIXVISION") == "1", "关闭策略时不得改动环境变量"
+
+        os.environ.pop("MAIXVISION", None)
+        assert _apply_maixvision_stream_policy(Config) is False      # 非 MaixVision 模式：无副作用
+        assert "MAIXVISION" not in os.environ
+    finally:
+        if old is None:
+            os.environ.pop("MAIXVISION", None)
+        else:
+            os.environ["MAIXVISION"] = old
+
+
 def main():
     cv2.setNumThreads(Config.OPENCV_THREADS)
     tests = [test_real_fps, test_latest_frame_ownership, test_stale_and_single_control_update,
              test_bounded_search_and_current_evidence, test_uart_is_nonblocking_and_bounded,
-             test_slow_vision_keeps_live_video, test_slow_show_does_not_block_main_loop]
+             test_slow_vision_keeps_live_video, test_slow_show_does_not_block_main_loop,
+             test_maixvision_stream_policy]
     for test in tests:
         test()
         print("PASS", test.__name__)

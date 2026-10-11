@@ -20,6 +20,18 @@ class Config:
     SHOW_WIDTH = 0
     SHOW_FPS = 30
     SHOW_JPEG_QUALITY = 70   # 只影响 MaixVision JPEG 图传，检测始终用原始灰度图。
+    # ★ MaixVision 图传总开关（决定"能跑满全帧"还是"被 500ms 忙等拖垮"）。
+    #   背景：MaixCDK 的 maixvision_mode() 只看**环境变量 MAIXVISION 是否为 "1"**；
+    #   display.Display() 构造时据此创建图传通道 img_trans，而 show() 的第一步就是
+    #   img_trans->send_image()。若处于 MaixVision 模式但画面预览**没真正连上**，
+    #   该函数会 `while(!init){ if(ticks-t>500) return; }` **忙等 500ms 并空转 CPU**
+    #   （源码 components/vision/src/maix_image_trans.cpp）——以 ~2 次/秒计 ≈ 烧掉近一个核，
+    #   相机 read / 识别 / 闭环随之塌方（板端实测 show≈505ms、read≈107ms、detect_fps=0）。
+    #   True（默认）：main() 在建 Display **之前**把 MAIXVISION 置 "0" ⇒ 不建图传 ⇒ show() 只
+    #     画本地屏（官方 1~5ms）⇒ 全帧。代价：MaixVision 的"画面预览"面板收不到图（终端日志照常）。
+    #   False：保留图传。想用 MaixVision 看画面、且能保证预览真连上（连上后是异步入队，不忙等）时再设。
+    #   注：从设备本地启动应用时本来就没有图传，此开关无副作用。
+    DISABLE_MAIXVISION_STREAM = True
     VISION_ASYNC = True
     # ★ 显示线程化：True = 绘制完成后把画布交给**独立显示线程**去 show()，主循环**永不等待 show**。
     #   屏幕驱动或 MaixVision 图传慢时，只表现为"预览掉帧"（丢帧而非排队），

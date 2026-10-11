@@ -10,9 +10,9 @@ main_single.py · 25E 靶心识别（轨道 B）—— 单文件自包含版
 用途：在 MaixVision 里点「运行当前文件」即可运行（不必用「运行项目」）。
       行为与模块化工程完全一致，输出也就完全一致。
 
-生成时间：2026-10-11 23:28:13
-    config.py                    sha1=f3a8149af079
-    main.py                      sha1=45e6ff41890a
+生成时间：2026-10-12 00:10:17
+    config.py                    sha1=f295d9761c03
+    main.py                      sha1=00d27042f9d0
     target_api.py                sha1=9c5a71aa209b
     vision/gimbal_aim.py         sha1=0b0ae21ebd2e
     vision/gimbal_calibrate.py   sha1=9c4bb08a1b99
@@ -25,7 +25,7 @@ main_single.py · 25E 靶心识别（轨道 B）—— 单文件自包含版
 import sys as _sys
 import types as _types
 
-_SRC_SHA1 = {'config.py': 'f3a8149af0790b28e5c73d31cf2096c9f5930c4c', 'vision/rectangle_center.py': '8aa5e868f9ea2a9a7d243ff4879e8295652d4c0f', 'vision/laser_spot.py': 'c131498c5ff980e594b1c8d5d2feda6195caee23', 'vision/gimbal_self_test.py': '17b72e0935bbb7786f7c936d17b55c291795990b', 'vision/gimbal_aim.py': '0b0ae21ebd2e6cce2d7839fccf03dc8ada5c02d3', 'vision/stepper_link.py': '29501ea53b740bb704bbb8da166b5b4b6eabfffb', 'vision/gimbal_calibrate.py': '9c4bb08a1b99d6feaef77bc8cf3fc56655e87676', 'target_api.py': '9c5a71aa209bb2716f1c0c4ac2fadd3eec23241d', 'main.py': '45e6ff41890ac4d65e842f2f217bb62a47653f99'}
+_SRC_SHA1 = {'config.py': 'f295d9761c036475dbe0cfe4ac07617f40cab868', 'vision/rectangle_center.py': '8aa5e868f9ea2a9a7d243ff4879e8295652d4c0f', 'vision/laser_spot.py': 'c131498c5ff980e594b1c8d5d2feda6195caee23', 'vision/gimbal_self_test.py': '17b72e0935bbb7786f7c936d17b55c291795990b', 'vision/gimbal_aim.py': '0b0ae21ebd2e6cce2d7839fccf03dc8ada5c02d3', 'vision/stepper_link.py': '29501ea53b740bb704bbb8da166b5b4b6eabfffb', 'vision/gimbal_calibrate.py': '9c4bb08a1b99d6feaef77bc8cf3fc56655e87676', 'target_api.py': '9c5a71aa209bb2716f1c0c4ac2fadd3eec23241d', 'main.py': '00d27042f9d01aef8305b2a351a0f0f57d779d2a'}
 
 # --------------------------------------------------------------------------
 # ① 各模块源码原样嵌入，运行时装进 sys.modules（保持原 import 语义）
@@ -56,6 +56,18 @@ class Config:
     SHOW_WIDTH = 0
     SHOW_FPS = 30
     SHOW_JPEG_QUALITY = 70   # 只影响 MaixVision JPEG 图传，检测始终用原始灰度图。
+    # ★ MaixVision 图传总开关（决定"能跑满全帧"还是"被 500ms 忙等拖垮"）。
+    #   背景：MaixCDK 的 maixvision_mode() 只看**环境变量 MAIXVISION 是否为 "1"**；
+    #   display.Display() 构造时据此创建图传通道 img_trans，而 show() 的第一步就是
+    #   img_trans->send_image()。若处于 MaixVision 模式但画面预览**没真正连上**，
+    #   该函数会 `while(!init){ if(ticks-t>500) return; }` **忙等 500ms 并空转 CPU**
+    #   （源码 components/vision/src/maix_image_trans.cpp）——以 ~2 次/秒计 ≈ 烧掉近一个核，
+    #   相机 read / 识别 / 闭环随之塌方（板端实测 show≈505ms、read≈107ms、detect_fps=0）。
+    #   True（默认）：main() 在建 Display **之前**把 MAIXVISION 置 "0" ⇒ 不建图传 ⇒ show() 只
+    #     画本地屏（官方 1~5ms）⇒ 全帧。代价：MaixVision 的"画面预览"面板收不到图（终端日志照常）。
+    #   False：保留图传。想用 MaixVision 看画面、且能保证预览真连上（连上后是异步入队，不忙等）时再设。
+    #   注：从设备本地启动应用时本来就没有图传，此开关无副作用。
+    DISABLE_MAIXVISION_STREAM = True
     VISION_ASYNC = True
     # ★ 显示线程化：True = 绘制完成后把画布交给**独立显示线程**去 show()，主循环**永不等待 show**。
     #   屏幕驱动或 MaixVision 图传慢时，只表现为"预览掉帧"（丢帧而非排队），
@@ -2382,7 +2394,7 @@ from vision.gimbal_aim import GimbalAim
 from vision.gimbal_self_test import GimbalSelfTest, probe_imu
 from vision.gimbal_calibrate import GimbalCalibrator
 
-BUILD_ID = "2026-10-11-show-probe-v0.4.4"
+BUILD_ID = "2026-10-11-maixvision-off-v0.4.5"
 
 
 class _FrameRate:
@@ -2579,10 +2591,11 @@ class _Preview:
             if hasattr(display, "set_trans_image_quality"):
                 display.set_trans_image_quality(int(getattr(cfg, "SHOW_JPEG_QUALITY", 70)))
             self.enabled = True
-            print("[preview] mode=%s screen=%dx%d canvas=%dx%d show_fps=%d jpeg=%d"
+            print("[preview] mode=%s screen=%dx%d canvas=%dx%d show_fps=%d jpeg=%d maixvision=%s"
                   % ("display-thread" if self.async_show else "sync-inprocess",
                      self.width, self.height, self.render_width, self.render_height,
-                     int(getattr(cfg, "SHOW_FPS", 30)), int(getattr(cfg, "SHOW_JPEG_QUALITY", 70))))
+                     int(getattr(cfg, "SHOW_FPS", 30)), int(getattr(cfg, "SHOW_JPEG_QUALITY", 70)),
+                     "on" if os.environ.get("MAIXVISION") == "1" else "off"))
             # ★ 开机探针：立刻量一次 show() 真实耗时。本地屏典型 1~5ms；若命中 MaixCDK 的
             #   "MaixVision 图传未就绪"分支，send_image() 会在 C++ 里**忙等 500ms 并空转 CPU**
             #   （见 MaixCDK components/vision/src/maix_image_trans.cpp），表现为 show 恒定 ~505ms、
@@ -2735,10 +2748,11 @@ class _Preview:
             print("[preview] ⚠ show 探针 %.0fms —— 命中 MaixCDK「MaixVision 图传未就绪」忙等分支："
                   "每次 show() 空转 500ms（maix_image_trans.cpp），约每秒烧掉半个 CPU 核，"
                   "是相机 read / 识别 / 闭环一起变慢的根因。" % ms)
-            print("[preview] ⚠ 对策①：改从**设备本地**启动本应用（应用菜单 / 开机自启），"
-                  "不要用 MaixVision 的“运行”按钮 —— 本地启动时 maixvision 模式关闭，"
-                  "show() 只走屏幕 ≈1~5ms，可跑满相机帧率。")
-            print("[preview] ⚠ 对策②：确认 MaixVision 的画面预览已真正连上"
+            print("[preview] ⚠ 对策①：把 Config.DISABLE_MAIXVISION_STREAM 设回 True（默认即 True）——"
+                  "main() 会在建 Display 之前把 MAIXVISION 置 0，从源头不建图传，show() 回到 1~5ms。")
+            print("[preview] ⚠ 对策②：或改从**设备本地**启动本应用（应用菜单 / 开机自启），"
+                  "不要用 MaixVision 的“运行”按钮 —— 本地启动时 maixvision 模式本就关闭。")
+            print("[preview] ⚠ 对策③：或让 MaixVision 的画面预览真正连上"
                   "（连上后图传走「压 JPEG 入队」的异步路径，不再忙等）。")
         else:
             print("[preview] show 探针 %.1fms —— 显示链路健康（本地屏典型 1~5ms）" % ms)
@@ -2750,8 +2764,9 @@ class _Preview:
             return
         self._slow_warned = True
         print("[preview] show slow: p95=%.0fms —— 瓶颈在显示侧（非识别）。"
-              "若该值恒定 ≈505ms，即为 MaixCDK 的 MaixVision 图传忙等；"
-              "改从**设备本地**启动应用即可消除。预览掉帧，识别/闭环不受影响。" % p95)
+              "若该值恒定 ≈505ms，即为 MaixCDK 的 MaixVision 图传忙等："
+              "保持 Config.DISABLE_MAIXVISION_STREAM=True（默认），或从设备本地启动应用即可消除。"
+              "预览掉帧，识别/闭环不受影响。" % p95)
 
     def _do_show(self, canvas, maix_image=None):
         """真正调用 display.show()，记耗时/帧率；失败即停用显示（不影响识别/闭环）。返回是否成功。"""
@@ -3015,7 +3030,36 @@ def _display_result(snapshot, now, max_age):
     return snapshot["result"], snapshot["laser"], age
 
 
+def _apply_maixvision_stream_policy(cfg):
+    """按配置决定是否禁用 MaixVision 图传；**必须在创建 display.Display() 之前**调用。
+
+    为什么是环境变量而不是别的：MaixCDK 的 `maixvision_mode()` 只读环境变量 MAIXVISION
+    （== "1" 才算真），而图传通道 `img_trans` 只在 `Display` 构造时按它创建
+    （`maix_display.cpp`：`if(!img_trans && maixvision_mode()) img_trans = new ImageTrans(...)`）。
+    一旦建了 img_trans，`show()` 与 `send_to_maixvision()` 都会走 `ImageTrans::send_image()`
+    —— 在「MaixVision 模式但连接未就绪」时忙等 500ms 空转 CPU（`maix_image_trans.cpp`）。
+    所以想在代码层拆掉它，只有一条路：**在建 Display 之前让 maixvision_mode() 为假**。
+
+    ⚠ 两个易踩点：
+      · 必须早于 `display.Display()`；建好之后再改环境变量无效（img_trans 已存在）。
+      · `send_to_maixvision()` 并不能绕开忙等 —— 它与 show() 共用同一个 send_image()。
+    返回是否实际改动了环境变量。
+    """
+    if not bool(getattr(cfg, "DISABLE_MAIXVISION_STREAM", True)):
+        return False
+    if os.environ.get("MAIXVISION") != "1":
+        return False
+    os.environ["MAIXVISION"] = "0"      # os.environ 赋值会同步 putenv，C 侧 getenv 随即生效
+    print("[preview] 已禁用 MaixVision 图传（MAIXVISION 1->0）：本地屏恢复 1~5ms ⇒ 全帧；"
+          "MaixVision 画面预览将无图（终端日志照常）。"
+          "如需图传：Config.DISABLE_MAIXVISION_STREAM=False，并确保预览已真正连上。")
+    return True
+
+
 def main():
+    # ★ 先把 MaixVision 图传按配置掐断（若处于 MaixVision 模式）——必须早于建 Display，见上。
+    _apply_maixvision_stream_policy(Config)
+
     # Imports stay inside main so the geometry module remains PC-testable.
     from maix import app, camera, image
 
