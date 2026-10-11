@@ -9,15 +9,21 @@
 | 轨 | 目录 | BUILD_ID | 状态 |
 |---|---|---|---|
 | A（DeepSeek） | 根 | `2026-10-05-r7` | 性能治理 + 抗抖跟踪已完成 |
-| B（名义 GPT） | `maixcam2_rect_center/` | `2026-10-08-target-api-v3` | **已整轨回退到 v3 基线**（10-10 23:2x，committed `0f139b1`，用户指令"回退到 v9 之前重新调试"）—— 见下方 ★ |
+| B（名义 GPT） | `maixcam2_rect_center/` | `2026-10-11-v0.4.0`（分支 `v0.4.0`） | v3 基线上**修正电机轴映射**并封 v0.4.0（10-11，commit `a06f81d`）；`main` 仍停在 v3 基线 —— 见下方 ★ |
 
 - ★ **B 轨回退定案（10-10）**：**git 里不存在 v9 快照**（`track-curve-v9` 是被外部进程覆写的未入库中间态；
   提交从 `b32cd08(v3)` 直接跳到 `v14`）。用户改选「回退到 v9 前最后一个提交 = `b32cd08`」。
   应用源码 + v3 测试已回退（保留 build 工具/文档），`dist` 重建，门禁 72 OK/0 FAIL、性能 29/30。
   **安全分支 `backup/b-track-v20-pre-v9-rollback`（=`2a08703`）可一键还原。**
-  ⚠ 回退后**轴映射/方向是 v3 旧值**（`ttyS1`=yaw 无引脚、`ttyS0` 未用、`DIR_SIGN=+1/+1`，均未经 v8 实测校正），
+  ⚠ 回退后（**指 `main`/v3 基线**）**轴映射/方向是 v3 旧值**（`ttyS1`=yaw 无引脚、`ttyS0` 未用、`DIR_SIGN=+1/+1`，均未经 v8 实测校正），
   且用 `ACC_DEFAULT=0`（无曲线）、无上电自检优先/SyncPreview/LENS_CORR/帧率计量修复 —— **上板前必须重核标定**。
   ⚠ `tools/apply_gimbal_track_patch.py` 与 `tools/git_round.py` 是 v9+ 专用，对 v3 代码会误报/挡提交，**勿运行**。
+
+- ★ **B 轨 v0.4.0（10-11，分支 `v0.4.0`，commit `a06f81d`）**：按 B 轨 `AGENTS.md §2 定案表`修 v3 **电机轴映射错误**——
+  config 改名 `U1_*/U2_*`→`YAW_*/PITCH_*`，落定案 yaw=**ttyS2**/UART2/B0B1/**ID2**、pitch=**ttyS0**/UART0/A28A29/**ID1**；
+  新增 `PINMAP_STRICT=False`/`FLUSH_RX_ON_START=True`（`stepper_link` 实现 + 引脚回读）、`DIR_SIGN=-1/-1`、
+  正方向 CCW、`ACC_DEFAULT 0→80`、`LENS_CORR=False`；`test_gimbal_aim` 加"轴映射锁定"用例。
+  ⚠ 仅 `test_main_self_test.py` 仍红：它是 v11+/v15 期测试（v3 无 `SELF_TEST_PULSES`/`ACC_TRACK` 等），**改动前即失败**、未纳入本轮。
 
 - B 轨 v20（10-10）：**帧率"虚假显示 + 过低"定案修复**。根因 = 屏幕叠加的 `FPS` 曾画的是
   **主循环速率**（`1/EMA(主循环dt)`），而显示被 `can_submit()` 节流、"多数帧只算不画"，
