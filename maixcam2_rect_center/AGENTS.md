@@ -156,7 +156,7 @@
 
 ## 4. 改完**必须**做的三件事（对齐根 AGENTS.md §3′）
 
-1. **提升 `main.py` 顶部 `BUILD_ID`**（当前 `2026-10-12-eager-search-v0.5.1`，格式 `YYYY-MM-DD-<slug>-vN`）。
+1. **提升 `main.py` 顶部 `BUILD_ID`**（当前 `2026-10-12-motion-predict-v0.5.2`，格式 `YYYY-MM-DD-<slug>-vN`）。
    板端会打印 `[rect-center] <BUILD_ID> ...`，**与本地逐字一致才算跑的是新代码**；
    不更新就无法判断是否生效。**改了 `main.py`/`config.py`/`vision/*`/`target_api.py` 任一个都要做。**
 2. **重新生成单文件版**（`dist/` 不进应用包，但"运行当前文件"要用它）：

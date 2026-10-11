@@ -1,11 +1,45 @@
 # MaixCAM2 黑框中心：四边精修、快速跟踪与双轴云台瞄准
 
-构建号 `2026-10-12-eager-search-v0.5.1`，应用版本 `0.5.1`。在 MaixVision 中打开本文件夹，选择“运行项目”。
+构建号 `2026-10-12-motion-predict-v0.5.2`，应用版本 `0.5.2`。在 MaixVision 中打开本文件夹，选择“运行项目”。
 必须一起下发应用包内的 **18 个文件**（`app.yaml` / `main.py` / `config.py` / `target_api.py` /
 `assets/icon.png` / `vision/` 下 13 个 `.py`），不能只运行当前 `main.py`。
 
 > 只想临时试参数时，也可以先 `python tools/build_single.py` 生成 `dist/main_single.py`，
 > 再用「运行当前文件」—— 那是自包含的单文件版，语义与分模块完全一致。改了源码记得重新生成。
+
+## 2026-10-12 修复（v0.5.2）：运动预测 + 搜索单帧完成 —— 治「速度快捕获不到 / 重捕获很慢」
+
+**问题（用户实报）**：v0.5.1 之后仍"重捕获很慢，速度快捕获不到"。
+
+**根因（PC 量化实测）**：
+
+- **无运动预测**：`track` 只拿上一帧位置、按 ±`TRACK_RADIUS=12`px 窄带精修 ⇒ 单帧位移超过 12px 就掉出跟踪，
+  每帧退化成搜索。实测 `track` 命中：12px/帧 `8/15`、18px `0/10`、24px `0/7`、36px `0/5`。
+  板端搜索远慢于 PC ⇒ 快速移动时帧率塌陷、搜索窗口跟不上 ⇒ **"速度快捕获不到"**。
+  （单纯加大 `TRACK_RADIUS` 无解：实测半径 80 时连 6px/帧 都开始掉，因为大步长会误锁印刷线/另一侧黑边。）
+- **搜索被软预算拆帧**：v0.5.1 保留了 `SEARCH_BUDGET_MS=25ms` 软预算。PC 上一帧就扫完（≈2ms），
+  但板端单帧搜索可能 >25ms ⇒ 一次重捕获被拆成十几帧 ⇒ **"重捕获很慢"**。
+
+**改法**：
+
+- **运动预测**（`ENABLE_MOTION_PREDICT=True`、`PREDICT_MAX_PX=60`）：用**上两帧四角的逐角位移**
+  （天然含平移/缩放/旋转）外推本帧四角，在**预测位置**做窄带精修；预测失准（突然停/变向）自动回落到上一帧位置。
+  `track` 与 `roi_search` 窗口中心都叠加预测位移。失锁后（`_lost>0`）禁用预测，避免用旧速度外推。
+- **搜索单帧完成**（`SEARCH_SPLIT_FRAMES=False` 默认）：`_search` 在一帧内跑完整个穷尽扫描，
+  **重捕获恒为 1 帧**（与旧 `_legacy_search` 一致）；`SEARCH_BUDGET_MS` 仅在显式开启拆分时才生效。
+
+**验证**：
+
+| 指标 | 改前 → 改后 |
+|---|---|
+| `track` 命中 @36px/帧 | **0/5 → 4/5**；@18px **0/10 → 9/10**；@12px `8/15 → 15/15` |
+| 重捕获帧数（含极小预算模拟板端） | 恒 **1 帧** |
+| `test_performance` | 29/30、`0.803px`、0 误检、motion **`0.637 → 0.418px`**、稳态 `tracked=60` 不变 |
+| `test_images_e2e` | **16/16**、连续帧全程锁定、最大误差 `0.396px` |
+| `test_runtime_performance` / 其余 | 8/8；`target_api` / `laser` / `gimbal_aim`(11) / `main_self_test`(4) 全绿 |
+
+**调参**：仍跟不动更快目标 → 调大 `PREDICT_MAX_PX`（默认 60px）；完全不要预测 → `ENABLE_MOTION_PREDICT=False`；
+宁可单帧轻、也不在乎多花几帧 → 才把 `SEARCH_SPLIT_FRAMES` 设为 `True`。
 
 ## 2026-10-12 修复（v0.5.1）：恢复「单帧穷尽搜索」——修掉丢锁后 11 帧才重捕获
 
@@ -22,6 +56,7 @@
 - `vision/rectangle_center.py::_search` 改回**单帧穷尽**：一帧内按序试完全部阈值（末尾 Canny 兜底）直到找到。
 - 保留 **`SEARCH_BUDGET_MS` 软预算**：本帧扫超时才停手，把剩余进度（`job["index"]` / `job["pending"]`）
   留给下一帧续扫——既保证"丢锁后 1 帧内重捕获"，又防极慢板卡死单帧。
+  （⚠ v0.5.2 起**默认不再跨帧拆分**，`SEARCH_BUDGET_MS` 仅在 `SEARCH_SPLIT_FRAMES=True` 时生效，见下节。）
 - `config.SEARCH_MAX_PROPOSALS` `1 → 128`（仅作单帧验证候选数硬上限的安全阀）。
 
 **验证**：
@@ -866,7 +901,10 @@ FPS 根据完整循环计算，包含显示开销；显示限频不会跳过检�
 |---|---|---|
 | `SEARCH_WIDTH` | 320 | 很小的远处目标可增加到 400/480，代价是失锁搜索更慢 |
 | `EDGE_SAMPLES` | 24 | 每条边采样点数；一般无需增加 |
-| `TRACK_RADIUS` | 12 | 像素，快速移动可设 16；过大会搜索到印刷线或另一侧黑边 |
+| `TRACK_RADIUS` | 12 | 像素，窄带精修的搜索半径。**快速移动优先靠运动预测**（见 `PREDICT_MAX_PX`），不要一味加大此项——过大会误锁印刷线或另一侧黑边 |
+| `ENABLE_MOTION_PREDICT` | True | 运动预测开关；用上两帧四角逐角位移外推本帧位置，快速移动时保持走 `track` |
+| `PREDICT_MAX_PX` | 60 | 单帧预测位移上限（像素）；板端帧率低、目标位移更大时调大（如 100） |
+| `SEARCH_SPLIT_FRAMES` | False | False=搜索单帧跑完（重捕获恒 1 帧，推荐）；True=按 `SEARCH_BUDGET_MS` 跨帧续扫（极慢板卡才用） |
 | `REFINE_RADIUS` | 6 | 初次粗定位后的原图精修半径 |
 | `MIN_EDGE_CONTRAST` | 20 | 暗场/低对比可降至 15，降低过多会增加误检 |
 | `MAX_DARK_BRIGHT_RATIO` | 0.72 | 黑带/白面最大灰度比，越低越严格 |

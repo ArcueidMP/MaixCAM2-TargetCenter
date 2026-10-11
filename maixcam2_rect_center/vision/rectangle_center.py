@@ -157,6 +157,8 @@ class RectangleCenterDetector:
 
     状态字段：
         _track       上一帧验证通过的外框（dict 候选）；None = 未锁定
+        _prev_quad   再上一帧的候选四角（运动预测用）；失锁时清空
+        _lost        连续未检出帧数（>0 = 刚失锁，禁用预测，避免用旧速度外推）
         _smooth      上一帧输出中心，用于 CENTER_ALPHA 一阶平滑（仅显示口径）
         _locked_th   上次成功的二值化阈值（下次优先复用，减少阈值轮换）
         _roi_retry   失锁后是否还允许一次"ROI 搜索"（用一次即置 False，防反复局部搜）
@@ -169,6 +171,8 @@ class RectangleCenterDetector:
         self.last = None
         self._smooth = None
         self._track = None
+        self._prev_quad = None                                 # 上上帧的候选四角（运动预测用）
+        self._lost = 0                                         # 连续未检出帧数（>0 时不预测）
         self._locked_th = None
         self._frame = 0
         self._kernel = np.ones((3, 3), np.uint8)               # 二值化后闭运算核
@@ -393,20 +397,41 @@ class RectangleCenterDetector:
         # 亮面孔比与背景粘连的黑环更稳定。
         return sorted(candidates, key=lambda c: c[1] != "inner")
 
+    def _motion_delta(self):
+        """上两帧四角的**逐角位移**（图像坐标）；无历史或刚失锁则 None。
+
+        逐角位移天然同时包含平移、缩放与旋转，直接加在"上一帧四角"上即为匀速外推。
+        只在**连续两帧都成功**（_lost == 0）时可用：失锁后速度已不可信，宁可退回原地精修。
+        位移限幅 PREDICT_MAX_PX 防止噪点/误检把预测甩到画面外。
+        """
+        if not getattr(self.cfg, "ENABLE_MOTION_PREDICT", True):
+            return None
+        if self._prev_quad is None or self._track is None or self._lost:
+            return None
+        delta = np.asarray(self._track["quad"], np.float32) - np.asarray(self._prev_quad, np.float32)
+        step = float(np.linalg.norm(delta, axis=1).max())
+        cap = float(getattr(self.cfg, "PREDICT_MAX_PX", 60.0))
+        if cap > 0 and step > cap:
+            delta = delta * (cap / step)
+        return delta
+
     def _search(self, gray, roi=None):
-        """在缩小图上按序穷尽阈值并验证；**单帧内尽量扫完**，超时才跨帧续扫。
+        """在缩小图上按序穷尽阈值并验证；**单帧内跑完**（默认），重捕获恒为 1 帧。
 
         关键设计（性能与鲁棒性的平衡）：
           · 缩小到 SEARCH_WIDTH 宽再阈值化，全图扫描代价大幅下降；坐标末了乘回原分辨率。
           · 阈值列表 = [上次成功阈值] + [Otsu] + DARK_THRESHOLDS，**在同一帧内按序尝试**，
             直到找到为止；全部阈值试完再用 Canny 轮廓兜底（最贵，只在彻底找不到时用）。
-          · SEARCH_BUDGET_MS 是**软预算**：一帧内扫到超时才停手，并把进度（job["index"] /
-            job["pending"]）留给下一帧续扫 —— 既保证"丢锁后 1 帧内重捕获"，又防极慢板卡死单帧。
+          · ★ 默认单帧跑完（v0.5.2，SEARCH_SPLIT_FRAMES=False）：板端搜索远慢于 PC，
+            若跨帧拆分，"重捕获"会从 1 帧退化成十几帧（实测即"重捕获很慢"）。故默认不拆。
+            仅当 SEARCH_SPLIT_FRAMES=True 时才按 SEARCH_BUDGET_MS 软预算跨帧续扫
+            （job["index"] / job["pending"] 留到下帧），防极慢板卡死单帧。
           · ★ 恢复单帧穷尽（v0.5.1）：v0.4.3 曾改成"每帧只轮换 1 个阈值、只验 1 个候选"，
             实测丢锁后要 11+ 帧才重捕获（板端更慢），大角度/移动场景肉眼即"丢框"。
         找到即锁定 _locked_th 并清空该 ROI 的待验证队列，下次直接复用。
         """
         self._search_count += 1
+        split = bool(getattr(self.cfg, "SEARCH_SPLIT_FRAMES", False))
         x, y, w, h = roi if roi is not None else (0, 0, gray.shape[1], gray.shape[0])
         crop = gray[y:y + h, x:x + w]
         scale = min(1.0, self.cfg.SEARCH_WIDTH / float(w))
@@ -431,9 +456,9 @@ class RectangleCenterDetector:
                 if job["index"] > len(thresholds):
                     job["index"] = 0
                     return None
-                # 软预算：本帧已建过至少一档阈值且已超时 → 停手，剩余留给下一帧续扫
-                # （至少保证第一档一定跑完，防止原子调用稍慢导致永远不推进）。
-                if self._threshold_count and time.perf_counter() >= self._deadline:
+                # 软预算（仅 SEARCH_SPLIT_FRAMES=True 生效）：本帧已建过至少一档阈值且已超时
+                # → 停手，剩余留给下一帧续扫（至少保证第一档一定跑完，防原子调用稍慢不推进）。
+                if split and self._threshold_count and time.perf_counter() >= self._deadline:
                     return None
                 index = job["index"]
                 job["index"] += 1
@@ -459,9 +484,9 @@ class RectangleCenterDetector:
                             q = _order_quad(ap) * [sx, sy] + [x, y]
                             pending.extend(((q, "inner"), (q, "outer")))
                 continue
-            # 有候选：至少验证一个；之后一旦超出软预算/硬上限就停手，剩余留给下一帧续扫。
+            # 有候选：至少验证一个；之后一旦超出硬上限（或拆分模式下的软预算）就停手。
             if self._proposals and (self._proposals >= self.cfg.SEARCH_MAX_PROPOSALS or
-                                    time.perf_counter() >= self._deadline):
+                                    (split and time.perf_counter() >= self._deadline)):
                 return None
             q, kind = pending.pop(0)
             self._proposals += 1
@@ -608,16 +633,30 @@ class RectangleCenterDetector:
         self._proposals = 0
         self._deadline = started + self.cfg.SEARCH_BUDGET_MS / 1000.0
         candidate, stage = None, "search"
-        # ---- ① track：上一帧已锁定 → 只用四边窄带精修（最省，稳态走这里）----
+        # ---- ① track：上一帧已锁定 → 先用**运动预测位置**、再用上一帧位置做窄带精修 ----
+        # 预测位置让窄带跟上快速移动（不必靠加大 TRACK_RADIUS 牺牲慢速稳定性）；
+        # 预测失准（突然停止/变向）时自动回落到上一帧位置，两级都试。
         if self._track is not None:
-            q, kind = self._track["quad"], self._track["kind"]
-            q = self._refine(g, q, kind, self.cfg.TRACK_RADIUS)
-            if q is not None:
-                candidate = self._verify(g, q, kind)
-                stage = "track"
-        # ---- ② roi_search：刚失锁 → 在上一帧外框外扩的窗口内搜一次 ----
+            kind = self._track["kind"]
+            delta = self._motion_delta()
+            guesses = []
+            if delta is not None:
+                guesses.append(self._track["quad"] + delta)
+            guesses.append(self._track["quad"])
+            for guess in guesses:
+                q = self._refine(g, guess, kind, self.cfg.TRACK_RADIUS)
+                if q is None:
+                    continue
+                verified = self._verify(g, q, kind)
+                if verified is not None:
+                    candidate, stage = verified, "track"
+                    break
+        # ---- ② roi_search：刚失锁 → 在上一帧外框（含预测位移）外扩的窗口内搜一次 ----
         if candidate is None and self._track is not None and self._roi_retry:
-            q = self._track["outer_quad"]
+            q = np.asarray(self._track["outer_quad"], np.float32)
+            delta = self._motion_delta()
+            if delta is not None:
+                q = q + delta                                  # 窗口中心跟上预测位移
             lo, hi = q.min(axis=0), q.max(axis=0)
             pad = np.maximum((hi - lo) * self.cfg.ROI_PADDING, 24)         # 外扩量（至少 24px）
             lo = np.maximum(0, np.floor(lo - pad)).astype(int)
@@ -630,14 +669,20 @@ class RectangleCenterDetector:
             candidate = self._search(g)
             stage = "full_search"
         if candidate is None:
-            # 三路都没找到：清空平滑中心，返回无效结果（不沿用旧框，避免"粘住"）。
+            # 三路都没找到：清空平滑中心与预测历史，返回无效结果（不沿用旧框，避免"粘住"）。
             self._smooth = None
+            self._lost += 1
+            self._prev_quad = None
             self.last = dict(valid=False, stage="no_black_frame", search_count=self._search_count,
                              thresholds=self._threshold_count, proposals=self._proposals,
                              detector_ms=(time.perf_counter() - started) * 1000)
             return self.last
         # ---- 找到：锁定、清进度、算中心 ----
+        # 预测历史只在"连续两帧都成功"时可用：上上帧 = 旧 _track，失锁后清空避免用旧速度外推。
+        self._prev_quad = (self._track["quad"] if (self._track is not None and not self._lost)
+                           else None)
         self._track = candidate
+        self._lost = 0
         self._roi_retry = True
         self._search_jobs.clear()
         w, h = candidate["width_mm"], candidate["height_mm"]

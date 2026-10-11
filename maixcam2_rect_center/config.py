@@ -161,11 +161,15 @@ class Config:
     DARK_THRESHOLDS = (25, 40, 55, 70, 85, 100, 120, 145)
     # 稳态只采样四边窄带；失锁时缩小图搜索，每档验证成功就立即停止。
     SEARCH_WIDTH = 320
-    # 搜索策略：**单帧穷尽** —— 一帧内按序试完全部阈值（末尾 Canny 兜底）直到找到；
-    # SEARCH_BUDGET_MS 是软预算，只在单帧扫超时时才把剩余进度留给下一帧（跨帧续扫，防极慢板卡死单帧）。
+    # 搜索策略：**单帧穷尽** —— 一帧内按序试完全部阈值（末尾 Canny 兜底）直到找到。
     # ⚠ 历史：v0.4.3 曾改成"每帧只轮换 1 个阈值、只验 1 个候选"，实测丢锁后要 11+ 帧才重捕获
     #   （大角度/移动场景肉眼即"丢框"）；v0.5.1 改回单帧穷尽。
-    SEARCH_BUDGET_MS = 25.0
+    # SEARCH_SPLIT_FRAMES=False（默认）⇒ 单帧内一定把搜索跑完，重捕获恒为 1 帧（与旧路径一致）。
+    #   板端搜索远慢于 PC，跨帧拆分会让"重捕获"变成十几帧，故默认**不拆**。
+    # SEARCH_SPLIT_FRAMES=True ⇒ 按 SEARCH_BUDGET_MS 软预算跨帧续扫，只在极端慢板卡、
+    #   宁可单帧轻一点也不在乎多花几帧时才开。
+    SEARCH_SPLIT_FRAMES = False
+    SEARCH_BUDGET_MS = 25.0      # 仅在 SEARCH_SPLIT_FRAMES=True 时生效的软预算
     SEARCH_MAX_PROPOSALS = 128   # 单帧验证候选数硬上限（安全阀，正常场景远用不到）
     SEARCH_GEOMETRY_STEPS = 8
     MAX_CONTOURS = 128
@@ -182,6 +186,12 @@ class Config:
     EDGE_SAMPLES = 24
     REFINE_RADIUS = 6
     TRACK_RADIUS = 12
+    # 运动预测（治"速度快捕获不到"）：窄带精修的搜索半径 TRACK_RADIUS 保持小值（定位精度高），
+    # 靠"外推本帧位置"来跟上快速移动：用上两帧四角的**逐角位移**（含平移/缩放/旋转）预测本帧
+    # 四角，再在预测位置附近做窄带精修；预测失准时自动回落到上一帧位置。
+    # PREDICT_MAX_PX 是单帧预测位移上限，防噪点把预测甩飞（板端帧率低、目标位移可能很大时才需调大）。
+    ENABLE_MOTION_PREDICT = True
+    PREDICT_MAX_PX = 60.0
     ROI_PADDING = 0.20
     MIN_EDGE_COVERAGE = 0.55
     MAX_DARK_BRIGHT_RATIO = 0.72
