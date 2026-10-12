@@ -67,19 +67,24 @@ def test_stale_and_single_control_update():
         def stop(self, **kwargs): self.stops += 1
     link = Link()
     cfg = type("Cfg", (Config,), dict(RESULT_MAX_AGE_S=.2))
-    control = _VisionControl(cfg, link, GimbalAim(cfg), None, None)
+    current = [1000.0]
+    clock = types.SimpleNamespace(perf_counter=lambda: current[0])
+    control = _VisionControl(cfg, link, GimbalAim(cfg), None, None, clock=clock)
     valid = {"valid": True, "u": 320, "v": 240, "raw_u": 320, "raw_v": 240,
              "stage": "track", "search_count": 0}
     with patch.object(control.detector, "process", return_value=valid):
-        snap = control.process(np.zeros((480, 640), np.uint8), time.perf_counter())
+        snap = control.process(np.zeros((480, 640), np.uint8), current[0])
     assert link.moves
     count = len(link.moves)
     for _ in range(20): control.idle()
     assert len(link.moves) == count, "idle 不得重复发送旧测量"
     with patch.object(control.detector, "process", return_value=dict(valid)):
-        snap = control.process(np.zeros((480, 640), np.uint8), time.perf_counter() - 1)
+        snap = control.process(np.zeros((480, 640), np.uint8), current[0] - 1)
+    assert len(link.moves) == count and link.stops == 0, "倒序图像不得打断仍有效的新测量"
+    current[0] += .3
+    for _ in range(20): control.idle()
     assert len(link.moves) == count and link.stops == 1
-    result, _, age = _display_result(snap, time.perf_counter(), .2)
+    result, _, age = _display_result(snap, current[0], .2)
     assert not result["valid"] and result["stage"] == "stale" and age >= 1
 
 
@@ -308,21 +313,16 @@ def test_slow_show_does_not_block_main_loop():
 
 
 def test_maixvision_stream_policy():
-    """MaixVision 图传策略：默认必须把 MAIXVISION 置 0（从源头不建图传、拆掉 500ms 忙等）。
-
-    契约与 MaixCDK 对齐：maixvision_mode() 只在 MAIXVISION=="1" 时为真；图传通道在建 Display
-    时按它创建。故这里锁死三种情形：默认置 0、显式关闭策略则保持 1、非 MaixVision 模式不动。
-    """
+    """默认保留图传会话；明确选择本地模式才关闭，Preview 单独隔离本地显示。"""
     old = os.environ.get("MAIXVISION")
     try:
         os.environ["MAIXVISION"] = "1"
-        assert _apply_maixvision_stream_policy(Config) is True       # 默认 DISABLE_MAIXVISION_STREAM=True
-        assert os.environ.get("MAIXVISION") == "0", "默认策略必须掐断图传"
+        assert _apply_maixvision_stream_policy(Config) is False
+        assert os.environ.get("MAIXVISION") == "1", "默认策略保留图传会话"
 
-        os.environ["MAIXVISION"] = "1"
-        keep = type("Cfg", (Config,), dict(DISABLE_MAIXVISION_STREAM=False))
-        assert _apply_maixvision_stream_policy(keep) is False        # 显式保留图传
-        assert os.environ.get("MAIXVISION") == "1", "关闭策略时不得改动环境变量"
+        local = type("Cfg", (Config,), dict(DISABLE_MAIXVISION_STREAM=True))
+        assert _apply_maixvision_stream_policy(local) is True
+        assert os.environ.get("MAIXVISION") == "0", "显式本地模式应关闭图传"
 
         os.environ.pop("MAIXVISION", None)
         assert _apply_maixvision_stream_policy(Config) is False      # 非 MaixVision 模式：无副作用

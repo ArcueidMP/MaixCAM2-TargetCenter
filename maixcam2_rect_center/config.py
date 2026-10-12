@@ -20,18 +20,25 @@ class Config:
     SHOW_WIDTH = 0
     SHOW_FPS = 30
     SHOW_JPEG_QUALITY = 70   # 只影响 MaixVision JPEG 图传，检测始终用原始灰度图。
-    # ★ MaixVision 图传总开关（决定"能跑满全帧"还是"被 500ms 忙等拖垮"）。
+    # ★ MaixVision 图传总开关。
     #   背景：MaixCDK 的 maixvision_mode() 只看**环境变量 MAIXVISION 是否为 "1"**；
     #   display.Display() 构造时据此创建图传通道 img_trans，而 show() 的第一步就是
     #   img_trans->send_image()。若处于 MaixVision 模式但画面预览**没真正连上**，
     #   该函数会 `while(!init){ if(ticks-t>500) return; }` **忙等 500ms 并空转 CPU**
     #   （源码 components/vision/src/maix_image_trans.cpp）——以 ~2 次/秒计 ≈ 烧掉近一个核，
     #   相机 read / 识别 / 闭环随之塌方（板端实测 show≈505ms、read≈107ms、detect_fps=0）。
-    #   True（默认）：main() 在建 Display **之前**把 MAIXVISION 置 "0" ⇒ 不建图传 ⇒ show() 只
-    #     画本地屏（官方 1~5ms）⇒ 全帧。代价：MaixVision 的"画面预览"面板收不到图（终端日志照常）。
-    #   False：保留图传。想用 MaixVision 看画面、且能保证预览真连上（连上后是异步入队，不忙等）时再设。
-    #   注：从设备本地启动应用时本来就没有图传，此开关无副作用。
-    DISABLE_MAIXVISION_STREAM = True
+    #   v0.6.0 默认 False：保留原 MAIXVISION 会话；Preview 只在打开本地 Display 时临时
+    #   置 0，避免创建原生 img_trans，之后立即还原。图传改由独立进程编码/连接本机桥，
+    #   因此未连预览不会让原生 send_image() 的忙等占住 Python GIL。
+    #   True = 显式仅用本地屏，关闭图传。设备本地启动且无 MAIXVISION 会话时不启动图传进程。
+    DISABLE_MAIXVISION_STREAM = False
+    # MaixVision 仍使用原会话/本机桥接服务；编码和网络由独立进程承担。
+    SHOW_STREAM_HOST = "127.0.0.1"
+    SHOW_STREAM_PORT = 7899
+    SHOW_STREAM_WIDTH = 480
+    SHOW_STREAM_SLOW_MS = 300.0
+    SHOW_STREAM_RETRY_S = 2.0
+    SHOW_STREAM_RETRY_MAX_S = 15.0
     VISION_ASYNC = True
     # ★ 显示线程化：True = 绘制完成后把画布交给**独立显示线程**去 show()，主循环**永不等待 show**。
     #   屏幕驱动或 MaixVision 图传慢时，只表现为"预览掉帧"（丢帧而非排队），
@@ -43,6 +50,7 @@ class Config:
     # ---- 屏幕交互：把「上电自检」做成屏幕上的可点击按钮（不再上电自动跑）----
     # True=在显示画布右上角画 SELF-TEST 按钮，点一下才触发自检；无显示/无触摸屏时自动禁用。
     ENABLE_TOUCH_BUTTON = True
+    ENABLE_SEARCH_BUTTON = True
     OPENCV_THREADS = 1
     LOG_INTERVAL = 2.0
     # ---- 双 ZDT 云台链路 -------------------------------------------------
@@ -143,6 +151,46 @@ class Config:
     SCAN_LIMIT_PULSES = 400
     SCAN_RPM = 60
     SCAN_STEP_INTERVAL_S = 0.15
+
+    # 手动 SEARCH：相对点击时的姿态，两轴各覆盖 ±45°。脉冲/度未知则只提示待标定。
+    SEARCH_YAW_DEG = 45.0
+    SEARCH_PITCH_DEG = 45.0
+    SEARCH_RPM = 60
+    SEARCH_ACC = 60
+    SEARCH_SETTLE_S = 0.10
+    SEARCH_TIMEOUT_S = 60.0
+
+    # 内置 IMU 在摄像头/云台上；相机姿态已包含电机运动，不再减去请求的步数。
+    # 需先标定安装轴和陀螺仪偏置，再启用；仅陀螺仪提供相对朝向，不是绝对航向。
+    ENABLE_IMU_FEEDFORWARD = False
+    IMU_SENSOR_MOUNT = "camera"
+    IMU_YAW_AXIS = (0.0, 0.0, 1.0)
+    IMU_PITCH_AXIS = (0.0, -1.0, 0.0)
+    IMU_AXES_CALIBRATED = False
+    IMU_BIAS_DPS = None
+    IMU_CALIBRATE_ON_START = False
+    IMU_BIAS_CALIBRATE_S = 1.0
+    IMU_BIAS_MAX_STD_DPS = 0.25
+    IMU_BIAS_MAX_DPS = 2.0
+    IMU_POLL_HZ = 200.0
+    IMU_MAX_AGE_S = 0.10
+    IMU_READ_MAX_S = 0.10
+    IMU_MAX_PITCH_DEG = 80.0
+    IMU_MAX_GAP_S = 0.20
+    IMU_MAX_RATE_DPS = 450.0
+    IMU_REFERENCE_MAX_AGE_S = 0.03
+    IMU_HISTORY_S = 1.0
+    IMU_HISTORY_MAX_SAMPLES = 256
+    IMU_MAX_PREDICT_S = 0.05
+    IMU_LEAD_S = 0.03
+    IMU_VISUAL_GAP_S = 0.05
+    IMU_HOLD_MAX_S = 4.0
+    IMU_MAX_CORRECTION_DEG = 100.0
+    # 图像暂时丢失时的姿态补偿按已标定角度限幅，避免沿用视觉微调的 80 脉冲上限。
+    IMU_MAX_STEP_DEG = 30.0
+    IMU_GAIN = 0.75
+    IMU_RPM = 180
+    IMU_ACC = 80
 
     # ---- 开环标定（一次性；标完把 CALIBRATE_AXIS 置回 ""）----------------
     # "yaw"/"pitch"：开机只做该轴开环标定，实测并打印 PULSE_PER_PX/DIR_SIGN/交叉项/回差。

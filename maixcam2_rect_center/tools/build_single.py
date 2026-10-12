@@ -56,14 +56,18 @@ MODULES = (
     ("vision.camera_source", "vision/camera_source.py"),
     ("vision.vision_worker", "vision/vision_worker.py"),
     ("vision.telemetry", "vision/telemetry.py"),
+    ("vision.maixvision_stream", "vision/maixvision_stream.py"),
     ("vision.preview", "vision/preview.py"),
     ("vision.rectangle_center", "vision/rectangle_center.py"),
     ("vision.laser_spot", "vision/laser_spot.py"),
-    ("vision.gimbal_self_test", "vision/gimbal_self_test.py"),
     ("vision.stepper_link", "vision/stepper_link.py"),
+    ("vision.gimbal_self_test", "vision/gimbal_self_test.py"),
     ("vision.gimbal_aim", "vision/gimbal_aim.py"),  # 依赖 stepper_link 的运动时长估算
+    ("vision.gimbal_search", "vision/gimbal_search.py"),
+    ("vision.imu_heading", "vision/imu_heading.py"),
     ("vision.aim_control", "vision/aim_control.py"),
     ("vision.gimbal_calibrate", "vision/gimbal_calibrate.py"),
+    ("vision.app_runtime", "vision/app_runtime.py"),
     ("target_api", "target_api.py"),
 )
 MAIN_REL = "main.py"
@@ -101,9 +105,8 @@ def as_raw_literal(text, rel):
         if q in text:
             continue
         return "r%s\n%s%s" % (q, text, q)
-    raise SystemExit(
-        "[build] %s 里同时出现了两种三引号，无法安全嵌入，请改用文件分发方式。" % rel
-    )
+    # 子进程入口可能合法地同时使用两种三引号；repr 仍能无损保存全部转义。
+    return repr(text)
 
 
 def build():

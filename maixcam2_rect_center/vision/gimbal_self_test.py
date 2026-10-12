@@ -5,6 +5,7 @@
       所以可由屏幕按钮直接触发；顺序与角度模式一致（yaw 左→右、pitch 上→下，各回到起点）。
     · ==0 = 按 `SELF_TEST_*_DEG × *_PULSES_PER_DEG` 换算角度；未标定（两者均 0）则跳过。
 """
+from .stepper_link import estimate_move_seconds
 
 
 class GimbalSelfTest:
@@ -90,14 +91,14 @@ class GimbalSelfTest:
             self.link.stop(axis)
             return self.state
         rpm = int(getattr(self.cfg, "SELF_TEST_RPM", 900))
-        if not self.link.move(axis, ccw, pulses, rpm,
-                              int(getattr(self.cfg, "ACC_DEFAULT", 0))):
+        acceleration = int(getattr(self.cfg, "ACC_DEFAULT", 0))
+        if not self.link.move(axis, ccw, pulses, rpm, acceleration):
             self.state, self.reason = "FAULT", "uart_write_failed"
             self.link.stop(axis)
             print("[self-test] fault: %s command failed" % axis)
             return self.state
         pulses_per_rev = float(getattr(self.cfg, "MOTOR_PULSES_PER_REV", 3200))
-        move_s = pulses / max(1.0, pulses_per_rev * max(1, rpm) / 60.0)
+        move_s = estimate_move_seconds(pulses, rpm, acceleration, pulses_per_rev)
         settle_s = float(getattr(self.cfg, "SELF_TEST_SETTLE_S", 0.35))
         self.deadline = now + move_s + settle_s
         self.index += 1

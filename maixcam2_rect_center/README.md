@@ -1,11 +1,75 @@
 # MaixCAM2 黑框中心：四边精修、快速跟踪与双轴云台瞄准
 
-构建号 `2026-10-12-smooth-tracking-v0.5.3`，应用版本 `0.5.3`。在 MaixVision 中打开本文件夹，选择“运行项目”。
-必须一起下发应用包内的 **18 个文件**（`app.yaml` / `main.py` / `config.py` / `target_api.py` /
-`assets/icon.png` / `vision/` 下 13 个 `.py`），不能只运行当前 `main.py`。
+构建号 `2026-10-12-search-imu-stream-v0.6.0`，应用版本 `0.6.0`。在 MaixVision 中打开本文件夹，选择“运行项目”。
+必须一起下发应用包内的 **22 个文件**（`app.yaml` / `main.py` / `config.py` / `target_api.py` /
+`assets/icon.png` / `vision/` 下 17 个 `.py`），不能只运行当前 `main.py`。
 
 > 只想临时试参数时，也可以先 `python tools/build_single.py` 生成 `dist/main_single.py`，
 > 再用「运行当前文件」—— 那是自包含的单文件版，语义与分模块完全一致。改了源码记得重新生成。
+
+## 2026-10-12（v0.6.0）：应用 API、MaixVision 图传、双轴搜索与 IMU 补偿
+
+在 v0.5.3 视觉与平滑追踪基础上完成需求文档后四项。当前尚未实机标定：`YAW/PITCH_PULSES_PER_DEG=0`、`GIMBAL_GEAR_RATIO=0`、`IMU_AXES_CALIBRATED=False`、`ENABLE_IMU_FEEDFORWARD=False` 保留。SEARCH 按钮可用，但未知角度比例时只报告 `UNCALIBRATED`，不发搜索动作。启用步骤见 [硬件标定与上板检查](硬件标定与上板检查.md)。
+
+### 应用与复用接口
+
+`main()` 只调用 `TrackingApplication.run()`；相机、触摸、显示和退出释放集中在 `vision/app_runtime.py`。识别线程独占云台 UART，按钮仅提交请求；相机暂时无帧也会处理触摸、ACK、搜索与失锁。退出先停止控制线程，再释放 UART/IMU；旧工作线程仍占有硬件时拒绝再次运行。
+
+`target_api` 导出 `TrackingApplication`、`SearchSweep`、`HeadingFeedforward`，原有 `detect_black_frame`、`CenterTracker`、`AimLoop` 保留。`AimLoop` 与应用共用 `VisionControl`，不重复实现追踪、搜索或故障调度：
+
+```python
+from config import Config
+from target_api import AimLoop
+
+loop = AimLoop(Config, enable_motors=True)  # 上板执行；会打开配置中的云台 UART
+try:
+    loop.request_search()                  # 下次 step/idle 启动；再次请求可取消
+    # 外部相机循环内：loop.step(frame, now=captured_at)
+    # 无新画面时：loop.idle()
+    print(loop.imu_status())
+finally:
+    loop.close()
+```
+
+`now` 使用同一单调时钟的采图时刻，`idle()` 应持续调用。`calibrate_imu_bias()` 只提交请求，其完成状态从 `imu_status()` 读取；标定期间底盘和云台必须静止，控制器阻断其它运动。
+
+### MaixVision 图传
+
+默认 `DISABLE_MAIXVISION_STREAM=False`，保留启动时的 `MAIXVISION` 会话。只在本地 `Display` 打开/重开期间临时关闭原生图传，再恢复环境；本地显示不调用原生 `send_image()`，避免其断连时约 500ms 的等待占住 Python GIL。
+
+`vision/maixvision_stream.py` 在独立进程中连接设备已有的 **127.0.0.1:7899 WebSocket 桥**，按协议 0 完成 `CONN(code)`、ACK、格式、质量和图片帧传输。主进程只交付一帧最新画布，编码、连接和重试不会积压识别帧；未启用 MaixVision 会话时不启动图传进程，显式设 True 仍只显示本地屏。
+
+协议与原生等待行为核对自 [MaixCDK `30f4b8b`](https://github.com/sipeed/MaixCDK/blob/30f4b8b7e3f66ded9cfa64fb081b46e30bc27248/components/vision/src/maix_image_trans.cpp)，IMU/绑定接口核对自 [MaixPy `a36c0f0`](https://github.com/sipeed/MaixPy/tree/a36c0f0)。PC 测试使用真实子进程和本机 WebSocket 服务验证握手、帧内容、断连恢复、拥塞及有界主进程开销；仍需在实际固件与 MaixVision 客户端确认桥服务兼容和图像显示。
+
+### 搜索与追踪交接
+
+`SEARCH` 位于 `SELF-TEST` 下方；点击启动、再次点击取消。已标定时，相对点击时的姿态依次走 yaw `+45→−45→0°`、pitch `+45→−45→0°`，两轴各覆盖 ±45°，不执行二维栅格扫描。角度可用 `SEARCH_YAW_DEG/SEARCH_PITCH_DEG` 缩小。
+
+搜索遇到新的有效黑框立即停机，等待停机后的新采图才进入平滑追踪。取消和命中不强制回中；正常扫完返回开始姿态。保持/预测结果不能冒充命中，自检、开环标定、偏置标定与搜索不会并行发电机动作。写入或停止失败进入持久 FAULT；重新收到 ACK 不会自动清除此故障。自检也按完整加减速时长等待，避免反向命令重叠。
+
+### IMU 相对朝向补偿
+
+官方 `maix.ext_dev.imu.IMU('default', ...)` 由独立线程读取，使用三轴陀螺仪、实测安装轴和零偏积分相对姿态。新视觉观测按采图时间在 IMU 历史中锁定参考；图像暂时丢失时，`VisionControl` 从相对姿态误差发补偿动作，最长保留参考 4 秒。过期、异常速率、采样间断、轴未标定或偏置标定中均不输出前馈；失去 IMU 反馈会停止正在进行的 IMU 动作。视觉结果依然保留真实 `valid=False`，不会把惯性估计画成检测黑框。
+
+相机上的 IMU 已测到车体与云台实际运动，**不能再减去指令步数**。安装在底盘的传感器需要额外提供实际云台角度，本应用没有该反馈时会拒绝前馈。陀螺仪积分不是绝对航向：需从标定的水平初始姿态启动，靠新视觉参考限制漂移，不保证长期无漂移或大俯仰姿态下的航向可靠性。
+
+IMU 动作单独按实测脉冲/度限幅，默认最大 30°、增益 0.75、180RPM、加减速档 80；视觉仍使用 80 脉冲上限。24 个 ±90° 有限动作模型覆盖 10/35/100 脉冲/度、20/30/50Hz 调度及 0/30/60ms 延迟，全部在 **3.30s 内恢复 ±30° 可检测视野**，无指令重叠；100 脉冲/度的视觉精调最迟 **14.74s** 进入 2px 死区。模型使用实际部分电机运动和连续加减速，但假设视野内能产生有效视觉观测；它不验证真实识别率、机械回差或实车 4 秒性能。
+
+### 验证与交付
+
+原有 v0.5.3 回归继续执行，另加：
+
+```bash
+python -B tools/test_gimbal_search.py
+python -B tools/test_imu_heading.py
+python -B tools/test_imu_turn_tracking.py
+python -B tools/test_preview_stream.py
+python -B tools/test_app_runtime.py
+python -B tools/test_extension_control.py
+python -B tools/test_extension_review.py
+```
+
+应用包 22 文件，单文件 19 个源文件。单文件依赖顺序包含 `stepper_link→gimbal_self_test/gimbal_aim`、`maixvision_stream→preview`、`gimbal_search/imu_heading→aim_control→app_runtime→target_api`。板端必须核对构建号、标定和实测帧率；PC 通过不代表实机已达 30fps。
 
 ## 2026-10-12（v0.5.3）：按采图时间追踪与平滑云台闭环
 

@@ -10,20 +10,24 @@ main_single.py · 25E 靶心识别（轨道 B）—— 单文件自包含版
 用途：在 MaixVision 里点「运行当前文件」即可运行（不必用「运行项目」）。
       行为与模块化工程完全一致，输出也就完全一致。
 
-生成时间：2026-10-12 12:48:50
-    config.py                    sha1=bb6d6df4adb8
-    main.py                      sha1=c5f851d984cf
-    target_api.py                sha1=2b0f5ff22793
-    vision/aim_control.py        sha1=d5065edcc2d3
+生成时间：2026-10-12 13:48:43
+    config.py                    sha1=14d6bc05b53e
+    main.py                      sha1=0ba5e5e1d069
+    target_api.py                sha1=46285b4d3f2a
+    vision/aim_control.py        sha1=7a3d574688cd
+    vision/app_runtime.py        sha1=9633b0cbfc29
     vision/camera_source.py      sha1=b398fedefe6e
-    vision/gimbal_aim.py         sha1=14c31331a61f
+    vision/gimbal_aim.py         sha1=bedb9d9175cc
     vision/gimbal_calibrate.py   sha1=9c4bb08a1b99
-    vision/gimbal_self_test.py   sha1=17b72e0935bb
+    vision/gimbal_search.py      sha1=56dcceb2e0a7
+    vision/gimbal_self_test.py   sha1=6044e6cd6806
+    vision/imu_heading.py        sha1=0823f6d211bd
     vision/laser_spot.py         sha1=c131498c5ff9
-    vision/preview.py            sha1=f266a0727870
+    vision/maixvision_stream.py  sha1=d29c3a3d6482
+    vision/preview.py            sha1=3e831325ad9a
     vision/rate_meter.py         sha1=6f2a054c97a0
     vision/rectangle_center.py   sha1=b824d8551364
-    vision/stepper_link.py       sha1=99aa76fd0696
+    vision/stepper_link.py       sha1=7567719e71f6
     vision/telemetry.py          sha1=853ebdd16df1
     vision/vision_worker.py      sha1=79e9784fa9f1
 """
@@ -31,7 +35,7 @@ main_single.py · 25E 靶心识别（轨道 B）—— 单文件自包含版
 import sys as _sys
 import types as _types
 
-_SRC_SHA1 = {'config.py': 'bb6d6df4adb8d6db8336a86cbb0e9a20215893f6', 'vision/rate_meter.py': '6f2a054c97a00470409a59de9dea42b0bff9c6ba', 'vision/camera_source.py': 'b398fedefe6eaf931d372abe00ba267f7d9697b5', 'vision/vision_worker.py': '79e9784fa9f1ab052404abbc3ec86b72312faf7d', 'vision/telemetry.py': '853ebdd16df1620eb09694d13b139a7b74d7e9f4', 'vision/preview.py': 'f266a0727870865fe66f719b93dd270e33dae3cd', 'vision/rectangle_center.py': 'b824d855136461e6f1b59ee8640e080d94da2143', 'vision/laser_spot.py': 'c131498c5ff980e594b1c8d5d2feda6195caee23', 'vision/gimbal_self_test.py': '17b72e0935bbb7786f7c936d17b55c291795990b', 'vision/stepper_link.py': '99aa76fd0696df6c24e4d1c09d75ed1a6db3355a', 'vision/gimbal_aim.py': '14c31331a61f23cec8a3ff13398129df84b70d94', 'vision/aim_control.py': 'd5065edcc2d385049082424d3c8e43fe047b187f', 'vision/gimbal_calibrate.py': '9c4bb08a1b99d6feaef77bc8cf3fc56655e87676', 'target_api.py': '2b0f5ff22793c82ce5d3d7ad044e82e1ad456782', 'main.py': 'c5f851d984cfe9b6bafaf5a085460685211bc07f'}
+_SRC_SHA1 = {'config.py': '14d6bc05b53e3f7d227e80e9a5208013fedfddbb', 'vision/rate_meter.py': '6f2a054c97a00470409a59de9dea42b0bff9c6ba', 'vision/camera_source.py': 'b398fedefe6eaf931d372abe00ba267f7d9697b5', 'vision/vision_worker.py': '79e9784fa9f1ab052404abbc3ec86b72312faf7d', 'vision/telemetry.py': '853ebdd16df1620eb09694d13b139a7b74d7e9f4', 'vision/maixvision_stream.py': 'd29c3a3d6482fe8296b85502d7354a71ca3877d8', 'vision/preview.py': '3e831325ad9aa78de07cf56f15a980975e32376a', 'vision/rectangle_center.py': 'b824d855136461e6f1b59ee8640e080d94da2143', 'vision/laser_spot.py': 'c131498c5ff980e594b1c8d5d2feda6195caee23', 'vision/stepper_link.py': '7567719e71f6b5a2b3b850c07180fe9b37d791fe', 'vision/gimbal_self_test.py': '6044e6cd6806a610b65175c14792b6cade202e2a', 'vision/gimbal_aim.py': 'bedb9d9175cc9867d410f475d6eca2a4d3fbeee6', 'vision/gimbal_search.py': '56dcceb2e0a779c59039e04582fb7d1b47329323', 'vision/imu_heading.py': '0823f6d211bdc60a6adc36d2f7aeed874d329a6a', 'vision/aim_control.py': '7a3d574688cd5a0754822676b72182b9ce7d145f', 'vision/gimbal_calibrate.py': '9c4bb08a1b99d6feaef77bc8cf3fc56655e87676', 'vision/app_runtime.py': '9633b0cbfc29d1f4e8089b14fd7ea818442b0650', 'target_api.py': '46285b4d3f2a31f9cdbfbc75cdf7edd1182333b0', 'main.py': '0ba5e5e1d069ff112c09d4681e88b82bcfaa5bd0'}
 
 # --------------------------------------------------------------------------
 # ① 各模块源码原样嵌入，运行时装进 sys.modules（保持原 import 语义）
@@ -62,18 +66,25 @@ class Config:
     SHOW_WIDTH = 0
     SHOW_FPS = 30
     SHOW_JPEG_QUALITY = 70   # 只影响 MaixVision JPEG 图传，检测始终用原始灰度图。
-    # ★ MaixVision 图传总开关（决定"能跑满全帧"还是"被 500ms 忙等拖垮"）。
+    # ★ MaixVision 图传总开关。
     #   背景：MaixCDK 的 maixvision_mode() 只看**环境变量 MAIXVISION 是否为 "1"**；
     #   display.Display() 构造时据此创建图传通道 img_trans，而 show() 的第一步就是
     #   img_trans->send_image()。若处于 MaixVision 模式但画面预览**没真正连上**，
     #   该函数会 `while(!init){ if(ticks-t>500) return; }` **忙等 500ms 并空转 CPU**
     #   （源码 components/vision/src/maix_image_trans.cpp）——以 ~2 次/秒计 ≈ 烧掉近一个核，
     #   相机 read / 识别 / 闭环随之塌方（板端实测 show≈505ms、read≈107ms、detect_fps=0）。
-    #   True（默认）：main() 在建 Display **之前**把 MAIXVISION 置 "0" ⇒ 不建图传 ⇒ show() 只
-    #     画本地屏（官方 1~5ms）⇒ 全帧。代价：MaixVision 的"画面预览"面板收不到图（终端日志照常）。
-    #   False：保留图传。想用 MaixVision 看画面、且能保证预览真连上（连上后是异步入队，不忙等）时再设。
-    #   注：从设备本地启动应用时本来就没有图传，此开关无副作用。
-    DISABLE_MAIXVISION_STREAM = True
+    #   v0.6.0 默认 False：保留原 MAIXVISION 会话；Preview 只在打开本地 Display 时临时
+    #   置 0，避免创建原生 img_trans，之后立即还原。图传改由独立进程编码/连接本机桥，
+    #   因此未连预览不会让原生 send_image() 的忙等占住 Python GIL。
+    #   True = 显式仅用本地屏，关闭图传。设备本地启动且无 MAIXVISION 会话时不启动图传进程。
+    DISABLE_MAIXVISION_STREAM = False
+    # MaixVision 仍使用原会话/本机桥接服务；编码和网络由独立进程承担。
+    SHOW_STREAM_HOST = "127.0.0.1"
+    SHOW_STREAM_PORT = 7899
+    SHOW_STREAM_WIDTH = 480
+    SHOW_STREAM_SLOW_MS = 300.0
+    SHOW_STREAM_RETRY_S = 2.0
+    SHOW_STREAM_RETRY_MAX_S = 15.0
     VISION_ASYNC = True
     # ★ 显示线程化：True = 绘制完成后把画布交给**独立显示线程**去 show()，主循环**永不等待 show**。
     #   屏幕驱动或 MaixVision 图传慢时，只表现为"预览掉帧"（丢帧而非排队），
@@ -85,6 +96,7 @@ class Config:
     # ---- 屏幕交互：把「上电自检」做成屏幕上的可点击按钮（不再上电自动跑）----
     # True=在显示画布右上角画 SELF-TEST 按钮，点一下才触发自检；无显示/无触摸屏时自动禁用。
     ENABLE_TOUCH_BUTTON = True
+    ENABLE_SEARCH_BUTTON = True
     OPENCV_THREADS = 1
     LOG_INTERVAL = 2.0
     # ---- 双 ZDT 云台链路 -------------------------------------------------
@@ -185,6 +197,46 @@ class Config:
     SCAN_LIMIT_PULSES = 400
     SCAN_RPM = 60
     SCAN_STEP_INTERVAL_S = 0.15
+
+    # 手动 SEARCH：相对点击时的姿态，两轴各覆盖 ±45°。脉冲/度未知则只提示待标定。
+    SEARCH_YAW_DEG = 45.0
+    SEARCH_PITCH_DEG = 45.0
+    SEARCH_RPM = 60
+    SEARCH_ACC = 60
+    SEARCH_SETTLE_S = 0.10
+    SEARCH_TIMEOUT_S = 60.0
+
+    # 内置 IMU 在摄像头/云台上；相机姿态已包含电机运动，不再减去请求的步数。
+    # 需先标定安装轴和陀螺仪偏置，再启用；仅陀螺仪提供相对朝向，不是绝对航向。
+    ENABLE_IMU_FEEDFORWARD = False
+    IMU_SENSOR_MOUNT = "camera"
+    IMU_YAW_AXIS = (0.0, 0.0, 1.0)
+    IMU_PITCH_AXIS = (0.0, -1.0, 0.0)
+    IMU_AXES_CALIBRATED = False
+    IMU_BIAS_DPS = None
+    IMU_CALIBRATE_ON_START = False
+    IMU_BIAS_CALIBRATE_S = 1.0
+    IMU_BIAS_MAX_STD_DPS = 0.25
+    IMU_BIAS_MAX_DPS = 2.0
+    IMU_POLL_HZ = 200.0
+    IMU_MAX_AGE_S = 0.10
+    IMU_READ_MAX_S = 0.10
+    IMU_MAX_PITCH_DEG = 80.0
+    IMU_MAX_GAP_S = 0.20
+    IMU_MAX_RATE_DPS = 450.0
+    IMU_REFERENCE_MAX_AGE_S = 0.03
+    IMU_HISTORY_S = 1.0
+    IMU_HISTORY_MAX_SAMPLES = 256
+    IMU_MAX_PREDICT_S = 0.05
+    IMU_LEAD_S = 0.03
+    IMU_VISUAL_GAP_S = 0.05
+    IMU_HOLD_MAX_S = 4.0
+    IMU_MAX_CORRECTION_DEG = 100.0
+    # 图像暂时丢失时的姿态补偿按已标定角度限幅，避免沿用视觉微调的 80 脉冲上限。
+    IMU_MAX_STEP_DEG = 30.0
+    IMU_GAIN = 0.75
+    IMU_RPM = 180
+    IMU_ACC = 80
 
     # ---- 开环标定（一次性；标完把 CALIBRATE_AXIS 置回 ""）----------------
     # "yaw"/"pitch"：开机只做该轴开环标定，实测并打印 PULSE_PER_PX/DIR_SIGN/交叉项/回差。
@@ -529,6 +581,9 @@ def format_slow_loop(loop_avg):
             "若 show 也恒定 ~505ms 则是图传忙等抢 CPU" % loop_avg)
 '''
 
+# ===== vision.maixvision_stream  (vision/maixvision_stream.py) =====
+_MOD_SRC['vision.maixvision_stream'] = '"""MaixVision protocol-0 sender, isolated from camera/display/UART and their GIL.\n\nProtocol reference: Sipeed/MaixCDK 30f4b8b7, vision/src/maix_image_trans.cpp.\nThe board already runs the WebSocket bridge on localhost:7899; we are its CLIENT.\nOnly one bounded raw frame lives in an mmap. The producer takes a nonblocking\nfile lock and drops a frame if busy. JPEG, WebSocket and reconnect run in a fresh\nPython process which never imports maix (that import opens a default UART).\nThe source string also works when tools/build_single embeds this module.\n"""\ntry:\n    import fcntl\nexcept ImportError:  # PC/single-file smoke on Windows; stream needs the Linux board.\n    fcntl = None\nimport mmap\nimport os\nimport struct\nimport subprocess\nimport sys\nimport tempfile\nimport time\n\nimport numpy as np\n\n\n_CHILD_SOURCE = r\'\'\'\nimport base64\nimport fcntl\nimport hashlib\nimport mmap\nimport os\nimport select\nimport socket\nimport struct\nimport sys\nimport time\nimport cv2\nimport numpy as np\n\nHEADER = 128\nFRAME = struct.Struct("<QIII")\nSTATUS = struct.Struct("<iddQQ")\nSTATUS_OFFSET = 24\nMAGIC = bytes((0xAC, 0xBE, 0xCB, 0xCA))\nMAX_CONTROL = 65536\n\n\nclass ProtocolError(Exception):\n    pass\n\n\ndef protocol_frame(message, payload=b""):\n    body = bytes((0, message)) + payload\n    frame = MAGIC + struct.pack("<I", len(body) + 1) + body\n    return frame + bytes((sum(frame) & 255,))\n\n\ndef protocol_parse(frame):\n    if (len(frame) < 11 or len(frame) > MAX_CONTROL or frame[:4] != MAGIC\n            or struct.unpack_from("<I", frame, 4)[0] != len(frame) - 8\n            or frame[8] != 0 or sum(frame[:-1]) & 255 != frame[-1]):\n        raise ProtocolError("unsupported/corrupt MaixVision protocol")\n    return frame[9], frame[10:-1]\n\n\nclass WebSocketClient:\n    """Bounded RFC6455 client. No proxy: this is the local board bridge socket."""\n    def __init__(self, host, port, timeout=.5):\n        self.sock = socket.create_connection((host, port), timeout=timeout)\n        self.buffer = bytearray()\n        try:\n            key = base64.b64encode(os.urandom(16)).decode("ascii")\n            request = ("GET / HTTP/1.1\\r\\nHost: %s:%d\\r\\nUpgrade: websocket\\r\\n"\n                       "Connection: Upgrade\\r\\nSec-WebSocket-Key: %s\\r\\n"\n                       "Sec-WebSocket-Version: 13\\r\\n\\r\\n" % (host, port, key))\n            self.sock.sendall(request.encode("ascii"))\n            deadline = time.monotonic() + timeout\n            while b"\\r\\n\\r\\n" not in self.buffer:\n                if len(self.buffer) > 4096 or time.monotonic() > deadline:\n                    raise ProtocolError("WebSocket handshake exceeded bound")\n                chunk = self.sock.recv(4096)\n                if not chunk:\n                    raise ConnectionError("bridge closed during handshake")\n                self.buffer.extend(chunk)\n            raw, remaining = self.buffer.split(b"\\r\\n\\r\\n", 1)\n            if len(raw) > 4096:\n                raise ProtocolError("WebSocket handshake exceeded bound")\n            self.buffer = bytearray(remaining)\n            lines = raw.decode("ascii").split("\\r\\n")\n            headers = {}\n            for line in lines[1:]:\n                name, value = line.split(":", 1)\n                headers[name.lower()] = value.strip()\n            accept = base64.b64encode(hashlib.sha1(\n                (key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode("ascii")).digest()).decode("ascii")\n            if (lines[0].split()[1] != "101"\n                    or headers.get("upgrade", "").lower() != "websocket"\n                    or "upgrade" not in [x.strip() for x in headers.get("connection", "").lower().split(",")]\n                    or headers.get("sec-websocket-accept") != accept\n                    or "sec-websocket-extensions" in headers):\n                raise ProtocolError("invalid WebSocket handshake")\n        except Exception:\n            self.sock.close()\n            raise\n\n    def send(self, payload, opcode=2):\n        # All CLIENT frames must be masked, including ping replies.\n        n = len(payload)\n        if n > 4 * 1024 * 1024 or (opcode >= 8 and n > 125):\n            raise ProtocolError("outbound WebSocket payload exceeded bound")\n        head = bytes((0x80 | opcode, 0x80 | (n if n < 126 else 126 if n < 65536 else 127)))\n        if n >= 126:\n            head += struct.pack("!H" if n < 65536 else "!Q", n)\n        mask = os.urandom(4)\n        data = np.frombuffer(payload, np.uint8).copy()\n        for i in range(4):\n            data[i::4] ^= mask[i]\n        self.sock.sendall(head + mask + data.tobytes())\n\n    def _read(self, n):\n        deadline = time.monotonic() + .5\n        while len(self.buffer) < n:\n            if time.monotonic() > deadline:\n                raise TimeoutError("partial WebSocket frame timed out")\n            chunk = self.sock.recv(min(65536, max(1, n - len(self.buffer))))\n            if not chunk:\n                raise ConnectionError("bridge disconnected")\n            self.buffer.extend(chunk)\n        value = bytes(self.buffer[:n])\n        del self.buffer[:n]\n        return value\n\n    def receive(self):\n        if not self.buffer and not select.select([self.sock], [], [], 0)[0]:\n            return None\n        a, b = self._read(2)\n        if not a & 0x80 or a & 0x70 or b & 0x80:\n            raise ProtocolError("unsupported fragmented/extended/masked server frame")\n        opcode, n = a & 15, b & 127\n        if n in (126, 127):\n            n = struct.unpack("!H" if n == 126 else "!Q", self._read(2 if n == 126 else 8))[0]\n        if n > MAX_CONTROL or (opcode >= 8 and n > 125):\n            raise ProtocolError("bridge control payload exceeded bound")\n        payload = self._read(n)\n        if opcode == 8:\n            raise ConnectionError("bridge closed WebSocket")\n        if opcode == 9:\n            self.send(payload, opcode=10)\n            return None\n        if opcode == 10:\n            return None\n        if opcode != 2:\n            raise ProtocolError("expected binary MaixVision protocol")\n        return payload\n\n    def close(self):\n        self.sock.close()\n\n\ndef _status(mm, fd, state, sent=0, sequence=0, duration=0.0):\n    try:\n        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)\n    except BlockingIOError:\n        return\n    try:\n        STATUS.pack_into(mm, STATUS_OFFSET, state, time.monotonic(), duration, sent, sequence)\n    finally:\n        fcntl.flock(fd, fcntl.LOCK_UN)\n\n\ndef _latest(mm, fd, capacity, previous):\n    try:\n        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)\n    except BlockingIOError:\n        return None\n    try:\n        sequence, width, height, n = FRAME.unpack_from(mm)\n        if not sequence or sequence == previous:\n            return None\n        if (width <= 0 or height <= 0 or n != width * height * 3 or n > capacity):\n            raise ProtocolError("invalid shared frame dimensions")\n        return sequence, np.frombuffer(mm[HEADER:HEADER + n], np.uint8).reshape(height, width, 3)\n    finally:\n        fcntl.flock(fd, fcntl.LOCK_UN)\n\n\ndef _run_sender(fd, capacity, parent, host, port, fps, quality, retry, retry_max):\n    cv2.setNumThreads(1)\n    # flock locks belong to an open file description. pass_fds inherits the\n    # parent\'s description, whose locks would otherwise NOT exclude this child.\n    inherited = fd\n    fd = os.open("/proc/self/fd/%d" % inherited, os.O_RDWR)\n    os.close(inherited)\n    mm = mmap.mmap(fd, HEADER + capacity)\n    client = None\n    sent = previous = 0\n    retry_max = max(retry, retry_max)\n    delay, next_retry, next_image = retry, 0.0, 0.0\n    duration = 0.0\n    state, fmt = 0, 1\n    ready, handshake_deadline = False, 0.0\n    try:\n        while os.getppid() == parent and not mm[124]:\n            now = time.monotonic()\n            if client is None:\n                _status(mm, fd, state, sent, previous, duration)\n                if now < next_retry:\n                    time.sleep(.02)\n                    continue\n                try:\n                    client = WebSocketClient(host, port)\n                    client.send(protocol_frame(1, b"code"))\n                    ready, fmt = False, 1\n                    handshake_deadline = time.monotonic() + 2.0\n                    state = 0\n                except Exception as exc:\n                    client = None\n                    state, next_retry = (3 if isinstance(exc, ProtocolError) else 2), time.monotonic() + delay\n                    delay = min(retry_max, delay * 2)\n                    continue\n            try:\n                # Bounded control work: an abusive peer cannot starve newest images.\n                for _ in range(8):\n                    raw = client.receive()\n                    if raw is None:\n                        break\n                    message, payload = protocol_parse(raw)\n                    if message == 2:\n                        if payload != b"\\x01":\n                            raise ProtocolError("MaixVision rejected sender")\n                        ready, state, delay = True, 1, retry\n                    elif message == 14 and len(payload) == 1:\n                        requested = payload[0]\n                        if requested <= 2:\n                            fmt = requested\n                        client.send(protocol_frame(15, bytes((int(requested <= 2), requested))))\n                        state = 5 if ready and fmt == 0 else 1 if ready else 0\n                    elif message == 21 and len(payload) == 1:\n                        quality = min(100, payload[0])\n                        client.send(protocol_frame(22, bytes((1, quality))))\n                    else:\n                        raise ProtocolError("unsupported MaixVision control message")\n                if not ready and now > handshake_deadline:\n                    raise TimeoutError("MaixVision sender acknowledgment timed out")\n                if ready and fmt and now >= next_image:\n                    frame = _latest(mm, fd, capacity, previous)\n                    if frame is not None:\n                        sequence, array = frame\n                        started = time.monotonic()\n                        extension = ".jpg" if fmt == 1 else ".png"\n                        args = [cv2.IMWRITE_JPEG_QUALITY, quality] if fmt == 1 else [cv2.IMWRITE_PNG_COMPRESSION, 1]\n                        ok, encoded = cv2.imencode(extension, array, args)\n                        if not ok:\n                            raise RuntimeError("preview encoding failed")\n                        client.send(protocol_frame(6, bytes((fmt,)) + encoded.tobytes()))\n                        previous, sent = sequence, sent + 1\n                        next_image = time.monotonic() + 1.0 / max(1.0, fps)\n                        duration = time.monotonic() - started\n                        _status(mm, fd, state, sent, previous, duration)\n                _status(mm, fd, state, sent, previous, duration)\n                time.sleep(.005 if ready else .02)\n            except Exception as exc:\n                state = 3 if isinstance(exc, ProtocolError) else 2\n                client.close()\n                client, ready = None, False\n                next_retry = time.monotonic() + delay\n                delay = min(retry_max, delay * 2)\n                _status(mm, fd, state, sent, previous)\n    finally:\n        if client is not None:\n            client.close()\n        _status(mm, fd, 4, sent, previous)\n        mm.close()\n        os.close(fd)\n\'\'\'\n\n# Executing only defines the protocol helpers. No connection, worker or SDK import.\nexec(_CHILD_SOURCE.replace("import fcntl\\n", ""), globals())\n\n\nclass MaixVisionStream:\n    """One frame slot + one sender process. submit never waits for encoding/network."""\n    STATES = {0: "connecting", 1: "ready", 2: "retrying", 3: "unsupported",\n              4: "closed", 5: "paused"}\n\n    def __init__(self, cfg, width, height):\n        if fcntl is None:\n            raise RuntimeError("MaixVision isolated stream requires the Linux board")\n        self.cfg = cfg\n        self.capacity = max(1, int(width) * int(height) * 3)\n        self.file = tempfile.TemporaryFile(prefix="maixvision-frame-")\n        self.file.truncate(HEADER + self.capacity)\n        self.mm = mmap.mmap(self.file.fileno(), HEADER + self.capacity)\n        self.process = None\n        self.sequence = self.dropped = 0\n        self.closed = False\n        self.failed = False\n        self._last_status = {"state": "connecting", "sent": 0, "sequence": 0,\n                             "duration_ms": 0.0, "heartbeat": 0.0}\n\n    def _start(self):\n        fd = self.file.fileno()\n        args = [fd, self.capacity, os.getpid(), getattr(self.cfg, "SHOW_STREAM_HOST", "127.0.0.1"),\n                int(getattr(self.cfg, "SHOW_STREAM_PORT", 7899)),\n                max(1, int(getattr(self.cfg, "SHOW_FPS", 30))),\n                max(0, min(100, int(getattr(self.cfg, "SHOW_JPEG_QUALITY", 70)))),\n                max(.05, float(getattr(self.cfg, "SHOW_STREAM_RETRY_S", 2.0))),\n                max(.05, float(getattr(self.cfg, "SHOW_STREAM_RETRY_MAX_S", 15.0)))]\n        script = _CHILD_SOURCE + \'\\n_run_sender(int(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3]), sys.argv[4], int(sys.argv[5]), float(sys.argv[6]), int(sys.argv[7]), float(sys.argv[8]), float(sys.argv[9]))\\n\'\n        self.process = subprocess.Popen([sys.executable, "-c", script] + [str(x) for x in args],\n                                        pass_fds=(fd,), stdin=subprocess.DEVNULL,\n                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)\n\n    def submit(self, frame):\n        if self.closed or self.failed:\n            return False\n        array = np.asarray(frame)\n        if (array.dtype != np.uint8 or array.ndim != 3 or array.shape[2] != 3\n                or not array.shape[0] or not array.shape[1]\n                or array.nbytes > self.capacity):\n            self.dropped += 1\n            return False\n        if self.process is None:\n            try:\n                self._start()\n            except Exception as exc:\n                self.failed = True\n                print("[preview] 图传进程不可用，保留本地显示: %s" % exc)\n                return False\n        if self.process.poll() is not None:\n            self.failed = True\n            print("[preview] 图传进程已退出，保留本地显示（请重新启动应用）")\n            return False\n        try:\n            fcntl.flock(self.file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)\n        except BlockingIOError:\n            self.dropped += 1\n            return False\n        try:\n            self.sequence += 1\n            self.mm[HEADER:HEADER + array.nbytes] = array.tobytes()\n            FRAME.pack_into(self.mm, 0, self.sequence, array.shape[1], array.shape[0], array.nbytes)\n        finally:\n            fcntl.flock(self.file.fileno(), fcntl.LOCK_UN)\n        return True\n\n    def status(self):\n        if self.closed:\n            return {"state": "closed", "sent": 0, "dropped": self.dropped}\n        if self.failed:\n            return {"state": "unavailable", "sent": 0, "dropped": self.dropped}\n        try:\n            fcntl.flock(self.file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)\n        except BlockingIOError:\n            return dict(self._last_status, dropped=self.dropped)\n        try:\n            state, heartbeat, duration, sent, sequence = STATUS.unpack_from(self.mm, STATUS_OFFSET)\n            self._last_status = {"state": self.STATES.get(state, "unsupported"), "sent": sent,\n                                 "sequence": sequence, "duration_ms": duration * 1000.0,\n                                 "heartbeat": heartbeat}\n        finally:\n            fcntl.flock(self.file.fileno(), fcntl.LOCK_UN)\n        return dict(self._last_status, dropped=self.dropped)\n\n    def close(self):\n        if self.closed:\n            return\n        self.closed = True\n        self.mm[124] = 1\n        try:\n            if self.process is not None:\n                try:\n                    self.process.wait(timeout=.8)\n                except subprocess.TimeoutExpired:\n                    self.process.kill()\n                    self.process.wait(timeout=.5)\n        finally:\n            self.mm.close()\n            self.file.close()\n'
+
 # ===== vision.preview  (vision/preview.py) =====
 _MOD_SRC['vision.preview'] = r'''
 """显示层：标注画面 →（letterbox）画布 → display.show()，附屏幕可点击按钮（从 main.py 搬迁，v0.4.6）。
@@ -537,7 +592,7 @@ _MOD_SRC['vision.preview'] = r'''
     · Preview      —— 显示线程 + 画布池；主循环 render() 投递即返回，show() 慢也只慢预览。
     · TouchButtons —— 触摸按下沿 → 按钮命中。触摸坐标是屏幕坐标，与画布 1:1。
     · display_result()            —— 把识别线程的最新快照翻译成"这一帧该画什么"（过期降级）。
-    · apply_maixvision_stream_policy() —— 建 Display 前掐断 MaixVision 图传（拆 500ms 忙等）。
+    · apply_maixvision_stream_policy() —— 默认保留 MaixVision 会话；显式本地模式兼容。
 
 ★ clock 注入：构造可传 `clock`（默认标准库 time）。入口 main() 把自身 time 传进来，
   使 tools/test_main_self_test.py 的假时钟可穿透（同步显示路径在模拟时间轴下可复现）。
@@ -569,29 +624,33 @@ def display_result(snapshot, now, max_age):
 
 
 def apply_maixvision_stream_policy(cfg):
-    """按配置决定是否禁用 MaixVision 图传；**必须在创建 display.Display() 之前**调用。
+    """默认保留启动环境；明确选择本地模式才关闭会话（兼容旧入口别名）。
 
-    为什么是环境变量而不是别的：MaixCDK 的 `maixvision_mode()` 只读环境变量 MAIXVISION
-    （== "1" 才算真），而图传通道 `img_trans` 只在 `Display` 构造时按它创建
-    （`maix_display.cpp`：`if(!img_trans && maixvision_mode()) img_trans = new ImageTrans(...)`）。
-    一旦建了 img_trans，`show()` 与 `send_to_maixvision()` 都会走 `ImageTrans::send_image()`
-    —— 在「MaixVision 模式但连接未就绪」时忙等 500ms 空转 CPU（`maix_image_trans.cpp`）。
-    所以想在代码层拆掉它，只有一条路：**在建 Display 之前让 maixvision_mode() 为假**。
-
-    ⚠ 两个易踩点：
-      · 必须早于 `display.Display()`；建好之后再改环境变量无效（img_trans 已存在）。
-      · `send_to_maixvision()` 并不能绕开忙等 —— 它与 show() 共用同一个 send_image()。
-    返回是否实际改动了环境变量。
+    Preview 自己把本地 Display 与图传适配器分开，创建 Display 时临时设置
+    MAIXVISION=0 后立即恢复。图传进程使用本机 bridge 协议，不调用 native
+    ImageTrans 的 500ms 忙等，也不 import maix 触发额外串口监听。
     """
-    if not bool(getattr(cfg, "DISABLE_MAIXVISION_STREAM", True)):
+    if not bool(getattr(cfg, "DISABLE_MAIXVISION_STREAM", False)):
         return False
     if os.environ.get("MAIXVISION") != "1":
         return False
     os.environ["MAIXVISION"] = "0"      # os.environ 赋值会同步 putenv，C 侧 getenv 随即生效
-    print("[preview] 已禁用 MaixVision 图传（MAIXVISION 1->0）：本地屏恢复 1~5ms ⇒ 全帧；"
-          "MaixVision 画面预览将无图（终端日志照常）。"
-          "如需图传：Config.DISABLE_MAIXVISION_STREAM=False，并确保预览已真正连上。")
+    print("[preview] 本地模式：已禁用 MaixVision 图传（MAIXVISION 1->0；终端日志照常）")
     return True
+
+
+def _local_display_call(callback, *args):
+    """Scope native Display creation/auto-reopen to local mode, then restore launch env."""
+    session = os.environ.get("MAIXVISION")
+    try:
+        if session == "1":
+            os.environ["MAIXVISION"] = "0"
+        return callback(*args)
+    finally:
+        if session is None:
+            os.environ.pop("MAIXVISION", None)
+        else:
+            os.environ["MAIXVISION"] = session
 
 
 class Preview:
@@ -646,18 +705,33 @@ class Preview:
         self._pool = 0                          # 已分配画布数（上限 2，由 due() 保证）
         self._stop = False
         self.thread = None
+        self.stream = None
+        self.stream_width = 0
+        self._stream_state = None
         if not bool(getattr(cfg, "SHOW", False)):
             print("[preview] SHOW=False -> 不建显示（纯串口/头部模式，画面不流转）")
             return
         try:
             from maix import display
-            self.display = display.Display()
+            session = os.environ.get("MAIXVISION")
+            streaming = session == "1" and not bool(getattr(cfg, "DISABLE_MAIXVISION_STREAM", False))
+            # Native show() also sends to img_trans. Do not create that global transport
+            # in this process: its C++ 500ms busy wait may hold Python's GIL.
+            self.display = _local_display_call(display.Display)
             self.width = int(self.display.width())
             self.height = int(self.display.height())
             # 画布宽度：SHOW_WIDTH<=0 ⇒ 用屏幕原始宽度（画布＝屏幕 ⇒ show() 零缩放）。
             cap = int(getattr(cfg, "SHOW_WIDTH", 0) or 0)
             self.render_width = self.width if cap <= 0 else min(self.width, cap)
             self.render_height = max(1, int(round(self.height * self.render_width / self.width)))
+            if streaming:
+                try:
+                    from .maixvision_stream import MaixVisionStream
+                    self.stream_width = min(self.render_width, max(1, int(getattr(cfg, "SHOW_STREAM_WIDTH", 480))))
+                    stream_height = max(1, int(round(self.render_height * self.stream_width / self.render_width)))
+                    self.stream = MaixVisionStream(cfg, self.stream_width, stream_height)
+                except Exception as exc:
+                    print("[preview] 图传适配器不可用，保留本地显示: %s" % exc)
             if hasattr(display, "set_trans_image_quality"):
                 display.set_trans_image_quality(int(getattr(cfg, "SHOW_JPEG_QUALITY", 70)))
             self.enabled = True
@@ -666,11 +740,7 @@ class Preview:
                      self.width, self.height, self.render_width, self.render_height,
                      int(getattr(cfg, "SHOW_FPS", 30)), int(getattr(cfg, "SHOW_JPEG_QUALITY", 70)),
                      "on" if os.environ.get("MAIXVISION") == "1" else "off"))
-            # ★ 开机探针：立刻量一次 show() 真实耗时。本地屏典型 1~5ms；若命中 MaixCDK 的
-            #   "MaixVision 图传未就绪"分支，send_image() 会在 C++ 里**忙等 500ms 并空转 CPU**
-            #   （见 MaixCDK components/vision/src/maix_image_trans.cpp），表现为 show 恒定 ~505ms、
-            #   并连带把相机/识别/闭环一起拖慢。这条必须当场说清，不能只报一个 p95 数字。
-            self.probe_ms = self._probe_show()
+            # 首帧在显示线程计量，不在构造/主循环执行同步 show 探针。
             if self.async_show:
                 self.thread = threading.Thread(target=self._show_loop, name="display", daemon=True)
                 self.thread.start()
@@ -723,6 +793,8 @@ class Preview:
         with self._cond:
             if self._free:
                 return self._free.pop()
+            if self._pool >= 2:
+                return None
             self._pool += 1
         return np.empty((need[0], need[1], 3), np.uint8)
 
@@ -747,6 +819,9 @@ class Preview:
             skipped = max(1, int((now - self._t_show) / self._period) + 1)
             self._t_show += skipped * self._period
         canvas = self._take_canvas()
+        if canvas is None:
+            self.dropped += 1
+            return
         # ---- letterbox：等比缩放 + 居中，两侧留黑边，绝不拉伸（保持几何不变形）----
         vh, vw = view.shape[:2]
         rw, rh = self.render_width, self.render_height
@@ -809,16 +884,16 @@ class Preview:
             from maix import image as maix_image
             frame = np.zeros((self.render_height, self.render_width, 3), np.uint8)
             t0 = self._clock.perf_counter()
-            self.display.show(maix_image.cv2image(frame, bgr=True, copy=True))
+            _local_display_call(self.display.show, maix_image.cv2image(frame, bgr=True, copy=True))
             ms = (self._clock.perf_counter() - t0) * 1000.0
         except Exception as exc:
             print("[preview] show 探针失败（显示可能不可用）: %s" % exc)
             return -1.0
-        if ms >= 300.0:
+        if ms >= float(getattr(self.cfg, "SHOW_STREAM_SLOW_MS", 300)):
             print("[preview] ⚠ show 探针 %.0fms —— 命中 MaixCDK「MaixVision 图传未就绪」忙等分支："
                   "每次 show() 空转 500ms（maix_image_trans.cpp），约每秒烧掉半个 CPU 核，"
                   "是相机 read / 识别 / 闭环一起变慢的根因。" % ms)
-            print("[preview] ⚠ 对策①：把 Config.DISABLE_MAIXVISION_STREAM 设回 True（默认即 True）——"
+            print("[preview] ⚠ 对策①：临时选择 Config.DISABLE_MAIXVISION_STREAM=True——"
                   "main() 会在建 Display 之前把 MAIXVISION 置 0，从源头不建图传，show() 回到 1~5ms。")
             print("[preview] ⚠ 对策②：或改从**设备本地**启动本应用（应用菜单 / 开机自启），"
                   "不要用 MaixVision 的“运行”按钮 —— 本地启动时 maixvision 模式本就关闭。")
@@ -835,8 +910,8 @@ class Preview:
         self._slow_warned = True
         print("[preview] show slow: p95=%.0fms —— 瓶颈在显示侧（非识别）。"
               "若该值恒定 ≈505ms，即为 MaixCDK 的 MaixVision 图传忙等："
-              "保持 Config.DISABLE_MAIXVISION_STREAM=True（默认），或从设备本地启动应用即可消除。"
-              "预览掉帧，识别/闭环不受影响。" % p95)
+              "当前图传已隔离到独立进程；检查屏幕驱动或此前创建的 native Display。"
+              "可临时选择 Config.DISABLE_MAIXVISION_STREAM=True 排查。" % p95)
 
     def _do_show(self, canvas, maix_image=None):
         """真正调用 display.show()，记耗时/帧率；失败即停用显示（不影响识别/闭环）。返回是否成功。"""
@@ -845,12 +920,46 @@ class Preview:
         t0 = self._clock.perf_counter()
         try:
             # bgr=True：cv2 是 BGR 序；copy=True：交给显示的必须是独立缓冲。
-            self.display.show(maix_image.cv2image(canvas, bgr=True, copy=True))
+            # Only open()/auto-open creates native img_trans. Keep MAIXVISION
+            # unchanged during normal shows and scope just the reopen operation.
+            opened = getattr(self.display, "is_opened", None)
+            if opened is not None:
+                if not opened():
+                    _local_display_call(self.display.open)
+                    if not opened():
+                        # Native open() returns an Err instead of raising. Do
+                        # not let show() auto-open under the restored session.
+                        raise RuntimeError("local display reopen failed")
+                self.display.show(maix_image.cv2image(canvas, bgr=True, copy=True))
+            else:
+                # Older adapters without an open-state API retain local scope.
+                _local_display_call(self.display.show,
+                                    maix_image.cv2image(canvas, bgr=True, copy=True))
         except Exception as exc:
             self.enabled = False
             print("[preview] show 失败，停用显示: %s" % exc)
             return False
         ms = (self._clock.perf_counter() - t0) * 1000.0
+        if self.probe_ms < 0:
+            self.probe_ms = ms
+            print("[preview] 本地 show 首帧 %.1fms；图传独立 latest-frame 进程" % ms)
+        if self.stream is not None:
+            try:
+                height = max(1, int(round(self.render_height * self.stream_width / self.render_width)))
+                frame = canvas if self.stream_width == self.render_width else cv2.resize(canvas, (self.stream_width, height))
+                self.stream.submit(frame)
+                state = self.stream.status()["state"]
+                if state != self._stream_state:
+                    self._stream_state = state
+                    print("[preview] MaixVision stream=%s（本地显示/识别继续）" % state)
+            except Exception as exc:
+                print("[preview] 图传失败，保留本地显示: %s" % exc)
+                try:
+                    self.stream.close()
+                except Exception as close_exc:
+                    print("[preview] 图传清理失败: %s" % close_exc)
+                finally:
+                    self.stream = None
         self.shown += 1
         completed = self._clock.perf_counter()
         self.rate.record(completed)
@@ -892,6 +1001,12 @@ class Preview:
                 self._cond.notify()
             if self.thread is not None:
                 self.thread.join(timeout=2.0)
+        if self.stream is not None:
+            self.stream.close()
+        if self.thread is not None and self.thread.is_alive():
+            # Display is still owned by its show thread. Closing it here races
+            # native show(); only transport cleanup is independent.
+            raise RuntimeError("display thread did not stop; display remains owned by worker")
         if self.display is not None:
             try:
                 self.display.close()
@@ -1994,158 +2109,6 @@ def draw_laser_overlay(canvas, laser, result=None, scale=1.0, use_raw=False):
     return PANEL_H
 '''
 
-# ===== vision.gimbal_self_test  (vision/gimbal_self_test.py) =====
-_MOD_SRC['vision.gimbal_self_test'] = r'''
-"""上电云台小幅自检：yaw ±15°，pitch ±30°，最后回到启动姿态。
-
-两种幅度口径（`config.SELF_TEST_PULSES` 决定用哪种）：
-    · >0 = **固定脉冲**（推荐，见 AGENTS.md §3.2）：不依赖"脉冲/度"标定即可动作，
-      所以可由屏幕按钮直接触发；顺序与角度模式一致（yaw 左→右、pitch 上→下，各回到起点）。
-    · ==0 = 按 `SELF_TEST_*_DEG × *_PULSES_PER_DEG` 换算角度；未标定（两者均 0）则跳过。
-"""
-
-
-class GimbalSelfTest:
-    """非阻塞自检状态机。角度通过实测的电机脉冲/输出轴度数换算。"""
-
-    def __init__(self, cfg, link, now=0.0):
-        self.cfg = cfg
-        self.link = link
-        self.state = "IDLE"
-        self.index = 0
-        self.deadline = float(now)
-        self.sequence = []
-        self.reason = None
-        self._prepare()
-
-    def _prepare(self):
-        if not bool(getattr(self.cfg, "GIMBAL_SELF_TEST", True)):
-            self.state, self.reason = "DONE", "disabled"
-            return
-        # ---- 固定脉冲模式（不依赖标定；屏幕按钮触发走这条）----
-        fixed = int(getattr(self.cfg, "SELF_TEST_PULSES", 0) or 0)
-        if fixed > 0:
-            yaw_ccw = bool(getattr(self.cfg, "YAW_POSITIVE_CCW", False))
-            pitch_ccw = bool(getattr(self.cfg, "PITCH_POSITIVE_CCW", False))
-            self.sequence = [
-                ("yaw", yaw_ccw, fixed), ("yaw", not yaw_ccw, 2 * fixed), ("yaw", yaw_ccw, fixed),
-                ("pitch", pitch_ccw, fixed), ("pitch", not pitch_ccw, 2 * fixed), ("pitch", pitch_ccw, fixed),
-            ]
-            self.state = "RUNNING"
-            print("[self-test] 固定脉冲模式 pulses=%d rpm=%d" %
-                  (fixed, int(getattr(self.cfg, "SELF_TEST_RPM", 900))))
-            return
-        yaw_ppd = float(getattr(self.cfg, "YAW_PULSES_PER_DEG", 0.0))
-        pitch_ppd = float(getattr(self.cfg, "PITCH_PULSES_PER_DEG", 0.0))
-        # 未做"脉冲/度"标定时，允许用已知减速比推导：脉冲/度 = 每圈脉冲 × 减速比 / 360。
-        # 减速比未知（0）则保持跳过 —— 不用错误比例去撞限位。
-        ratio = float(getattr(self.cfg, "GIMBAL_GEAR_RATIO", 0.0))
-        if ratio > 0:
-            per_rev = float(getattr(self.cfg, "MOTOR_PULSES_PER_REV", 3200))
-            derived = per_rev * ratio / 360.0
-            if yaw_ppd <= 0:
-                yaw_ppd = derived
-            if pitch_ppd <= 0:
-                pitch_ppd = derived
-        if yaw_ppd <= 0 or pitch_ppd <= 0:
-            self.state, self.reason = "SKIPPED", "pulse_per_degree_not_calibrated"
-            print("[self-test] skipped: set YAW_PULSES_PER_DEG / PITCH_PULSES_PER_DEG")
-            print("[self-test]           或用 GIMBAL_GEAR_RATIO 提供减速比，或先用 CALIBRATE_AXIS 实测")
-            return
-        yaw_angle = abs(float(getattr(self.cfg, "SELF_TEST_YAW_DEG", 15.0)))
-        pitch_angle = abs(float(getattr(self.cfg, "SELF_TEST_PITCH_DEG", 30.0)))
-        yaw_ccw_positive = bool(getattr(self.cfg, "YAW_POSITIVE_CCW", False))
-        pitch_ccw_positive = bool(getattr(self.cfg, "PITCH_POSITIVE_CCW", False))
-        self.sequence = [
-            ("yaw", yaw_ccw_positive, yaw_angle * yaw_ppd),
-            ("yaw", not yaw_ccw_positive, 2 * yaw_angle * yaw_ppd),
-            ("yaw", yaw_ccw_positive, yaw_angle * yaw_ppd),
-            ("pitch", pitch_ccw_positive, pitch_angle * pitch_ppd),
-            ("pitch", not pitch_ccw_positive, 2 * pitch_angle * pitch_ppd),
-            ("pitch", pitch_ccw_positive, pitch_angle * pitch_ppd),
-        ]
-        self.state = "RUNNING"
-
-    @property
-    def done(self):
-        return self.state in ("DONE", "SKIPPED", "FAULT")
-
-    def update(self, now):
-        """每帧调用；到达估算运动时间后发下一段，不阻塞视觉主循环。"""
-        if self.done:
-            return self.state
-        now = float(now)
-        if now < self.deadline:
-            return self.state
-        if self.index >= len(self.sequence):
-            self.state = "DONE"
-            print("[self-test] complete; returned to startup pose")
-            return self.state
-        axis, ccw, raw_pulses = self.sequence[self.index]
-        pulses = int(round(raw_pulses))
-        if pulses <= 0:
-            self.state, self.reason = "FAULT", "invalid_pulse_count"
-            self.link.stop(axis)
-            return self.state
-        rpm = int(getattr(self.cfg, "SELF_TEST_RPM", 900))
-        if not self.link.move(axis, ccw, pulses, rpm,
-                              int(getattr(self.cfg, "ACC_DEFAULT", 0))):
-            self.state, self.reason = "FAULT", "uart_write_failed"
-            self.link.stop(axis)
-            print("[self-test] fault: %s command failed" % axis)
-            return self.state
-        pulses_per_rev = float(getattr(self.cfg, "MOTOR_PULSES_PER_REV", 3200))
-        move_s = pulses / max(1.0, pulses_per_rev * max(1, rpm) / 60.0)
-        settle_s = float(getattr(self.cfg, "SELF_TEST_SETTLE_S", 0.35))
-        self.deadline = now + move_s + settle_s
-        self.index += 1
-        print("[self-test] %s %s %dp rpm=%d step=%d/%d" %
-              (axis, "CCW" if ccw else "CW", pulses, rpm,
-               self.index, len(self.sequence)))
-        return self.state
-
-
-def probe_imu():
-    """尽力实例化 MaixPy IMU 并读取一次样本；不影响主程序运行。"""
-    try:
-        import maix
-        imu = getattr(maix, "imu", None)
-        if imu is None:
-            import importlib
-            imu = importlib.import_module("maix.imu")
-        names = [name for name in dir(imu) if not name.startswith("_")]
-        device = None
-        sample = None
-        errors = []
-        for class_name in ("IMU", "Imu", "imu"):
-            constructor = getattr(imu, class_name, None)
-            if not callable(constructor):
-                continue
-            try:
-                device = constructor()
-                break
-            except Exception as exc:
-                errors.append("%s(): %s" % (class_name, exc))
-        if device is None:
-            return {"available": False, "module": imu, "names": names,
-                    "error": "; ".join(errors) or "module has no recognized IMU constructor"}
-        for method_name in ("read", "get_data", "get_accel_gyro", "get_gyro"):
-            method = getattr(device, method_name, None)
-            if callable(method):
-                try:
-                    sample = method()
-                    return {"available": True, "module": imu, "names": names,
-                            "device": device, "method": method_name,
-                            "sample": sample, "error": None}
-                except Exception as exc:
-                    errors.append("%s(): %s" % (method_name, exc))
-        return {"available": False, "module": imu, "names": names,
-                "device": device, "error": "; ".join(errors) or
-                "IMU object has no recognized read method"}
-    except Exception as exc:
-        return {"available": False, "module": None, "names": [], "error": str(exc)}
-'''
-
 # ===== vision.stepper_link  (vision/stepper_link.py) =====
 _MOD_SRC['vision.stepper_link'] = r'''
 """ZDT Emm_V5.0 双串口链路（协议帧构造 + 非阻塞收发 + 链路健康）。
@@ -2470,6 +2433,174 @@ class StepperLink:
 
     def stats(self):
         return dict(self._stats)
+
+    def close(self):
+        """控制线程停止后释放 UART；无 close 方法的 SDK 对象通过清引用析构。"""
+        ports, self._ports = self._ports, {}
+        self._stats["yaw"] = self._stats["pitch"] = False
+        error = None
+        for port in ports.values():
+            close = getattr(port, "close", None)
+            if close is not None:
+                try:
+                    close()
+                except Exception as exc:
+                    error = error or exc
+        if error is not None:
+            raise error
+'''
+
+# ===== vision.gimbal_self_test  (vision/gimbal_self_test.py) =====
+_MOD_SRC['vision.gimbal_self_test'] = r'''
+"""上电云台小幅自检：yaw ±15°，pitch ±30°，最后回到启动姿态。
+
+两种幅度口径（`config.SELF_TEST_PULSES` 决定用哪种）：
+    · >0 = **固定脉冲**（推荐，见 AGENTS.md §3.2）：不依赖"脉冲/度"标定即可动作，
+      所以可由屏幕按钮直接触发；顺序与角度模式一致（yaw 左→右、pitch 上→下，各回到起点）。
+    · ==0 = 按 `SELF_TEST_*_DEG × *_PULSES_PER_DEG` 换算角度；未标定（两者均 0）则跳过。
+"""
+from .stepper_link import estimate_move_seconds
+
+
+class GimbalSelfTest:
+    """非阻塞自检状态机。角度通过实测的电机脉冲/输出轴度数换算。"""
+
+    def __init__(self, cfg, link, now=0.0):
+        self.cfg = cfg
+        self.link = link
+        self.state = "IDLE"
+        self.index = 0
+        self.deadline = float(now)
+        self.sequence = []
+        self.reason = None
+        self._prepare()
+
+    def _prepare(self):
+        if not bool(getattr(self.cfg, "GIMBAL_SELF_TEST", True)):
+            self.state, self.reason = "DONE", "disabled"
+            return
+        # ---- 固定脉冲模式（不依赖标定；屏幕按钮触发走这条）----
+        fixed = int(getattr(self.cfg, "SELF_TEST_PULSES", 0) or 0)
+        if fixed > 0:
+            yaw_ccw = bool(getattr(self.cfg, "YAW_POSITIVE_CCW", False))
+            pitch_ccw = bool(getattr(self.cfg, "PITCH_POSITIVE_CCW", False))
+            self.sequence = [
+                ("yaw", yaw_ccw, fixed), ("yaw", not yaw_ccw, 2 * fixed), ("yaw", yaw_ccw, fixed),
+                ("pitch", pitch_ccw, fixed), ("pitch", not pitch_ccw, 2 * fixed), ("pitch", pitch_ccw, fixed),
+            ]
+            self.state = "RUNNING"
+            print("[self-test] 固定脉冲模式 pulses=%d rpm=%d" %
+                  (fixed, int(getattr(self.cfg, "SELF_TEST_RPM", 900))))
+            return
+        yaw_ppd = float(getattr(self.cfg, "YAW_PULSES_PER_DEG", 0.0))
+        pitch_ppd = float(getattr(self.cfg, "PITCH_PULSES_PER_DEG", 0.0))
+        # 未做"脉冲/度"标定时，允许用已知减速比推导：脉冲/度 = 每圈脉冲 × 减速比 / 360。
+        # 减速比未知（0）则保持跳过 —— 不用错误比例去撞限位。
+        ratio = float(getattr(self.cfg, "GIMBAL_GEAR_RATIO", 0.0))
+        if ratio > 0:
+            per_rev = float(getattr(self.cfg, "MOTOR_PULSES_PER_REV", 3200))
+            derived = per_rev * ratio / 360.0
+            if yaw_ppd <= 0:
+                yaw_ppd = derived
+            if pitch_ppd <= 0:
+                pitch_ppd = derived
+        if yaw_ppd <= 0 or pitch_ppd <= 0:
+            self.state, self.reason = "SKIPPED", "pulse_per_degree_not_calibrated"
+            print("[self-test] skipped: set YAW_PULSES_PER_DEG / PITCH_PULSES_PER_DEG")
+            print("[self-test]           或用 GIMBAL_GEAR_RATIO 提供减速比，或先用 CALIBRATE_AXIS 实测")
+            return
+        yaw_angle = abs(float(getattr(self.cfg, "SELF_TEST_YAW_DEG", 15.0)))
+        pitch_angle = abs(float(getattr(self.cfg, "SELF_TEST_PITCH_DEG", 30.0)))
+        yaw_ccw_positive = bool(getattr(self.cfg, "YAW_POSITIVE_CCW", False))
+        pitch_ccw_positive = bool(getattr(self.cfg, "PITCH_POSITIVE_CCW", False))
+        self.sequence = [
+            ("yaw", yaw_ccw_positive, yaw_angle * yaw_ppd),
+            ("yaw", not yaw_ccw_positive, 2 * yaw_angle * yaw_ppd),
+            ("yaw", yaw_ccw_positive, yaw_angle * yaw_ppd),
+            ("pitch", pitch_ccw_positive, pitch_angle * pitch_ppd),
+            ("pitch", not pitch_ccw_positive, 2 * pitch_angle * pitch_ppd),
+            ("pitch", pitch_ccw_positive, pitch_angle * pitch_ppd),
+        ]
+        self.state = "RUNNING"
+
+    @property
+    def done(self):
+        return self.state in ("DONE", "SKIPPED", "FAULT")
+
+    def update(self, now):
+        """每帧调用；到达估算运动时间后发下一段，不阻塞视觉主循环。"""
+        if self.done:
+            return self.state
+        now = float(now)
+        if now < self.deadline:
+            return self.state
+        if self.index >= len(self.sequence):
+            self.state = "DONE"
+            print("[self-test] complete; returned to startup pose")
+            return self.state
+        axis, ccw, raw_pulses = self.sequence[self.index]
+        pulses = int(round(raw_pulses))
+        if pulses <= 0:
+            self.state, self.reason = "FAULT", "invalid_pulse_count"
+            self.link.stop(axis)
+            return self.state
+        rpm = int(getattr(self.cfg, "SELF_TEST_RPM", 900))
+        acceleration = int(getattr(self.cfg, "ACC_DEFAULT", 0))
+        if not self.link.move(axis, ccw, pulses, rpm, acceleration):
+            self.state, self.reason = "FAULT", "uart_write_failed"
+            self.link.stop(axis)
+            print("[self-test] fault: %s command failed" % axis)
+            return self.state
+        pulses_per_rev = float(getattr(self.cfg, "MOTOR_PULSES_PER_REV", 3200))
+        move_s = estimate_move_seconds(pulses, rpm, acceleration, pulses_per_rev)
+        settle_s = float(getattr(self.cfg, "SELF_TEST_SETTLE_S", 0.35))
+        self.deadline = now + move_s + settle_s
+        self.index += 1
+        print("[self-test] %s %s %dp rpm=%d step=%d/%d" %
+              (axis, "CCW" if ccw else "CW", pulses, rpm,
+               self.index, len(self.sequence)))
+        return self.state
+
+
+def probe_imu():
+    """尽力实例化 MaixPy IMU 并读取一次样本；不影响主程序运行。"""
+    try:
+        import maix
+        imu = getattr(maix, "imu", None)
+        if imu is None:
+            import importlib
+            imu = importlib.import_module("maix.imu")
+        names = [name for name in dir(imu) if not name.startswith("_")]
+        device = None
+        sample = None
+        errors = []
+        for class_name in ("IMU", "Imu", "imu"):
+            constructor = getattr(imu, class_name, None)
+            if not callable(constructor):
+                continue
+            try:
+                device = constructor()
+                break
+            except Exception as exc:
+                errors.append("%s(): %s" % (class_name, exc))
+        if device is None:
+            return {"available": False, "module": imu, "names": names,
+                    "error": "; ".join(errors) or "module has no recognized IMU constructor"}
+        for method_name in ("read", "get_data", "get_accel_gyro", "get_gyro"):
+            method = getattr(device, method_name, None)
+            if callable(method):
+                try:
+                    sample = method()
+                    return {"available": True, "module": imu, "names": names,
+                            "device": device, "method": method_name,
+                            "sample": sample, "error": None}
+                except Exception as exc:
+                    errors.append("%s(): %s" % (method_name, exc))
+        return {"available": False, "module": imu, "names": names,
+                "device": device, "error": "; ".join(errors) or
+                "IMU object has no recognized read method"}
+    except Exception as exc:
+        return {"available": False, "module": None, "names": [], "error": str(exc)}
 '''
 
 # ===== vision.gimbal_aim  (vision/gimbal_aim.py) =====
@@ -2522,8 +2653,14 @@ class GimbalAim:
         self._motion_dir = {"yaw": 0, "pitch": 0}
         self._last_measurement_time = None
         self._stop_axes = []
+        self._source = "vision"
 
     # ------------------------------------------------------------- 外部接口
+    @property
+    def capture_after(self):
+        """最近一次任意轴停止后的采图门槛，供视觉/IMU参考共同使用。"""
+        return max(self._capture_after.values())
+
     def set_controller(self, controller):
         """设置后续 PID/前馈控制器；传入 None 恢复内置比例律。"""
         self.controller = controller
@@ -2589,6 +2726,8 @@ class GimbalAim:
             if gap > 0 and captured_at - self._last_measurement_time > gap:
                 self._jump = {"yaw": 0, "pitch": 0}
         self._last_measurement_time = captured_at
+        self._source = "imu" if (result.get("source") == "imu" and
+                                    bool(getattr(self.cfg, "ENABLE_IMU_FEEDFORWARD", False))) else "vision"
         self._lost = 0
         self._scan_pos = 0
         deadband = self._deadband()
@@ -2644,6 +2783,8 @@ class GimbalAim:
 
     def _gain(self, axis, error):
         cfg = self.cfg
+        if self._source == "imu":
+            return max(0.0, min(1.0, float(getattr(cfg, "IMU_GAIN", 0.75))))
         fine = float(getattr(cfg, "GAIN_YAW" if axis == "yaw" else "GAIN_PITCH", 0.5))
         coarse_px = float(getattr(cfg, "COARSE_PX", 0.0))
         if bool(getattr(cfg, "AIM_PROGRESSIVE", False)) and coarse_px > self._deadband():
@@ -2655,6 +2796,8 @@ class GimbalAim:
         return fine
 
     def _rpm(self, error):
+        if self._source == "imu" and abs(error) > float(getattr(self.cfg, "COARSE_PX", 24)):
+            return max(1, min(5000, int(getattr(self.cfg, "IMU_RPM", 180))))
         coarse_px = float(getattr(self.cfg, "COARSE_PX", 0.0))
         fine = int(getattr(self.cfg, "RPM_FINE", 300))
         coarse = int(getattr(self.cfg, "RPM_COARSE", 1200))
@@ -2682,7 +2825,7 @@ class GimbalAim:
         cfg = self.cfg
         # 离群拒收：单帧超大误差先当误检丢弃，连续若干帧才采信（防甩头）。
         jump = float(getattr(cfg, "JUMP_REJECT_PX", 0.0))
-        if jump > 0 and abs(error) > jump:
+        if self._source != "imu" and jump > 0 and abs(error) > jump:
             self._jump[axis] += 1
             if self._jump[axis] < int(getattr(cfg, "JUMP_CONFIRM_FRAMES", 3)):
                 return None
@@ -2701,6 +2844,15 @@ class GimbalAim:
                 return None
         sign = float(getattr(cfg, "DIR_SIGN_YAW" if axis == "yaw" else "DIR_SIGN_PITCH", 1))
         max_pulses = int(getattr(cfg, "MAX_STEP_PULSES", 360))
+        if self._source == "imu":
+            ppd = float(getattr(cfg, axis.upper() + "_PULSES_PER_DEG", 0.0))
+            if ppd <= 0:
+                ppd = float(getattr(cfg, "GIMBAL_GEAR_RATIO", 0.0)) * float(
+                    getattr(cfg, "MOTOR_PULSES_PER_REV", 3200)) / 360.0
+            step_deg = float(getattr(cfg, "IMU_MAX_STEP_DEG", 30.0))
+            if not all(math.isfinite(v) for v in (ppd, step_deg)) or ppd <= 0 or not 0 < step_deg <= 45:
+                return None
+            max_pulses = min(0xFFFFFFFF, int(ppd * step_deg))
         if self.controller is not None:
             output = self.controller(axis, float(error), now)
             if output is None or not math.isfinite(float(output)) or float(output) == 0:
@@ -2717,6 +2869,7 @@ class GimbalAim:
         rpm = self._rpm(error)
         self.last_command_time[axis] = now
         duration = estimate_move_seconds(pulses, rpm,
+                                       getattr(cfg, "IMU_ACC", 80) if self._source == "imu" else
                                        getattr(cfg, "ACC_TRACK", getattr(cfg, "ACC_DEFAULT", 0)),
                                        getattr(cfg, "MOTOR_PULSES_PER_REV", 3200))
         self._busy_until[axis] = now + duration + max(0.0, float(getattr(cfg, "AIM_MOTION_MARGIN_S", 0.0)))
@@ -2745,6 +2898,744 @@ class GimbalAim:
         return ccw, step, int(getattr(cfg, "SCAN_RPM", 60))
 '''
 
+# ===== vision.gimbal_search  (vision/gimbal_search.py) =====
+_MOD_SRC['vision.gimbal_search'] = r'''
+"""按钮启动的非阻塞双轴寻靶：相对按钮时姿态，各轴覆盖正负 45°。
+
+这里记录的是已请求的相对位置，不是编码器实测角度。只允许使用实测
+脉冲/度或已知减速比；途中识别到黑框、取消或故障时立即停车，不猜测
+剩余脉冲，也不自动回零。UART 与本状态机均由控制线程独占。
+"""
+import math
+
+from .stepper_link import estimate_move_seconds
+
+
+class SearchSweep:
+    """每帧/idle 调用 update；构造不发运动，终态后不会再发运动指令。
+
+    调度器启动前应停止其它运动。ACQUIRED/DONE/CANCELLED 的 stopped_at
+    是停机帧成功写出的时刻：切回追踪必须等待该时刻之后采集的新画面。
+    stop 写失败则为 FAULT，不能将 stop_attempted_at 当成成功停机。
+    """
+
+    TERMINAL = ("DONE", "ACQUIRED", "CANCELLED", "UNCALIBRATED", "FAULT")
+
+    def __init__(self, cfg, link, now=0.0):
+        self.cfg, self.link = cfg, link
+        self.state, self.reason = "RUNNING", None
+        self.index, self.sequence = 0, []
+        self.active_axis = None
+        self.stopped_at = self.stop_attempted_at = None
+        self.position_known = True
+        self.commanded_pulses = {"yaw": 0, "pitch": 0}
+        self.pulses_per_degree = {}
+        self.limit_pulses = {}
+        self.started_at = self.deadline = self._last_now = float(now)
+        self._last_capture = -math.inf
+        self._prepare()
+
+    @property
+    def done(self):
+        return self.state in self.TERMINAL
+
+    @property
+    def positions_deg(self):
+        """累计请求端点；中途停车后不代表实际姿态（见 position_known）。"""
+        return {axis: self.commanded_pulses[axis] / ppd
+                for axis, ppd in self.pulses_per_degree.items()}
+
+    def _prepare(self):
+        try:
+            if not math.isfinite(self.started_at):
+                raise ValueError("invalid_timestamp")
+            self.rpm = int(getattr(self.cfg, "SEARCH_RPM", 60))
+            self.acc = int(getattr(self.cfg, "SEARCH_ACC", 60))
+            self.settle_s = float(getattr(self.cfg, "SEARCH_SETTLE_S", 0.10))
+            self.timeout_s = float(getattr(self.cfg, "SEARCH_TIMEOUT_S", 60.0))
+            self.max_age_s = float(getattr(self.cfg, "RESULT_MAX_AGE_S", 0.20))
+            self.per_rev = float(getattr(self.cfg, "MOTOR_PULSES_PER_REV", 3200))
+            numbers = (self.settle_s, self.timeout_s, self.max_age_s, self.per_rev)
+            if not all(math.isfinite(value) for value in numbers):
+                raise ValueError("invalid_config")
+            if (not 1 <= self.rpm <= 5000 or not 0 <= self.acc <= 255 or
+                    self.settle_s < 0 or self.timeout_s <= 0 or
+                    self.max_age_s <= 0 or self.per_rev <= 0):
+                raise ValueError("invalid_config")
+            ratio = float(getattr(self.cfg, "GIMBAL_GEAR_RATIO", 0.0))
+            for axis in ("yaw", "pitch"):
+                ppd = float(getattr(self.cfg, axis.upper() + "_PULSES_PER_DEG", 0.0))
+                if ppd <= 0 and math.isfinite(ratio) and ratio > 0:
+                    ppd = self.per_rev * ratio / 360.0
+                if not math.isfinite(ppd) or ppd <= 0:
+                    self.state, self.reason = "UNCALIBRATED", "pulse_per_degree_not_calibrated"
+                    return
+                angle = float(getattr(self.cfg, "SEARCH_" + axis.upper() + "_DEG", 45.0))
+                if not math.isfinite(angle) or not 0 < angle <= 45.0:
+                    raise ValueError("search_angle_out_of_range")
+                # 端点先量化、再作差；不会因逐段取整把累计端点推到 ±45° 之外。
+                limit = int(math.floor(angle * ppd))
+                if limit <= 0 or 2 * limit > 0xFFFFFFFF:
+                    raise ValueError("invalid_pulse_count")
+                self.pulses_per_degree[axis] = ppd
+                self.limit_pulses[axis] = limit
+                self.sequence.extend(((axis, limit), (axis, -limit), (axis, 0)))
+            self.timeout_at = self.started_at + self.timeout_s
+        except (TypeError, ValueError, OverflowError) as exc:
+            self.state, self.reason = "FAULT", str(exc) or "invalid_config"
+
+    def _target_is_fresh(self, result, now):
+        if not result or not result.get("valid") or result.get("held") or result.get("predicted"):
+            return False
+        try:
+            captured = float(result["captured_at"])
+            coordinates = (float(result["u"]), float(result["v"]))
+        except (KeyError, TypeError, ValueError, OverflowError):
+            return False
+        if (not all(math.isfinite(value) for value in (captured,) + coordinates) or
+                captured < self.started_at or captured <= self._last_capture or
+                not 0 <= now - captured <= self.max_age_s):
+            return False
+        self._last_capture = captured
+        return True
+
+    def _finish(self, state, reason, now):
+        moving = self.active_axis is not None and now < self.deadline
+        self.position_known = self.position_known and not moving
+        self.stop_attempted_at = now
+        try:
+            accepted = self.link.stop(now=now)
+        except Exception:
+            accepted = False
+        self.active_axis = None
+        if accepted is False:
+            self.state, self.reason = "FAULT", "stop_failed:%s" % reason
+            self.position_known = False
+        else:
+            self.state, self.reason, self.stopped_at = state, reason, now
+        return self.state
+
+    def cancel(self, now):
+        """按钮再次点击取消；禁止按已请求端点倒算回起点。"""
+        if self.done:
+            return self.state
+        try:
+            now = float(now)
+        except (TypeError, ValueError, OverflowError):
+            now = self._last_now
+        if not math.isfinite(now):
+            now = self._last_now
+        now = max(now, self._last_now)
+        return self._finish("CANCELLED", "cancelled", now)
+
+    def fail(self, reason, now):
+        """控制器发现链路故障时调用；失败后的 update 不会再下发运动。"""
+        if self.done:
+            return self.state
+        try:
+            now = float(now)
+        except (TypeError, ValueError, OverflowError):
+            now = self._last_now
+        if not math.isfinite(now):
+            now = self._last_now
+        now = max(now, self._last_now)
+        return self._finish("FAULT", str(reason), now)
+
+    def update(self, now, result=None):
+        """最多发一段位置指令；视觉识别在运动未完成时也能立即停车。"""
+        if self.done:
+            return self.state
+        try:
+            now = float(now)
+        except (TypeError, ValueError, OverflowError):
+            return self.fail("invalid_timestamp", self._last_now)
+        if not math.isfinite(now) or now < self._last_now:
+            return self.fail("invalid_timestamp", self._last_now)
+        self._last_now = now
+        fault = getattr(self.link, "fault_reason", None)
+        if fault:
+            return self.fail("link:%s" % fault, now)
+        if self._target_is_fresh(result, now):
+            return self._finish("ACQUIRED", "black_frame_found", now)
+        if now >= self.timeout_at:
+            return self._finish("DONE", "timeout", now)
+        if now < self.deadline:
+            return self.state
+        self.active_axis = None
+        if self.index >= len(self.sequence):
+            return self._finish("DONE", "sweep_complete", now)
+        axis, target = self.sequence[self.index]
+        delta = target - self.commanded_pulses[axis]
+        pulses = abs(delta)
+        positive_ccw = bool(getattr(self.cfg, axis.upper() + "_POSITIVE_CCW", True))
+        ccw = positive_ccw if delta > 0 else not positive_ccw
+        try:
+            duration = estimate_move_seconds(pulses, self.rpm, self.acc, self.per_rev)
+            accepted = self.link.move(axis, ccw, pulses, self.rpm, self.acc, now=now)
+        except Exception:
+            accepted = False
+        if accepted is False:
+            self.position_known = False
+            return self.fail("uart_write_failed:%s" % axis, now)
+        self.commanded_pulses[axis] = target
+        self.active_axis = axis
+        self.deadline = now + duration + self.settle_s
+        self.index += 1
+        return self.state
+'''
+
+# ===== vision.imu_heading  (vision/imu_heading.py) =====
+_MOD_SRC['vision.imu_heading'] = r'''
+"""Relative inertial heading for the B track, with no UART ownership.
+
+MaixCAM2's onboard IMU is LSM6DSOWTR, exposed through ``maix.ext_dev.imu``.
+The adapter below follows Sipeed's documented DUAL/raw API; gyro units are deg/s.
+Sources checked at MaixPy a36c0f0 / MaixCDK 30f4b8b:
+https://github.com/sipeed/MaixPy/blob/a36c0f0a85ba8b1a4f7eee7ab74af13afcd89bb0/examples/ext_dev/sensors/imu/imu_read_data.py
+https://github.com/sipeed/MaixCDK/blob/30f4b8b7e3f66ded9cfa64fb081b46e30bc27248/components/ext_devs/ext_dev/src/lsm6dsowtr/maix_lsm6dsowtr.cpp
+
+Gyros provide short-term *relative* orientation, not an absolute yaw reference.
+The initial target lock is the reference; bias, mounting axes and motor degrees
+must be calibrated separately. No magnetic heading or drift-free claim is made.
+Camera mounting measures body + actual gimbal motion, so subtracting commanded
+gimbal motion again would be incorrect. Base mounting instead needs a measured
+gimbal position. Degrees returned here are never sent directly to a motor.
+"""
+import math
+import threading
+import time
+from collections import deque
+
+
+def _finite_vector(value):
+    values = tuple(float(x) for x in value)
+    if len(values) != 3 or not all(math.isfinite(x) for x in values):
+        raise ValueError("expected three finite numbers")
+    return values
+
+
+def _dot(a, b):
+    return sum(x * y for x, y in zip(a, b))
+
+
+def _cross(a, b):
+    return (a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0])
+
+
+def _multiply(a, b):
+    w, x, y, z = a
+    v, i, j, k = b
+    return (w * v - x * i - y * j - z * k,
+            w * i + x * v + y * k - z * j,
+            w * j - x * k + y * v + z * i,
+            w * k + x * j - y * i + z * v)
+
+
+def _advance(q, rates, dt):
+    """Integrate body-frame angular velocity using a normalized quaternion."""
+    omega = tuple(math.radians(x) for x in rates)
+    speed = math.sqrt(_dot(omega, omega))
+    if speed < 1e-12 or dt <= 0:
+        return q
+    half = speed * dt * 0.5
+    scale = math.sin(half) / speed
+    result = _multiply(q, (math.cos(half), *(x * scale for x in omega)))
+    length = math.sqrt(_dot(result, result))
+    return tuple(x / length for x in result)
+
+
+def _angles(q):
+    """Forward/left/up frame: yaw CCW left and pitch up are positive."""
+    w, x, y, z = q
+    yaw = math.degrees(math.atan2(2 * (w * z + x * y), 1 - 2 * (y * y + z * z)))
+    pitch = -math.degrees(math.asin(max(-1.0, min(1.0, 2 * (w * y - z * x)))))
+    return yaw, pitch
+
+
+def _wrapped_delta(value):
+    return (value + 180.0) % 360.0 - 180.0
+
+
+def _offset_quaternion(yaw, pitch):
+    yaw, pitch = math.radians(yaw) / 2, -math.radians(pitch) / 2
+    return _multiply((math.cos(yaw), 0.0, 0.0, math.sin(yaw)),
+                     (math.cos(pitch), 0.0, math.sin(pitch), 0.0))
+
+
+class MaixIMUSensor:
+    """Official MaixPy adapter. Construct/read only in the sensor worker.
+
+    LSM6DSOWTR returns seven zeros when data is not ready; those arrays must
+    never replace a fresh moving sample or be integrated as a measured stop.
+    The generic header's accel-unit description differs from this board's
+    implementation, so this module deliberately does not use accel units.
+    """
+
+    def __init__(self):
+        from maix.ext_dev import imu
+        self.device = imu.IMU("default", mode=imu.Mode.DUAL,
+                              acc_scale=imu.AccScale.ACC_SCALE_2G,
+                              acc_odr=imu.AccOdr.ACC_ODR_208,
+                              gyro_scale=imu.GyroScale.GYRO_SCALE_500DPS,
+                              gyro_odr=imu.GyroOdr.GYRO_ODR_208, block=False)
+        self.bias_dps = None
+        if self.device.calib_gyro_exists():
+            bias = self.device.load_calib_gyro()
+            self.bias_dps = _finite_vector((bias.x, bias.y, bias.z))
+
+    def read(self):
+        raw = self.device.read()
+        if not raw:
+            return None
+        if len(raw) != 7:
+            raise ValueError("Maix IMU DUAL read() must return seven values")
+        if all(float(x) == 0.0 for x in raw):
+            return None
+        return _finite_vector(raw[3:6])
+
+
+class GyroHeading:
+    """Pure deterministic estimator. Call only from one thread or under a lock.
+
+    ``update`` takes raw gyro xyz in deg/s and a monotonic sample timestamp.
+    Configured unit vectors express physical yaw-left/pitch-up in sensor axes.
+    They must be perpendicular and verified on the mounted hardware; defaults
+    are mathematical examples, not a claimed MaixCAM2 board mounting.
+    Initialize in the calibrated level/home pose. Gyros alone cannot identify
+    gravity or infer an unknown initial tilt. Quaternion integration accounts
+    for subsequent camera tilt and roll without treating sensor z as world z.
+    """
+
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.enabled = bool(getattr(cfg, "ENABLE_IMU_FEEDFORWARD", False))
+        self.mount = str(getattr(cfg, "IMU_SENSOR_MOUNT", "camera")).lower()
+        if self.mount not in ("camera", "base"):
+            raise ValueError("IMU_SENSOR_MOUNT must be camera or base")
+        self.yaw_axis = _finite_vector(getattr(cfg, "IMU_YAW_AXIS", (0, 0, 1)))
+        up_axis = _finite_vector(getattr(cfg, "IMU_PITCH_AXIS", (0, -1, 0)))
+        if (abs(_dot(self.yaw_axis, self.yaw_axis) - 1) > 1e-6 or
+                abs(_dot(up_axis, up_axis) - 1) > 1e-6 or
+                abs(_dot(self.yaw_axis, up_axis)) > 1e-6):
+            raise ValueError("IMU yaw/pitch axes must be orthogonal unit vectors")
+        self.down_axis = tuple(-x for x in up_axis)
+        self.roll_axis = _cross(self.down_axis, self.yaw_axis)
+        self.axes_calibrated = bool(getattr(cfg, "IMU_AXES_CALIBRATED", False))
+        self.max_age = max(0.001, float(getattr(cfg, "IMU_MAX_AGE_S", 0.10)))
+        self.max_gap = max(self.max_age, float(getattr(cfg, "IMU_MAX_GAP_S", 0.20)))
+        self.max_predict = max(0.0, float(getattr(cfg, "IMU_MAX_PREDICT_S", 0.05)))
+        self.max_rate = max(1.0, float(getattr(cfg, "IMU_MAX_RATE_DPS", 450.0)))
+        self.max_pitch = max(1.0, min(89.0, float(getattr(cfg, "IMU_MAX_PITCH_DEG", 80.0))))
+        self.reference_max_age = max(0.001, float(getattr(cfg, "IMU_REFERENCE_MAX_AGE_S", 0.03)))
+        self.history_s = max(self.reference_max_age, min(2.0, float(getattr(cfg, "IMU_HISTORY_S", 1.0))))
+        history_size = max(2, min(512, int(getattr(cfg, "IMU_HISTORY_MAX_SAMPLES", 256))))
+        self.history = deque(maxlen=history_size)
+        self.bias = None
+        configured_bias = getattr(cfg, "IMU_BIAS_DPS", None)
+        if configured_bias is not None:
+            self.bias = _finite_vector(configured_bias)
+        self.q = (1.0, 0.0, 0.0, 0.0)
+        self.last_time = None
+        self.rates = (0.0, 0.0, 0.0)
+        self.samples = 0
+        self.error = None
+        self.reference = None
+        self.reference_time = None
+        self.reference_gimbal = None
+        self.yaw_delta = 0.0
+        self.pitch_delta = 0.0
+        self._last_wrapped_yaw = 0.0
+        self._bias_window = None
+        self.calibration_state = "IDLE"
+
+    def reset_reference(self):
+        self.reference = None
+        self.reference_time = None
+        self.reference_gimbal = None
+        self.yaw_delta = self.pitch_delta = self._last_wrapped_yaw = 0.0
+
+    def set_bias(self, bias_dps):
+        self.bias = _finite_vector(bias_dps)
+        self.last_time = None
+        self.q = (1.0, 0.0, 0.0, 0.0)
+        self.history.clear()
+        self.reset_reference()
+        self.error = None
+
+    def start_bias_calibration(self, now):
+        """Explicit stationary calibration; never infer stillness during a turn.
+
+        Hardware must be held still by the caller. Dispersion and a small rate
+        threshold reject obvious movement, but cannot detect all slow rotation.
+        The returned bias can be saved through application configuration.
+        """
+        now = float(now)
+        if not math.isfinite(now):
+            raise ValueError("calibration requires a finite monotonic time")
+        self.bias = None
+        self.last_time = None
+        self.error = None
+        self.q = (1.0, 0.0, 0.0, 0.0)
+        self.history.clear()
+        self.reset_reference()
+        self._bias_window = dict(start=now, count=0, sums=[0.0] * 3,
+                                 squares=[0.0] * 3)
+        self.calibration_state = "COLLECTING"
+
+    def _calibrate(self, raw, now):
+        window = self._bias_window
+        window["count"] += 1
+        for index, value in enumerate(raw):
+            window["sums"][index] += value
+            window["squares"][index] += value * value
+        duration = float(getattr(self.cfg, "IMU_BIAS_CALIBRATE_S", 1.0))
+        if now - window["start"] < max(0.1, duration):
+            return
+        count = window["count"]
+        mean = tuple(value / count for value in window["sums"])
+        deviation = max(math.sqrt(max(0.0, window["squares"][i] / count - mean[i] ** 2))
+                        for i in range(3))
+        max_std = float(getattr(self.cfg, "IMU_BIAS_MAX_STD_DPS", 0.25))
+        max_bias = float(getattr(self.cfg, "IMU_BIAS_MAX_DPS", 2.0))
+        self._bias_window = None
+        if count < 10 or deviation > max_std or max(abs(x) for x in mean) > max_bias:
+            self.calibration_state = "REJECTED"
+            self.error = "bias_calibration_requires_stationary_sensor"
+            return
+        self.set_bias(mean)
+        self.calibration_state = "READY"
+
+    def update(self, gyro_dps, now):
+        now = float(now)
+        try:
+            raw = _finite_vector(gyro_dps)
+            if not math.isfinite(now):
+                raise ValueError("nonfinite_timestamp")
+            if max(abs(x) for x in raw) > self.max_rate:
+                raise ValueError("gyro_rate_out_of_range")
+        except (ValueError, TypeError, OverflowError) as exc:
+            self.fail(str(exc))
+            return self.snapshot(now)
+        if self._bias_window is not None:
+            self._calibrate(raw, now)
+            return self.snapshot(now)
+        if self.bias is None:
+            self.error = None
+            return self.snapshot(now)
+        corrected = tuple(x - b for x, b in zip(raw, self.bias))
+        rates = (_dot(corrected, self.roll_axis), _dot(corrected, self.down_axis),
+                 _dot(corrected, self.yaw_axis))
+        if self.last_time is not None:
+            dt = now - self.last_time
+            if dt <= 0 or dt > self.max_gap:
+                # Motion during a sensor outage is unknown. Discard the reference
+                # instead of inventing rotation across the missing interval.
+                self.q = (1.0, 0.0, 0.0, 0.0)
+                self.reset_reference()
+                self.history.clear()
+                self.error = "sample_gap" if dt > 0 else "nonmonotonic_sample"
+                self.last_time, self.rates = now, rates
+                return self.snapshot(now)
+            average = tuple(0.5 * (a + b) for a, b in zip(self.rates, rates))
+            self.q = _advance(self.q, average, dt)
+        self.last_time, self.rates = now, rates
+        self.error = None
+        self.samples += 1
+        self.history.append((now, self.q, rates))
+        while self.history and now - self.history[0][0] > self.history_s:
+            self.history.popleft()
+        if self.reference is not None:
+            current_yaw, current_pitch = _angles(self.q)
+            reference_yaw, reference_pitch = _angles(self.reference)
+            yaw = _wrapped_delta(current_yaw - reference_yaw)
+            self.yaw_delta += _wrapped_delta(yaw - self._last_wrapped_yaw)
+            self._last_wrapped_yaw = yaw
+            self.pitch_delta = current_pitch - reference_pitch
+        return self.snapshot(now)
+
+    def fail(self, error):
+        self.error = str(error)
+        self.last_time = None
+        if self._bias_window is not None:
+            self._bias_window = None
+            self.calibration_state = "REJECTED"
+        self.reset_reference()
+        self.q = (1.0, 0.0, 0.0, 0.0)
+        self.history.clear()
+
+    def snapshot(self, now):
+        now = float(now)
+        age = None if self.last_time is None else now - self.last_time
+        fresh = age is not None and 0 <= age <= self.max_age
+        current_yaw, current_pitch = _angles(self.q)
+        if not self.enabled:
+            state = "DISABLED"
+        elif self.error:
+            state = "ERROR"
+        elif self._bias_window is not None:
+            state = "CALIBRATING"
+        elif not self.axes_calibrated:
+            state = "AXES_UNCALIBRATED"
+        elif self.bias is None:
+            state = "BIAS_UNCALIBRATED"
+        elif not fresh:
+            state = "STALE"
+        elif abs(current_pitch) > self.max_pitch:
+            state = "ATTITUDE_OUT_OF_RANGE"
+        else:
+            state = "LOCKED" if self.reference is not None else "READY"
+        # Sensor/body rates are not world yaw/pitch rates after a camera tilt.
+        # A short quaternion derivative gives the common-frame Euler rates.
+        next_yaw, next_pitch = _angles(_advance(self.q, self.rates, 0.0001))
+        yaw_rate = _wrapped_delta(next_yaw - current_yaw) / 0.0001
+        pitch_rate = (next_pitch - current_pitch) / 0.0001
+        return dict(valid=state in ("READY", "LOCKED"), state=state,
+                    mount=self.mount, age_s=age, sampled_at=self.last_time,
+                    samples=self.samples, bias_dps=self.bias, error=self.error,
+                    reference_locked=self.reference is not None,
+                    reference_at=self.reference_time, yaw_deg=self.yaw_delta,
+                    pitch_deg=self.pitch_delta, rate_yaw_dps=yaw_rate,
+                    rate_pitch_dps=pitch_rate, calibration=self.calibration_state)
+
+    def sample_at(self, captured_at):
+        """Find a close sample at/before capture; never use a future sample.
+
+        This is a bounded history, not an IMU IO operation. A short interpolation
+        with the previous sample's angular rate synchronizes the returned pose.
+        ``valid`` only describes capture-time alignment; consumers must also
+        check the current sensor's freshness before issuing a motor command.
+        """
+        captured_at = float(captured_at)
+        for sampled_at, q, rates in reversed(self.history):
+            if sampled_at <= captured_at:
+                age = captured_at - sampled_at
+                valid = math.isfinite(captured_at) and age <= self.reference_max_age
+                return dict(valid=valid, sampled_at=sampled_at, captured_at=captured_at,
+                            age_s=age, quaternion=_advance(q, rates, age) if valid else q,
+                            rates_dps=rates, state="ALIGNED" if valid else "HISTORY_STALE")
+        return dict(valid=False, sampled_at=None, captured_at=captured_at,
+                    age_s=None, quaternion=None, rates_dps=None, state="NO_HISTORY")
+
+    def lock_reference(self, now, yaw_offset_deg=0.0, pitch_offset_deg=0.0,
+                       gimbal_deg=None):
+        """Lock a capture-aligned target direction with physical angle offsets.
+
+        ``now`` is the visual frame's capture time in the same monotonic clock.
+        Yaw offsets are positive CCW-left; pitch offsets positive up. Root must
+        convert visual pixels using measured signed pixel/degree calibration.
+        """
+        if self.last_time is None or not self.snapshot(self.last_time)["valid"]:
+            return False
+        aligned = self.sample_at(now)
+        if not aligned["valid"]:
+            return False
+        try:
+            offsets = (float(yaw_offset_deg), float(pitch_offset_deg))
+            if not all(math.isfinite(x) for x in offsets) or max(abs(x) for x in offsets) > 90:
+                return False
+        except (TypeError, ValueError, OverflowError):
+            return False
+        measured = self._gimbal(gimbal_deg)
+        if self.mount == "base" and measured is None:
+            return False
+        self.reference = _multiply(aligned["quaternion"], _offset_quaternion(*offsets))
+        self.reference_time = float(now)
+        self.reference_gimbal = measured
+        current_yaw, current_pitch = _angles(self.q)
+        reference_yaw, reference_pitch = _angles(self.reference)
+        yaw = _wrapped_delta(current_yaw - reference_yaw)
+        self.yaw_delta = self._last_wrapped_yaw = yaw
+        self.pitch_delta = current_pitch - reference_pitch
+        return True
+
+    @staticmethod
+    def _gimbal(value):
+        if value is None:
+            return None
+        try:
+            result = (float(value["yaw"]), float(value["pitch"])) if isinstance(value, dict) else tuple(float(x) for x in value)
+            if len(result) != 2 or not all(math.isfinite(x) for x in result):
+                return None
+            return result
+        except (KeyError, ValueError, TypeError, OverflowError):
+            return None
+
+    def correction(self, now, gimbal_deg=None, lead_s=0.0):
+        """Remaining heading error, positive motor CCW-left / pitch-up.
+
+        Caller should use the absolute error once, or use a sample-time delta
+        after a visual result; adding the full error to visual feedback doubles
+        the already-observed rotation. Neither motor limits nor pulse conversion
+        belong here. ``base`` needs actual measured relative gimbal angles.
+        """
+        result = self.snapshot(now)
+        result.update(yaw_deg=0.0, pitch_deg=0.0)
+        if not result["valid"] or self.reference is None:
+            result["valid"] = False
+            if result["state"] == "READY":
+                result["state"] = "NO_REFERENCE"
+            return result
+        age = max(0.0, float(now) - self.last_time)
+        prediction = min(self.max_predict, age + max(0.0, float(lead_s)))
+        predicted = _advance(self.q, self.rates, prediction)
+        current_yaw, _ = _angles(self.q)
+        predicted_yaw, predicted_pitch = _angles(predicted)
+        yaw = self.yaw_delta + _wrapped_delta(predicted_yaw - current_yaw)
+        pitch = predicted_pitch - _angles(self.reference)[1]
+        # Camera sensor already observes the completed portion of any motor
+        # movement; never subtract that motion a second time.
+        if self.mount == "base":
+            measured = self._gimbal(gimbal_deg)
+            if measured is None:
+                result.update(valid=False, state="BASE_REQUIRES_GIMBAL_POSITION")
+                return result
+            yaw += measured[0] - self.reference_gimbal[0]
+            pitch += measured[1] - self.reference_gimbal[1]
+        result.update(yaw_deg=-yaw, pitch_deg=-pitch, prediction_s=prediction)
+        return result
+
+
+class HeadingFeedforward:
+    """One daemon sensor worker, one latest state, nonblocking controller reads.
+
+    The worker integrates each IMU sample even when vision drops frames. It does
+    no UART operations. No sensor IO occurs while holding the state mutex, so a
+    slow or stuck sensor cannot hold the controller's lock. Native driver's GIL
+    behavior/IO timeout still requires board verification. Shutdown has a bounded
+    join and never destroys an in-flight native device from another thread.
+
+    Inject a sensor whose ``read()`` returns gyro xyz deg/s or None. Tests may set
+    ``threaded=False`` and use ``ingest`` with a deterministic monotonic clock.
+    """
+
+    def __init__(self, cfg, sensor=None, clock=None, threaded=True):
+        self.cfg = cfg
+        self._clock = clock if clock is not None else time
+        self._sensor = sensor
+        self._estimator = GyroHeading(cfg)
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._thread = None
+        self._closed = False
+        self._startup_calibration = bool(getattr(cfg, "IMU_CALIBRATE_ON_START", False))
+        # Device construction may be slow. Reserve the stationary calibration
+        # phase before starting the worker, so controllers cannot move motors
+        # during initialization and then contaminate a later bias collection.
+        self._startup_calibration_pending = (self._estimator.enabled and
+                                             self._startup_calibration and
+                                             self._estimator.bias is None and threaded)
+        if (self._estimator.enabled and self._startup_calibration and
+                self._estimator.bias is None and not threaded):
+            # Manual ingestion has no device-constructor phase to resolve.
+            self._estimator.start_bias_calibration(self._now())
+        if self._estimator.enabled and threaded:
+            self._thread = threading.Thread(target=self._run, name="imu-heading", daemon=True)
+            self._thread.start()
+
+    def _now(self):
+        return float(self._clock.perf_counter())
+
+    @property
+    def worker_alive(self):
+        """阻塞硬件读未退出时，应用不得另开同一传感器实例。"""
+        return self._thread is not None and self._thread.is_alive()
+
+    def _run(self):
+        try:
+            sensor = self._sensor if self._sensor is not None else MaixIMUSensor()
+            self._sensor = sensor
+            with self._lock:
+                if self._estimator.bias is None:
+                    supplied_bias = getattr(sensor, "bias_dps", None)
+                    if supplied_bias is not None:
+                        self._estimator.set_bias(supplied_bias)
+                if self._estimator.bias is None and self._startup_calibration:
+                    self._estimator.start_bias_calibration(self._now())
+                self._startup_calibration_pending = False
+        except Exception as exc:
+            with self._lock:
+                self._estimator.fail("imu_unavailable: %s" % exc)
+                self._startup_calibration_pending = False
+            return
+        hz = max(1.0, min(400.0, float(getattr(self.cfg, "IMU_POLL_HZ", 200.0))))
+        while not self._stop.is_set():
+            started = self._now()
+            try:
+                gyro = sensor.read()               # IO intentionally outside lock
+                received = self._now()
+                if gyro is not None:
+                    with self._lock:
+                        max_read = max(0.001, float(getattr(self.cfg, "IMU_READ_MAX_S", self._estimator.max_age)))
+                        if received - started > max_read or received < started:
+                            self._estimator.fail("imu_read_timeout")
+                        elif not self._stop.is_set():
+                            self._estimator.update(gyro, received)
+            except Exception as exc:
+                with self._lock:
+                    self._estimator.fail("imu_read_failed: %s" % exc)
+            # One bounded poll per iteration, no queue or catch-up bursts.
+            self._stop.wait(max(0.001, 1.0 / hz - (self._now() - started)))
+
+    def ingest(self, gyro_dps, now=None):
+        """Deterministic injected samples; incompatible with an active worker."""
+        if self._thread is not None:
+            raise RuntimeError("ingest requires threaded=False")
+        with self._lock:
+            return self._estimator.update(gyro_dps, self._now() if now is None else now)
+
+    def sample(self, now=None):
+        with self._lock:
+            result = self._estimator.snapshot(self._now() if now is None else now)
+            if self._startup_calibration_pending:
+                result.update(valid=False, state="CALIBRATING", calibration="PENDING_SENSOR")
+            if self._closed:
+                result.update(valid=False, state="CLOSED")
+            return result
+
+    def sample_at(self, captured_at):
+        with self._lock:
+            result = self._estimator.sample_at(captured_at)
+            if self._closed:
+                result.update(valid=False, state="CLOSED")
+            return result
+
+    def lock_reference(self, now=None, yaw_offset_deg=0.0, pitch_offset_deg=0.0,
+                       gimbal_deg=None):
+        with self._lock:
+            if self._closed or not self._estimator.snapshot(self._now())["valid"]:
+                return False
+            return self._estimator.lock_reference(
+                self._now() if now is None else now, yaw_offset_deg, pitch_offset_deg, gimbal_deg)
+
+    def reset_reference(self):
+        with self._lock:
+            self._estimator.reset_reference()
+
+    def start_bias_calibration(self, now=None):
+        with self._lock:
+            self._estimator.start_bias_calibration(self._now() if now is None else now)
+            self._startup_calibration_pending = False
+
+    def correction(self, now=None, gimbal_deg=None, lead_s=0.0):
+        with self._lock:
+            result = self._estimator.correction(self._now() if now is None else now,
+                                                gimbal_deg, lead_s)
+            if self._startup_calibration_pending:
+                result.update(valid=False, state="CALIBRATING", calibration="PENDING_SENSOR",
+                              yaw_deg=0.0, pitch_deg=0.0)
+            if self._closed:
+                result.update(valid=False, state="CLOSED", yaw_deg=0.0, pitch_deg=0.0)
+            return result
+
+    def close(self):
+        self._closed = True
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=0.10)
+'''
+
 # ===== vision.aim_control  (vision/aim_control.py) =====
 _MOD_SRC['vision.aim_control'] = r'''
 """闭环调度中枢 + 旧版 ASCII 串口输出（从 main.py 搬迁，v0.4.6 模块化）。
@@ -2756,8 +3647,11 @@ VisionControl 把"识别 → 光斑 → 偏差 → 串口 → 闭环 → 打包�
 """
 import threading
 import time
+import math
 
+from .gimbal_search import SearchSweep
 from .gimbal_self_test import GimbalSelfTest
+from .imu_heading import HeadingFeedforward
 from .laser_spot import LaserSpotDetector, deviation
 from .rectangle_center import RectangleCenterDetector
 
@@ -2781,12 +3675,23 @@ class VisionControl:
     主线程要触发自检只置 `request_test` 事件，由识别线程在自己的上下文里安全地启动。
     """
 
-    def __init__(self, cfg, link, aim, calibrator, uart, clock=None):
+    def __init__(self, cfg, link, aim, calibrator, uart, clock=None, heading=None):
         self.cfg, self.link, self.aim = cfg, link, aim
         self.calibrator, self.uart = calibrator, uart
         self._clock = clock if clock is not None else time
         self.self_test = None
         self.request_test = threading.Event()   # 主线程置位、识别线程消费（按钮 → 自检）
+        self.request_search = threading.Event()
+        self.request_imu_bias = threading.Event()
+        self.search = None
+        self.notice = ""
+        self.heading = heading
+        if self.heading is None and bool(getattr(cfg, "ENABLE_IMU_FEEDFORWARD", False)):
+            self.heading = HeadingFeedforward(cfg, clock=self._clock)
+        self.last_visual_reference = -math.inf
+        self.last_visual_capture = -math.inf
+        self.control_source = "vision"
+        self.last_commands = {"yaw": None, "pitch": None}
         self.detector = RectangleCenterDetector(cfg)
         self.laser = LaserSpotDetector(cfg) if cfg.ENABLE_LASER else None
         self.laser_static = self.laser is not None and self.laser.mode == "fixed"
@@ -2808,13 +3713,32 @@ class VisionControl:
             result["laser_u"], result["laser_v"] = self.laser_state["u"], self.laser_state["v"]
             result["dx"], result["dy"] = dv                 # dx=靶心−光斑（闭环用的那个偏差）
         now = self._clock.perf_counter()
-        fresh = 0 <= now - captured_at <= self.cfg.RESULT_MAX_AGE_S  # 拒绝过期/时钟错位结果
-        result["aim_valid"] = bool(dv is not None and fresh)
-        self.last_capture = captured_at
+        result["aim_valid"] = dv is not None
+        return self.accept_result(result, captured_at, self.laser_state,
+                                  started=started, detected=detected)
+
+    def accept_result(self, result, captured_at, laser=None, started=None, detected=None):
+        """统一 API/相机的控制入口；result 必须是本帧的真实视觉测量。"""
+        now = self._clock.perf_counter()
+        started = now if started is None else started
+        detected = now if detected is None else detected
+        result["captured_at"] = float(captured_at)
+        result["age_s"] = max(0.0, now - captured_at)
+        timestamp_valid = math.isfinite(float(captured_at)) and 0 <= now - captured_at <= self.cfg.RESULT_MAX_AGE_S
+        ordered = captured_at > self.last_capture
+        fresh = timestamp_valid and ordered
+        result["aim_valid"] = bool(result.get("aim_valid") and fresh)
+        if laser is not None:
+            self.laser_state = laser
+        if fresh:
+            self.last_capture = captured_at
+            if result.get("aim_valid"):
+                self.last_visual_capture = captured_at
         # 过期结果不外发：串口与闭环都用降级后的 output，避免拿旧定位驱动电机。
         output = result if fresh else dict(valid=False, aim_valid=False, stage="stale")
         send_uart(self.uart, output)
-        self._control(output, now, new_measurement=True)
+        # 重复/倒序图像只触发保活，不能覆盖新参考或按旧误差打断正在进行的动作。
+        self._control(output if ordered else None, now, new_measurement=ordered)
         # 返回给显示层的快照：识别结果 + 光斑 + 计时 + 状态串。
         return dict(result=result, laser=dict(self.laser_state) if self.laser_state else None,
                     captured_at=captured_at, completed_at=self._clock.perf_counter(),
@@ -2825,12 +3749,126 @@ class VisionControl:
         self._control(None, self._clock.perf_counter(), new_measurement=False)
 
     def status(self):
-        """给屏幕左下角显示的状态串：自检 > 标定 > 闭环状态机的优先级。"""
+        """给屏幕显示状态：故障优先，其后为自检、标定、搜索和闭环。"""
+        if self.aim is not None and self.aim.state == "FAULT":
+            return "FAULT"
         if self.self_test is not None and not self.self_test.done:
             return "self-test %d/%d" % (self.self_test.index, len(self.self_test.sequence))
         if self.calibrator is not None and not self.calibrator.done:
             return "calibrate %s" % self.calibrator.axis
+        if self.search is not None:
+            if not self.search.done:
+                return "SEARCH %d/%d" % (self.search.index, len(self.search.sequence))
+            if self.search.state in ("UNCALIBRATED", "FAULT"):
+                return "SEARCH %s: %s" % (self.search.state, self.search.reason)
+        if self.control_source == "imu":
+            return "IMU HOLD %s" % self.aim.state
+        if self.notice:
+            return self.notice
         return self.aim.state if self.aim is not None else "vision"
+
+    def imu_status(self):
+        return self.heading.sample(self._clock.perf_counter()) if self.heading is not None else {
+            "valid": False, "state": "DISABLED"}
+
+    def stop(self, now=None):
+        now = self._clock.perf_counter() if now is None else float(now)
+        if self.search is not None and not self.search.done:
+            self.search.cancel(now)
+            self._finish_search()
+            accepted = self.search.state != "FAULT"
+        else:
+            accepted = True if self.link is None else self._stop_motion(now)
+        self.stale_stopped = True
+        if self.heading is not None:
+            self.heading.reset_reference()
+        self.last_visual_reference = -math.inf
+        return accepted
+
+    def close(self):
+        if self.heading is not None:
+            self.heading.close()
+
+    def _finish_search(self):
+        if self.search.state == "FAULT":
+            self.aim.fault("search:%s" % self.search.reason)
+        elif self.search.stopped_at is not None:
+            self.aim.motion_stopped(now=self.search.stopped_at)
+            self.aim.update({"aim_valid": False}, now=self.search.stopped_at)
+        self.stale_stopped = True
+        self.last_visual_reference = -math.inf
+        if self.heading is not None:
+            self.heading.reset_reference()
+
+    def _degree_scales(self):
+        result = {}
+        for axis in ("yaw", "pitch"):
+            ppd = float(getattr(self.cfg, axis.upper() + "_PULSES_PER_DEG", 0.0))
+            if ppd <= 0:
+                ppd = float(getattr(self.cfg, "GIMBAL_GEAR_RATIO", 0.0)) * float(
+                    getattr(self.cfg, "MOTOR_PULSES_PER_REV", 3200)) / 360.0
+            ppp = float(getattr(self.cfg, "PULSE_PER_PX_" + axis.upper(), 0.0))
+            sign = float(getattr(self.cfg, "DIR_SIGN_" + axis.upper(), 0.0))
+            if not all(math.isfinite(v) for v in (ppd, ppp, sign)) or min(ppd, ppp) <= 0 or abs(sign) != 1:
+                return None
+            physical = 1 if bool(getattr(self.cfg, axis.upper() + "_POSITIVE_CCW", True)) else -1
+            result[axis] = (ppd, ppp, sign * physical)
+        return result
+
+    def _lock_visual_heading(self, result, now):
+        if self.heading is None or not result.get("aim_valid"):
+            return
+        scales = self._degree_scales()
+        if scales is None:
+            self.notice = "IMU: pulse/degree calibration required"
+            return
+        offsets = {axis: float(result[key]) * ppp / ppd * sign
+                   for axis, key in (("yaw", "dx"), ("pitch", "dy"))
+                   for ppd, ppp, sign in (scales[axis],)}
+        captured = float(result["captured_at"])
+        if (captured <= getattr(self.aim, "capture_after", -math.inf) or
+                captured <= self.last_visual_reference):
+            return
+        if self.heading.lock_reference(captured, yaw_offset_deg=offsets["yaw"],
+                                       pitch_offset_deg=offsets["pitch"]):
+            self.last_visual_reference = captured
+
+    def _inertial_result(self, now):
+        if self.heading is None or now - self.last_visual_reference > float(
+                getattr(self.cfg, "IMU_HOLD_MAX_S", 2.0)):
+            return None
+        scales = self._degree_scales()
+        if scales is None:
+            return None
+        state = self.heading.correction(now, lead_s=float(getattr(self.cfg, "IMU_LEAD_S", 0.03)))
+        if not state.get("valid"):
+            return None
+        angles = (float(state["yaw_deg"]), float(state["pitch_deg"]))
+        if not all(math.isfinite(x) for x in angles) or max(abs(x) for x in angles) > float(
+                getattr(self.cfg, "IMU_MAX_CORRECTION_DEG", 100.0)):
+            return None
+        errors = {axis: angle * ppd / ppp * sign
+                  for axis, angle in zip(("yaw", "pitch"), angles)
+                  for ppd, ppp, sign in (scales[axis],)}
+        return dict(aim_valid=True, valid=False, source="imu", dx=errors["yaw"],
+                    dy=errors["pitch"], captured_at=state["sampled_at"])
+
+    def _dispatch(self, result, now):
+        output = self.aim.update(result, now=now)
+        for axis in output.get("stop_axes", ()):
+            if not self._stop_motion(now, axis=axis, reset=False):
+                return
+        for axis, command in output["cmds"].items():
+            if command is not None:
+                ccw, pulses, rpm = command
+                acc = getattr(self.cfg, "IMU_ACC", 80) if result.get("source") == "imu" else self.cfg.ACC_TRACK
+                accepted = self.link.move(axis, ccw, pulses, rpm, acc, now=now)
+                if accepted is False:
+                    self._stop_motion(now)
+                    self.aim.fault("tx:%s" % axis)
+                    self.last_commands = {"yaw": None, "pitch": None}
+                    return
+                self.last_commands[axis] = command
 
     def _stop_motion(self, now, axis=None, reset=True):
         """停机帧未写成功时保持 FAULT，不能按已停机继续追加动作。"""
@@ -2851,13 +3889,20 @@ class VisionControl:
         因为链路故障要阻断的不只是追踪，还包括已启动的自检/标定。
         """
         link, aim = self.link, self.aim
+        self.last_commands = {"yaw": None, "pitch": None}
         if link is None or aim is None:
+            if self.request_search.is_set():
+                self.request_search.clear()
+                self.notice = "SEARCH unavailable: gimbal disabled"
             return
         feedback = link.poll(now)                            # 非阻塞收两条串口的返回帧
         if feedback and bool(feedback.get("fault")) and aim.state != "FAULT":
             reason = feedback.get("reason")
             self._stop_motion(now)
             aim.fault("link:%s" % reason)                    # 链路故障 → 进入 FAULT
+            if self.search is not None and not self.search.done:
+                self.search.fail(reason, now)
+        imu_calibrating = self.heading is not None and self.heading.sample(now).get("state") == "CALIBRATING"
         if self.request_test.is_set():                       # 屏幕按钮置位的自检请求
             self.request_test.clear()
             if self.self_test is not None and not self.self_test.done:
@@ -2866,6 +3911,10 @@ class VisionControl:
                 print("[ui] 链路 FAULT，拒绝自检")
             elif self.calibrator is not None and not self.calibrator.done:
                 print("[ui] 标定进行中，拒绝自检")
+            elif self.search is not None and not self.search.done:
+                print("[ui] 寻靶进行中，先取消 SEARCH 再自检")
+            elif imu_calibrating:
+                print("[ui] IMU 偏置标定中，拒绝自检")
             elif not self.cfg.GIMBAL_SELF_TEST:
                 print("[ui] GIMBAL_SELF_TEST=False，忽略自检")
             else:
@@ -2873,15 +3922,78 @@ class VisionControl:
                     return
                 self.self_test = GimbalSelfTest(self.cfg, link, now)
                 print("[ui] 收到点击 -> 启动上电自检（%d 步）" % len(self.self_test.sequence))
+        if self.request_search.is_set():
+            self.request_search.clear()
+            if aim.state == "FAULT":
+                self.notice = "SEARCH rejected: FAULT"
+            elif self.calibrator is not None and not self.calibrator.done:
+                self.notice = "SEARCH rejected: calibrating"
+            elif self.self_test is not None and not self.self_test.done:
+                self.notice = "SEARCH rejected: self-test"
+            elif imu_calibrating:
+                self.notice = "SEARCH rejected: IMU calibrating"
+            elif self.search is not None and not self.search.done:
+                self.search.cancel(now)
+                self._finish_search()
+                return
+            elif new_measurement and result and result.get("valid"):
+                self.notice = "SEARCH: target already visible"
+            elif self._stop_motion(now):
+                self.notice = ""
+                self.search = SearchSweep(self.cfg, link, now)
+                if self.search.done:
+                    self._finish_search()
+        if self.request_imu_bias.is_set():
+            self.request_imu_bias.clear()
+            if (self.heading is not None and aim.state != "FAULT" and
+                    not (self.search is not None and not self.search.done) and
+                    not (self.self_test is not None and not self.self_test.done) and
+                    not (self.calibrator is not None and not self.calibrator.done) and
+                    self._stop_motion(now)):
+                self.heading.start_bias_calibration(now)
+                self.notice = "IMU bias: keep vehicle and gimbal stationary"
         # 链路故障必须阻断已启动的自检/标定，不只阻断普通追踪。
         if aim.state == "FAULT":
             return
+        if self.heading is not None and self.heading.sample(now).get("state") == "CALIBRATING":
+            return
         if self.calibrator is not None and not self.calibrator.done:
             self.calibrator.update(now, result or {"valid": False, "aim_valid": False})
+            if self.calibrator.state == "FAULT":
+                self._stop_motion(now)
+                aim.fault("calibration:%s" % self.calibrator.reason)
             return
         if self.self_test is not None and not self.self_test.done:
             self.self_test.update(now)
+            if self.self_test.state == "FAULT":
+                self._stop_motion(now)
+                aim.fault("self-test:%s" % self.self_test.reason)
             return
+        if self.search is not None and not self.search.done:
+            self.control_source = "search"
+            self.search.update(now, result if new_measurement else None)
+            if self.search.done:
+                self._finish_search()
+            return
+        previous_source = self.control_source
+        self.control_source = "vision"
+        if new_measurement and result and result.get("aim_valid"):
+            self._lock_visual_heading(result, now)
+        elif not new_measurement and now - self.last_visual_capture < float(getattr(self.cfg, "IMU_VISUAL_GAP_S", 0.05)):
+            return
+        else:
+            inertial = self._inertial_result(now)
+            if inertial is not None:
+                self.control_source = "imu"
+                self.stale_stopped = False
+                self._dispatch(inertial, now)
+                return
+            if previous_source == "imu":
+                if not self.stale_stopped:
+                    self._stop_motion(now)
+                aim.update({"aim_valid": False}, now=now)
+                self.stale_stopped = True
+                return
         if not new_measurement:
             # idle 路径：没有新视觉误差。若已超时且尚未停机，则停一次并置 aim 无效（防"漂"）。
             if now - self.last_capture > self.cfg.RESULT_MAX_AGE_S and not self.stale_stopped:
@@ -2895,19 +4007,7 @@ class VisionControl:
             self.stale_stopped = True
         else:
             self.stale_stopped = False
-        output = aim.update(result, now=now)                # 状态机算出的两轴增量指令
-        for axis in output.get("stop_axes", ()):
-            if not self._stop_motion(now, axis=axis, reset=False):
-                return
-        commands = output["cmds"]
-        for axis, command in commands.items():
-            if command is not None:
-                ccw, pulses, rpm = command
-                accepted = link.move(axis, ccw, pulses, rpm, self.cfg.ACC_TRACK, now=now)
-                if accepted is False:
-                    self._stop_motion(now)
-                    aim.fault("tx:%s" % axis)
-                    break
+        self._dispatch(result, now)
 '''
 
 # ===== vision.gimbal_calibrate  (vision/gimbal_calibrate.py) =====
@@ -3069,6 +4169,293 @@ class GimbalCalibrator:
         return self.state
 '''
 
+# ===== vision.app_runtime  (vision/app_runtime.py) =====
+_MOD_SRC['vision.app_runtime'] = r'''
+"""Reusable application assembly; camera, vision and display keep separate clocks.
+
+MaixPy imports stay in ``run()`` so importing the application API on a PC does
+not open hardware. The vision worker exclusively owns controller/UART calls;
+touch input only sets request events, including while the camera has no frame.
+"""
+import time
+
+import cv2
+import numpy as np
+
+from .aim_control import VisionControl
+from .camera_source import to_gray
+from .gimbal_aim import GimbalAim
+from .gimbal_calibrate import GimbalCalibrator
+from .laser_spot import PANEL_H, draw_laser_overlay
+from .preview import (Preview, TouchButtons, apply_maixvision_stream_policy,
+                      display_result)
+from .rate_meter import FrameRate
+from .rectangle_center import draw_result
+from .stepper_link import StepperLink
+from .telemetry import MAIN_LOOP_SLOW_MS, format_perf_line, format_slow_loop
+from .vision_worker import LatestFrameWorker
+
+
+class TrackingApplication:
+    """Run B-track recognition, preview and gimbal control as an application.
+
+    ``cfg`` is a Config-compatible object; ``clock`` supplies ``perf_counter``.
+    Hardware is opened by ``run()`` and closed on exit, including startup errors.
+    External callers may use ``request_search()`` / ``request_self_test()``
+    while running, without touching the UART or needing a display.
+    """
+
+    def __init__(self, cfg, build_id, clock=None, controller_factory=None):
+        self.cfg, self.build_id = cfg, str(build_id)
+        self.clock = clock if clock is not None else time
+        self.controller_factory = controller_factory or VisionControl
+        self.cam = self.uart = self.link = self.aim = self.calibrator = None
+        self.controller = self.worker = self.preview = self.touch = None
+        self._running = False
+
+    def request_self_test(self):
+        """Queue a self-test request; the controller checks fault/feature guards."""
+        return self._request("request_test")
+
+    def request_search(self):
+        """Queue a search toggle (start/cancel), safe from any calling thread."""
+        return self._request("request_search")
+
+    def _request(self, name):
+        event = getattr(self.controller, name, None)
+        if not self._running or event is None:
+            return False
+        event.set()
+        return True
+
+    def _poll_touch(self):
+        if self.touch is None:
+            return
+        hit = self.touch.poll(self.preview)
+        if hit == "selftest":
+            self.request_self_test()
+        elif hit == "search":
+            self.request_search()
+
+    def _configure_touch(self):
+        cfg, preview = self.cfg, self.preview
+        if preview.enabled and bool(getattr(cfg, "ENABLE_TOUCH_BUTTON", True)):
+            # Screen coordinates, clamped to fit both buttons even on small LCDs.
+            width, height = int(preview.width), int(preview.height)
+            margin = min(8, max(0, min(width, height) // 8))
+            search = bool(getattr(cfg, "ENABLE_SEARCH_BUTTON", True))
+            gap = max(1, min(8, height // 12))
+            if height - 2 * margin < 3:
+                search = False
+            count = 2 if search else 1
+            bw = min(max(70, int(width * .30)), max(1, width - 2 * margin))
+            available = max(1, height - 2 * margin - (gap if search else 0))
+            bh = min(max(34, int(height * .20)), max(1, available // count))
+            x0, x1 = max(0, width - bw - margin), max(1, width - margin)
+            preview.add_button("selftest", x0, margin, x1, margin + bh)
+            if search:
+                y0 = margin + bh + gap
+                preview.add_button("search", x0, y0, x1, y0 + bh)
+            self.touch = TouchButtons(cfg)
+        elif preview.enabled:
+            print("[touch] ENABLE_TOUCH_BUTTON=False -> 不画按钮")
+        elif bool(getattr(cfg, "ENABLE_TOUCH_BUTTON", True)):
+            print("[touch] 无显示 -> 屏幕按钮不可用（可通过应用 API 请求自检/搜索）")
+
+    def _open_gimbal(self):
+        cfg = self.cfg
+        if not cfg.ENABLE_GIMBAL:
+            return
+        try:
+            self.link = StepperLink(cfg)
+            self.link.enable()
+            self.aim = GimbalAim(cfg)
+            self.calibrator = GimbalCalibrator(cfg, self.link, self.clock.perf_counter())
+            if self.calibrator.done:
+                self.calibrator = None
+            else:
+                print("[gimbal] calibration mode axis=%s（本次只标定，不闭环）" %
+                      self.calibrator.axis)
+            print("[gimbal] enabled yaw=%s(ID%d) pitch=%s(ID%d) acc=%d" %
+                  (cfg.YAW_DEV, cfg.ADDR_YAW, cfg.PITCH_DEV, cfg.ADDR_PITCH,
+                   cfg.ACC_DEFAULT))
+        except Exception as exc:
+            # Preserve any partly opened link for exit cleanup; never drive it
+            # when setup did not complete.
+            self.aim = self.calibrator = None
+            print("[gimbal] disabled after init failure: %s" % exc)
+
+    def run(self):
+        """Run until MaixPy requests exit, then release owned resources."""
+        if self._running:
+            raise RuntimeError("tracking application is already running")
+        previous_thread = self.worker.thread if self.worker is not None else None
+        if previous_thread is not None and previous_thread.is_alive():
+            raise RuntimeError("previous vision worker still owns hardware")
+        previous_display = self.preview.thread if self.preview is not None else None
+        if previous_display is not None and previous_display.is_alive():
+            raise RuntimeError("previous display worker still owns hardware")
+        previous_heading = getattr(self.controller, "heading", None)
+        if bool(getattr(previous_heading, "worker_alive", False)):
+            raise RuntimeError("previous IMU worker still owns hardware")
+        # A second run opens fresh resources. A failed early startup must never
+        # close or stop already released resources left over from a prior run.
+        self.cam = self.uart = self.link = self.aim = self.calibrator = None
+        self.controller = self.worker = self.preview = self.touch = None
+        self._running = True
+        cfg, clock = self.cfg, self.clock
+        try:
+            apply_maixvision_stream_policy(cfg)
+            from maix import app, camera, image
+
+            cv2.setNumThreads(cfg.OPENCV_THREADS)
+            self.cam = camera.Camera(cfg.CAMERA_W, cfg.CAMERA_H,
+                                     image.Format.FMT_GRAYSCALE,
+                                     fps=cfg.CAMERA_FPS, buff_num=cfg.CAMERA_BUFFERS)
+            self.cam.skip_frames(cfg.SKIP_FRAMES)
+            if cfg.ENABLE_UART:
+                try:
+                    from maix import uart as maix_uart
+                    self.uart = maix_uart.UART(cfg.UART_PORT, cfg.UART_BAUD)
+                except Exception as exc:
+                    print("[uart] open failed: %s" % exc)
+            self._open_gimbal()
+            self.preview = Preview(cfg, clock=clock)
+            self._configure_touch()
+            self.controller = self.controller_factory(
+                cfg, self.link, self.aim, self.calibrator, self.uart, clock=clock)
+            self.worker = LatestFrameWorker(self.controller.process, self.controller.idle,
+                                           cfg.VISION_ASYNC, clock=clock)
+            self._log_startup()
+            self._capture_loop(app, image)
+        finally:
+            self._running = False
+            self._shutdown()
+
+    def _log_startup(self):
+        cfg, preview = self.cfg, self.preview
+        print("[rect-center] %s search_width=%d display_width=%d display_fps=%d" %
+              (self.build_id, cfg.SEARCH_WIDTH, preview.render_width, cfg.SHOW_FPS))
+        print("[preview] async=%s 画布=%dx%d（SHOW_WIDTH=%d；0=用屏幕原始宽度）" %
+              (getattr(cfg, "SHOW_ASYNC", True), preview.render_width,
+               preview.render_height, int(getattr(cfg, "SHOW_WIDTH", 0) or 0)))
+        print("[vision] latest-frame worker=%s max_result_age=%.0fms" %
+              (cfg.VISION_ASYNC, cfg.RESULT_MAX_AGE_S * 1000))
+        print("[ui] 上电自检已改为屏幕按钮：点显示右上角 SELF-TEST 触发（不再上电自动跑）")
+        if "search" in preview.buttons:
+            print("[ui] SEARCH 按钮：点击启动搜索，再点击取消（不自动启动）")
+
+    def _capture_loop(self, app, image):
+        cfg, clock = self.cfg, self.clock
+        worker, preview = self.worker, self.preview
+        capture_rate = FrameRate()
+        last_log = clock.perf_counter()
+        read_times, draw_times, loop_times = [], [], []
+        while not app.need_exit():
+            started = clock.perf_counter()
+            img = self.cam.read()
+            captured = clock.perf_counter()
+            # Touch input remains live during camera gaps. It only sets events;
+            # async UART/control work remains exclusively on the vision worker.
+            self._poll_touch()
+            if img is None:
+                if worker.thread is None:
+                    self.controller.idle()
+                self._check_worker()
+                continue
+            read_times.append((captured - started) * 1000)
+            gray = to_gray(img, image)
+            capture_rate.record(captured)
+            worker.submit(gray, captured)
+            now = clock.perf_counter()
+            snapshot, vision_fps, _ = worker.snapshot(now)
+            self._check_worker()
+            result, laser_state, age = display_result(snapshot, now, cfg.RESULT_MAX_AGE_S)
+            if preview.due(now):
+                t_draw = clock.perf_counter()
+                self._draw_preview(gray, result, laser_state, snapshot, vision_fps, age, now)
+                draw_times.append((clock.perf_counter() - t_draw) * 1000)
+            loop_times.append((clock.perf_counter() - started) * 1000)
+            now = clock.perf_counter()
+            if now - last_log >= cfg.LOG_INTERVAL:
+                self._log_performance(now, capture_rate, vision_fps, result, age,
+                                      read_times, draw_times, loop_times)
+                last_log = now
+                read_times.clear()
+                draw_times.clear()
+                loop_times.clear()
+
+    def _check_worker(self):
+        if self.worker.error is not None:
+            raise RuntimeError("vision worker failed: " + self.worker.error)
+
+    def _draw_preview(self, gray, result, laser_state, snapshot, vision_fps, age, now):
+        preview = self.preview
+        view = draw_result(gray, result, preview.render_width,
+                           top_offset=PANEL_H if laser_state is not None else 0)
+        if laser_state is not None:
+            draw_laser_overlay(view, laser_state, result,
+                               min(1.0, preview.render_width / float(gray.shape[1])),
+                               use_raw=self.cfg.AIM_USE_RAW)
+        cv2.putText(view, "disp %.1f low1 %.1f det %.1f age %.0fms" %
+                    (preview.fps, preview.low1, vision_fps, age * 1000),
+                    (8, view.shape[0] - 12), cv2.FONT_HERSHEY_SIMPLEX,
+                    .40, (0, 255, 255), 1)
+        preview.render(view, now, status=snapshot["status"] if snapshot else "waiting")
+
+    def _log_performance(self, now, capture_rate, vision_fps, result, age,
+                         read_times, draw_times, loop_times):
+        preview, worker = self.preview, self.worker
+        capture_fps, _ = capture_rate.values(now)
+        display_fps, display_low1 = preview.rate.values(now)
+        show_avg, show_p95, show_max, show_n = preview.take_show_stats()
+        read_avg = float(np.mean(read_times)) if read_times else 0.0
+        draw_avg = float(np.mean(draw_times)) if draw_times else 0.0
+        loop_avg = float(np.mean(loop_times)) if loop_times else 0.0
+        print(format_perf_line(
+            self.build_id, capture_fps, display_fps, display_low1, vision_fps,
+            result, read_avg, draw_avg, loop_avg, show_avg, show_p95, show_max,
+            show_n, age, preview.shown, preview.dropped, worker.dropped))
+        if self.aim is not None:
+            print(self.aim.status_line())
+        if show_p95 > 100:
+            preview.warn_slow_once(show_p95)
+        if loop_avg > MAIN_LOOP_SLOW_MS:
+            print(format_slow_loop(loop_avg))
+
+    def _close_resource(self, resource, label):
+        close = getattr(resource, "close", None)
+        if close is not None:
+            try:
+                close()
+            except Exception as exc:
+                print("[%s] close on exit failed: %s" % (label, exc))
+
+    def _shutdown(self):
+        """Stop worker before UART/IMU; display/camera cleanup is independent."""
+        worker_error = None
+        if self.worker is not None:
+            try:
+                self.worker.close()
+            except Exception as exc:
+                worker_error = exc
+        thread = self.worker.thread if self.worker is not None else None
+        if thread is None or not thread.is_alive():
+            if self.link is not None:
+                try:
+                    self.link.stop()
+                except Exception as exc:
+                    print("[gimbal] stop on exit failed: %s" % exc)
+            self._close_resource(self.controller, "vision")
+            self._close_resource(self.link, "gimbal")
+            self._close_resource(self.uart, "uart")
+        self._close_resource(self.preview, "preview")
+        self._close_resource(getattr(self.touch, "ts", None), "touch")
+        self._close_resource(self.cam, "camera")
+        if worker_error is not None:
+            raise worker_error
+'''
+
 # ===== target_api  (target_api.py) =====
 _MOD_SRC['target_api'] = r'''
 """25Efork 视觉能力对外 API —— 识别黑框 / 追踪靶心中心（B 轨）。
@@ -3161,9 +4548,14 @@ if _HERE not in sys.path:
 
 from vision.rectangle_center import RectangleCenterDetector
 from vision.laser_spot import LaserSpotDetector, deviation
+from vision.aim_control import VisionControl
+from vision.gimbal_search import SearchSweep
+from vision.imu_heading import HeadingFeedforward
+from vision.app_runtime import TrackingApplication
 
 __all__ = ["Result", "load_config", "to_gray", "detect_black_frame",
-           "CenterTracker", "track_center", "reset", "AimLoop"]
+           "CenterTracker", "track_center", "reset", "AimLoop",
+           "TrackingApplication", "SearchSweep", "HeadingFeedforward"]
 
 _default_tracker = None
 
@@ -3345,10 +4737,12 @@ class AimLoop:
         cmds       dict  {"yaw": (ccw, pulses, rpm) or None, "pitch": ...}
     """
 
-    def __init__(self, cfg=None, enable_motors=True, with_laser=True, clock=None):
+    def __init__(self, cfg=None, enable_motors=True, with_laser=True, clock=None, heading=None):
         self.cfg = cfg if cfg is not None else load_config()
         self._clock = clock if clock is not None else time
         self._stopped = True
+        self._controller = None
+        self.heading = heading
         self.tracker = CenterTracker(self.cfg, with_laser=with_laser)
         self.link = None
         self.aim = None
@@ -3372,40 +4766,51 @@ class AimLoop:
         res["cmds"] = {"yaw": None, "pitch": None}
         if self.aim is None or self.link is None:
             return res
-        fb = self.link.poll(now)
-        if fb and fb.get("fault") and self.aim.state != "FAULT":
-            self.stop(now)
-            self.aim.fault("link:%s" % fb.get("reason", "unknown"))
-        if self.aim.state == "FAULT":
-            res["aim_state"] = "FAULT"
-            return res
-        if not res.get("aim_valid") and not self._stopped:
-            self.stop(now)
-        out = self.aim.update(res, now=now)
-        res["aim_state"] = out["state"]
-        for axis in out.get("stop_axes", ()):
-            if self.link.stop(axis=axis, now=now) is False:
-                self.stop(now)
-                self.aim.fault("stop:%s" % axis)
-                res["aim_state"] = "FAULT"
-                return res
-        for axis, command in out["cmds"].items():
-            if command is not None:
-                ccw, pulses, rpm = command
-                accepted = self.link.move(axis, ccw, pulses, rpm,
-                                          getattr(self.cfg, "ACC_TRACK", getattr(self.cfg, "ACC_DEFAULT", 0)), now=now)
-                if accepted is False:
-                    self.stop(now)
-                    self.aim.fault("tx:%s" % axis)
-                    res["aim_state"] = "FAULT"
-                    res["cmds"] = {"yaw": None, "pitch": None}
-                    break
-                res["cmds"][axis] = command
-                self._stopped = False
+        controller = self._control()
+        controller.accept_result(res, captured, res.get("laser"))
+        res["aim_state"] = self.aim.state
+        res["cmds"] = dict(controller.last_commands)
+        res["control_source"] = controller.control_source
+        res["search_state"] = controller.search.state if controller.search is not None else None
+        self._stopped = controller.stale_stopped
         return res
+
+    def _control(self):
+        if (self._controller is None or self._controller.link is not self.link or
+                self._controller.aim is not self.aim):
+            self._controller = VisionControl(self.cfg, self.link, self.aim, None, None,
+                                             clock=self._clock, heading=self.heading)
+            self.heading = self._controller.heading
+        return self._controller
+
+    def request_search(self):
+        """启动/取消 SEARCH；由 step()/idle() 消费请求，不在按钮线程写串口。"""
+        if self.link is None or self.aim is None:
+            return False
+        self._control().request_search.set()
+        return True
+
+    def calibrate_imu_bias(self):
+        """请求静止偏置标定；先停机，运行时仍需保持底盘和云台静止。"""
+        controller = self._control()
+        if controller.heading is None or self.link is None or self.aim is None:
+            return False
+        controller.request_imu_bias.set()
+        return True
+
+    def imu_status(self):
+        return self._control().imu_status()
+
+    def idle(self):
+        """无新图像时维持 ACK、搜索、IMU 补偿和视觉过期停机。"""
+        self._control().idle()
 
     def stop(self, now=None):
         now = self._clock.perf_counter() if now is None else float(now)
+        if self._controller is not None:
+            accepted = self._controller.stop(now)
+            self._stopped = True if accepted else self._stopped
+            return accepted
         if self.link is not None:
             if self.link.stop(now=now) is False:
                 if self.aim is not None:
@@ -3418,78 +4823,27 @@ class AimLoop:
 
     def close(self):
         self.stop()
+        if self._controller is not None:
+            self._controller.close()
+        if self.link is not None:
+            close = getattr(self.link, "close", None)
+            if close is not None:
+                close()
 '''
 
 _MAIN_SRC = r'''
-"""MaixCAM2 entry point for perspective robust black rectangle center detection.
+"""MaixCAM2 B 轨入口；应用生命周期由 TrackingApplication 管理。
 
-上电行为（v0.4.1 起）：
-  使能 → 建显示/触摸 → 进入主循环（识别 + 光斑偏差 + 云台闭环）。
-  **上电不再自动跑自检**；自检改为屏幕右上角的 `SELF-TEST` 按钮，点一下才触发
-  （见 `Config.ENABLE_TOUCH_BUTTON`）。`CALIBRATE_AXIS` 非空时仍走标定（标定期不闭环）。
+main() 只负责构建号和运行。识别/闭环独占工作线程中的 UART；触摸仅投递
+SELF-TEST/SEARCH 请求。上电不自动自检，CALIBRATE_AXIS 非空时只做开环标定。
 
-画面流转到 MaixVision / 板载屏幕：`vision/preview.py` 的 `Preview` 把带标注的画面 letterbox
-进"屏幕尺寸画布"，再交给**独立显示线程**去 `display.Display().show()`（仍在主进程内 —— 这是
-MaixVision 能看到画面的成熟路径；PC 上无 maix 时自动跳过）。主循环只负责绘制与投递，
-**永不等待 show**。
+模块：app_runtime 装配与退出释放，vision_worker 最新帧识别，aim_control
+调度视觉/搜索/IMU，preview 本地屏与触摸，maixvision_stream 独立进程图传。
+rectangle_center/laser_spot 产生测量，stepper_link/gimbal_aim 执行有限动作。
+rate_meter/telemetry 分别记录采图、识别和显示帧率。
 
-================================================================================
-★ 模块地图（v0.4.6 起 main.py 已按功能拆分为独立模块）—— 改哪块只开哪个文件
-================================================================================
-  vision/rate_meter.py      FrameRate         三路口径的滑动窗口帧率计（capture/disp/detect）
-  vision/camera_source.py   to_gray           相机帧 → 灰度 ndarray（零拷贝借用相机缓冲）
-  vision/vision_worker.py   LatestFrameWorker 识别线程 + 最新帧槽            （时间轴 B）
-  vision/preview.py         Preview / TouchButtons / display_result /
-                            apply_maixvision_stream_policy                   （时间轴 C：显示）
-  vision/aim_control.py     VisionControl     闭环调度中枢（识别线程独占 UART）
-  vision/telemetry.py       format_perf_line  [perf] 日志组装
-  vision/rectangle_center.py · laser_spot.py · gimbal_aim.py ·
-  gimbal_calibrate.py · gimbal_self_test.py · stepper_link.py  几何与执行层（未改动）
-
-  本文件（main.py）只负责三件事：**BUILD_ID · 装配（相机/云台/显示/线程）· 主循环（时间轴 A）**。
-  运行行为与拆分前 100% 一致（日志字符串逐字不变；旧私有名以别名保留，入口测试零改动）。
-
-================================================================================
-★ 图像显示运行逻辑（自"取帧"到"上屏"的完整链路）—— 本文件读法总纲
-================================================================================
-本应用跑着**三条独立的时间轴**。理解显示前必须先分清它们；把三者混在一起，就会把
-"图传慢"误诊为"识别慢"（这正是本项目历史上踩过的坑，见 B 轨 README「v9→v17 追踪手感对照」）。
-
-  时间轴 A —— 主循环（`main()`，主线程；决定采图/控制节奏）
-    ① cam.read()                      从 MaixCAM2 相机取一帧（灰度 FMT_GRAYSCALE）
-    ② to_gray(img, image)             借相机缓冲 → 灰度 ndarray（copy=False，零拷贝）
-    ③ touch.poll(preview)             触摸"按下沿"→ 置 controller.request_test（触发自检）
-    ④ worker.submit(gray, captured)   把**当帧灰度图的副本**投进识别线程（不等待结果）
-    ⑤ worker.snapshot(now)            取回**最近一次**识别结果（可能不是本帧，允许滞后）
-    ⑥ display_result(snapshot,...)    结果超过 RESULT_MAX_AGE_S 即降级为 invalid，不画旧框
-    ⑦ preview.due(now)                显示节拍（SHOW_FPS）到了**且画布空闲**才画：
-         ├─ draw_result()             画外/内框、四角、靶心十字（vision/rectangle_center.py）
-         ├─ draw_laser_overlay()      画光斑标记 + 左上角面板 + 光斑→靶心连线（vision/laser_spot.py）
-         └─ preview.render()          letterbox 到画布 → **投给显示线程，立刻返回**
-    ⑧ 每 LOG_INTERVAL 打印 [perf]     分相耗时 + 三路帧率（口径分开，勿混读）
-
-  时间轴 B —— 识别线程（`LatestFrameWorker`，daemon 线程；决定识别吞吐）
-    "最新帧槽位"取一帧 → controller.process()（识别 + 光斑偏差 + 云台闭环）→ 写回"最新结果槽位"
-    → 空闲时走 controller.idle()（继续收 ACK、推进按钮自检）。槽位只保留**最新**一份：
-    主循环产帧快于识别时，旧帧被丢弃并计入 worker.dropped（丢帧而非积压）。
-
-  时间轴 C —— 显示线程（`Preview._show_loop`，daemon 线程；决定屏幕刷新）
-    取"待上屏画布"槽 → `display.show()`（屏幕 + MaixVision 图传）→ 画布还池。
-    画布池固定 2 张（显示线程 1 张 + 主线程 1 张）；主循环要画时池空 → **直接跳过该帧**
-    （丢帧，不排队、不等待）。所以 show() 再慢也只慢预览本身。
-
-  为什么必须拆成三条轴：
-    · display.show() 走屏幕驱动 / MaixVision 图传，单次可长达数百 ms；同线程时一慢全卡。
-    · 识别（Canny / 轮廓 / 单应）耗时不确定；同线程时识别一慢屏幕就卡成幻灯片。
-    每条轴各自取"最新"，任一侧变慢只表现为**丢帧 / 滞后**，不会互相拖垮（降级但不崩溃）。
-    ★ 历史教训：只把"识别"拆出去是不够的 —— 只要 show() 还在主循环里同步调用，
-      主循环就被它按在地上，`submit()` 的节奏随之被拖死，识别线程再快也无帧可算
-      （表现为 capture / disp / detect_fps **一起**掉到同一个低位）。故 v0.4.3 把显示也拆出去。
-
-  ★ 隔离原则（贯穿本应用）：显示层任何失败 —— 无 maix、Display 建失败、show 抛异常、
-    无触摸屏 —— 一律只打日志并把 `preview.enabled` 置 False，**绝不影响识别、串口下发
-    与云台闭环**。识别的正确性请以 [perf] 日志与 target_api 回归为准，不要拿屏幕观感判断。
-================================================================================
+在 MaixVision 运行完整项目；运行当前文件请用生成的 dist/main_single.py。
+旧私有别名保留供现有工具调用；配置和标定步骤见 README 与硬件标定文档。
 """
 
 import os
@@ -3523,9 +4877,10 @@ from vision.vision_worker import LatestFrameWorker
 from vision.preview import (Preview, TouchButtons, display_result,
                             apply_maixvision_stream_policy)
 from vision.aim_control import VisionControl, send_uart
+from target_api import TrackingApplication
 from vision.telemetry import format_perf_line, format_slow_loop, MAIN_LOOP_SLOW_MS
 
-BUILD_ID = "2026-10-12-smooth-tracking-v0.5.3"
+BUILD_ID = "2026-10-12-search-imu-stream-v0.6.0"
 
 # ---- 兼容别名（v0.4.6 模块化后保留旧私有名）--------------------------------
 # tools/test_runtime_performance.py 直接 `from main import (_FrameRate, _LatestVision,
@@ -3544,188 +4899,18 @@ _apply_maixvision_stream_policy = apply_maixvision_stream_policy
 
 
 def main():
-    # ★ 先把 MaixVision 图传按配置掐断（若处于 MaixVision 模式）——必须早于建 Display，见 preview.py。
-    apply_maixvision_stream_policy(Config)
-
-    # Imports stay inside main so the geometry module remains PC-testable.
-    from maix import app, camera, image
-
-    # 小图上的多线程调度常常比运算本身更贵，也避免 ARM 多核线程争用。
-    cv2.setNumThreads(Config.OPENCV_THREADS)
-
-    cam = camera.Camera(Config.CAMERA_W, Config.CAMERA_H,
-                        image.Format.FMT_GRAYSCALE,
-                        fps=Config.CAMERA_FPS,
-                        buff_num=Config.CAMERA_BUFFERS)
-    cam.skip_frames(Config.SKIP_FRAMES)
-    uart = None
-    if Config.ENABLE_UART:
-        try:
-            from maix import uart as maix_uart
-            uart = maix_uart.UART(Config.UART_PORT, Config.UART_BAUD)
-        except Exception as exc:
-            print("[uart] open failed: %s" % exc)
-    link = None
-    aim = None
-    self_test = None          # ★ 上电不再自动创建；由屏幕按钮触发时才建
-    calibrator = None
-    if Config.ENABLE_GIMBAL:
-        try:
-            from vision.stepper_link import StepperLink
-            link = StepperLink(Config)
-            link.enable()
-            aim = GimbalAim(Config)
-            imu_info = probe_imu()
-            if imu_info["available"]:
-                print("[imu] sample via %s: %s (gyro cannot define absolute yaw zero)" %
-                      (imu_info["method"], str(imu_info["sample"])))
-            else:
-                print("[imu] unavailable: %s" % imu_info["error"])
-            calibrator = GimbalCalibrator(Config, link, time.perf_counter())
-            if calibrator.done:
-                # 未配置标定轴：正常进入（按钮式）自检 + 跟踪。
-                calibrator = None
-            else:
-                print("[gimbal] calibration mode axis=%s（本次只标定，不闭环）" % calibrator.axis)
-            print("[gimbal] enabled yaw=%s(ID%d) pitch=%s(ID%d) acc=%d" %
-                  (Config.YAW_DEV, Config.ADDR_YAW, Config.PITCH_DEV, Config.ADDR_PITCH,
-                   Config.ACC_DEFAULT))
-        except Exception as exc:
-            print("[gimbal] disabled after init failure: %s" % exc)
-
-    # ---- 显示（把画面流转到 MaixVision）+ 屏幕按钮 ----
-    # 按钮几何按**屏幕坐标**定义：右上角一块 30%宽/20%高 的区域（有下限，保证可点）。
-    # 只有"有显示 且 启用触摸按钮"时才注册按钮并建触摸；否则各自打印降级原因。
-    preview = Preview(Config, clock=time)
-    touch = None
-    if preview.enabled and bool(getattr(Config, "ENABLE_TOUCH_BUTTON", True)):
-        bw = max(70, int(preview.width * 0.30))
-        bh = max(34, int(preview.height * 0.20))
-        preview.add_button("selftest", preview.width - bw - 8, 8, preview.width - 8, 8 + bh)
-        touch = TouchButtons(Config)
-    elif preview.enabled:
-        print("[touch] ENABLE_TOUCH_BUTTON=False -> 不画按钮")
-    elif bool(getattr(Config, "ENABLE_TOUCH_BUTTON", True)):
-        print("[touch] 无显示 -> 屏幕按钮不可用（自检需有显示才能点击触发；SHOW=True 才有）")
-
-    # ---- 线程装配：识别线程（时间轴 B）+ 主循环（时间轴 A）----
-    controller = VisionControl(Config, link, aim, calibrator, uart, clock=time)
-    worker = LatestFrameWorker(controller.process, controller.idle, Config.VISION_ASYNC, clock=time)
-    capture_rate = FrameRate()              # 取帧帧率（capture 口径）
-    last_log = time.perf_counter()
-    read_times, draw_times, loop_times = [], [], []   # 本日志窗口内的分相耗时样本（ms）
-    print("[rect-center] %s search_width=%d display_width=%d display_fps=%d" %
-          (BUILD_ID, Config.SEARCH_WIDTH, preview.render_width, Config.SHOW_FPS))
-    print("[preview] async=%s 画布=%dx%d（SHOW_WIDTH=%d；0=用屏幕原始宽度）"
-          % (getattr(Config, "SHOW_ASYNC", True), preview.render_width, preview.render_height,
-             int(getattr(Config, "SHOW_WIDTH", 0) or 0)))
-    print("[vision] latest-frame worker=%s max_result_age=%.0fms" %
-          (Config.VISION_ASYNC, Config.RESULT_MAX_AGE_S * 1000))
-    print("[ui] 上电自检已改为屏幕按钮：点显示右上角 SELF-TEST 触发（不再上电自动跑）")
-    try:
-        # ============================ 时间轴 A：主循环 ============================
-        # 每轮 = 取帧 → 提交识别 → 取最新结果 → 按节拍绘制并投递上屏 → 周期打日志。
-        # 全程不等待识别结果，**也不等待 show**（真正上屏在显示线程），二者慢只表现为
-        # "标注滞后 / 预览掉帧"，都不拖慢循环本身。
-        while not app.need_exit():
-            started = time.perf_counter()
-            img = cam.read()                             # ① 取帧（灰度）
-            if img is None:
-                if worker.thread is None:
-                    controller.idle()                    # 同步模式也要维持失锁停机/串口保活
-                if worker.error is not None:
-                    raise RuntimeError("vision worker failed: " + worker.error)
-                continue
-            captured = time.perf_counter()
-            read_times.append((captured - started) * 1000)   # read 耗时样本
-            gray = to_gray(img, image)                   # ② 零拷贝转灰度 ndarray
-            capture_rate.record(captured)
-            if touch is not None and touch.poll(preview) == "selftest":
-                controller.request_test.set()            # ③ 按键沿 → 通知识别线程起自检
-            worker.submit(gray, captured)                # ④ 提交当帧副本给识别线程
-            now = time.perf_counter()
-            # ⑤ 取最新识别结果（每轮只取一次：日志窗口内不再重复取，省一次加锁 + 帧率统计）
-            snapshot, vision_fps, vision_low1 = worker.snapshot(now)
-            if worker.error is not None:
-                raise RuntimeError("vision worker failed: " + worker.error)   # 识别线程挂了 → 终止
-            result, laser_state, age = display_result(snapshot, now, Config.RESULT_MAX_AGE_S)  # ⑥ 过期降级
-            if preview.due(now):                         # ⑦ 节拍到 + 画布空闲 → 绘制并投递上屏
-                t_draw = time.perf_counter()
-                # 画进 BGR 视图；render_width == 原图宽时 draw_result 只做灰度→BGR，不缩放
-                view = draw_result(gray, result, preview.render_width,
-                                   top_offset=PANEL_H if laser_state is not None else 0)
-                if laser_state is not None:
-                    # 激光叠加：scale = 画布/原图宽，使光斑标记落在与画面对应的位置
-                    draw_laser_overlay(view, laser_state, result,
-                                       min(1.0, preview.render_width / float(gray.shape[1])),
-                                       use_raw=Config.AIM_USE_RAW)
-                # 画面左下角一行小字：disp=显示帧率 low1=最慢1% det=识别帧率 age=结果龄
-                cv2.putText(view, "disp %.1f low1 %.1f det %.1f age %.0fms" %
-                            (preview.fps, preview.low1, vision_fps, age * 1000),
-                            (8, view.shape[0] - 12), cv2.FONT_HERSHEY_SIMPLEX,
-                            0.40, (0, 255, 255), 1)
-                preview.render(view, now, status=snapshot["status"] if snapshot else "waiting")
-                draw_times.append((time.perf_counter() - t_draw) * 1000.0)   # 绘制+投递（不含 show）
-            loop_times.append((time.perf_counter() - started) * 1000.0)
-            now = time.perf_counter()
-            if now - last_log >= Config.LOG_INTERVAL:    # ⑧ 周期日志：分相耗时 + 三路帧率
-                capture_fps, _ = capture_rate.values(now)
-                display_fps, display_low1 = preview.rate.values(now)
-                show_avg, show_p95, show_max, show_n = preview.take_show_stats()
-                read_avg = float(np.mean(read_times)) if read_times else 0.0
-                draw_avg = float(np.mean(draw_times)) if draw_times else 0.0
-                loop_avg = float(np.mean(loop_times)) if loop_times else 0.0
-                detect_ms = snapshot["detect_ms"] if snapshot else 0.0
-                # ★ 读法：[perf] 里 capture / disp / detect_fps 是三路**不同**口径，
-                #   "眼睛看到的刷新率"看 disp，"识别吞吐"看 detect_fps，别互相换算。
-                #   read/draw/loop 属于**主循环**，show 属于**显示线程** —— 分开看就能一眼判定
-                #   "到底谁在吃时间"，不必再靠猜（这正是 1.5fps 归因的关键）。
-                print(format_perf_line(
-                    BUILD_ID, capture_fps, display_fps, display_low1, vision_fps,
-                    result, read_avg, draw_avg, loop_avg,
-                    show_avg, show_p95, show_max, show_n,
-                    age, preview.shown, preview.dropped, worker.dropped))
-                if aim is not None:
-                    print(aim.status_line())
-                if show_p95 > 100:
-                    # show 的 p95 超过 100ms ⇒ 瓶颈在**显示侧**（屏幕驱动 / MaixVision 图传），
-                    # 不是识别慢。预览会掉帧，但识别与闭环不受影响 —— 判据与对策见 README。
-                    preview.warn_slow_once(show_p95)
-                if loop_avg > MAIN_LOOP_SLOW_MS:
-                    # 主循环单轮超过该阈值 ⇒ 已在 15fps 以下，且此数**不含 show**。两个常见来源：
-                    # ① 相机 read 本身偏大；② 显示线程在 MaixVision 图传忙等里空转 CPU，
-                    # 把整体算力抢走（此时 read 也会被动变大）。
-                    print(format_slow_loop(loop_avg))
-                last_log = now
-                read_times.clear()
-                draw_times.clear()
-                loop_times.clear()
-    finally:
-        # worker 独占 UART；停止并 join 后主线程才能下发退出停机命令。
-        try:
-            worker.close()
-        finally:
-            # 工作线程退出后再清理硬件，避免与尚未退出的线程并发操作 UART。
-            if worker.thread is None or not worker.thread.is_alive():
-                if link is not None:
-                    try:
-                        link.stop()
-                    except Exception as exc:
-                        print("[gimbal] stop on exit failed: %s" % exc)
-            preview.close()
-            try:
-                cam.close()
-            except Exception:
-                pass
+    """硬件装配、按钮、线程与清理由可复用应用 API 管理。"""
+    return TrackingApplication(Config, BUILD_ID, clock=time,
+                               controller_factory=VisionControl).run()
 
 
 if __name__ == "__main__":
     main()
 '''
 
-_MOD_ORDER = ('config', 'vision.rate_meter', 'vision.camera_source', 'vision.vision_worker', 'vision.telemetry', 'vision.preview', 'vision.rectangle_center', 'vision.laser_spot', 'vision.gimbal_self_test', 'vision.stepper_link', 'vision.gimbal_aim', 'vision.aim_control', 'vision.gimbal_calibrate', 'target_api')
+_MOD_ORDER = ('config', 'vision.rate_meter', 'vision.camera_source', 'vision.vision_worker', 'vision.telemetry', 'vision.maixvision_stream', 'vision.preview', 'vision.rectangle_center', 'vision.laser_spot', 'vision.stepper_link', 'vision.gimbal_self_test', 'vision.gimbal_aim', 'vision.gimbal_search', 'vision.imu_heading', 'vision.aim_control', 'vision.gimbal_calibrate', 'vision.app_runtime', 'target_api')
 
-_REL_OF = {'config': 'config.py', 'vision.rate_meter': 'vision/rate_meter.py', 'vision.camera_source': 'vision/camera_source.py', 'vision.vision_worker': 'vision/vision_worker.py', 'vision.telemetry': 'vision/telemetry.py', 'vision.preview': 'vision/preview.py', 'vision.rectangle_center': 'vision/rectangle_center.py', 'vision.laser_spot': 'vision/laser_spot.py', 'vision.gimbal_self_test': 'vision/gimbal_self_test.py', 'vision.stepper_link': 'vision/stepper_link.py', 'vision.gimbal_aim': 'vision/gimbal_aim.py', 'vision.aim_control': 'vision/aim_control.py', 'vision.gimbal_calibrate': 'vision/gimbal_calibrate.py', 'target_api': 'target_api.py'}
+_REL_OF = {'config': 'config.py', 'vision.rate_meter': 'vision/rate_meter.py', 'vision.camera_source': 'vision/camera_source.py', 'vision.vision_worker': 'vision/vision_worker.py', 'vision.telemetry': 'vision/telemetry.py', 'vision.maixvision_stream': 'vision/maixvision_stream.py', 'vision.preview': 'vision/preview.py', 'vision.rectangle_center': 'vision/rectangle_center.py', 'vision.laser_spot': 'vision/laser_spot.py', 'vision.stepper_link': 'vision/stepper_link.py', 'vision.gimbal_self_test': 'vision/gimbal_self_test.py', 'vision.gimbal_aim': 'vision/gimbal_aim.py', 'vision.gimbal_search': 'vision/gimbal_search.py', 'vision.imu_heading': 'vision/imu_heading.py', 'vision.aim_control': 'vision/aim_control.py', 'vision.gimbal_calibrate': 'vision/gimbal_calibrate.py', 'vision.app_runtime': 'vision/app_runtime.py', 'target_api': 'target_api.py'}
 
 _pkg = _types.ModuleType("vision")          # 造出虚拟包 vision
 _pkg.__path__ = []

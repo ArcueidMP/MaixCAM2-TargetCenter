@@ -46,8 +46,14 @@ class GimbalAim:
         self._motion_dir = {"yaw": 0, "pitch": 0}
         self._last_measurement_time = None
         self._stop_axes = []
+        self._source = "vision"
 
     # ------------------------------------------------------------- 外部接口
+    @property
+    def capture_after(self):
+        """最近一次任意轴停止后的采图门槛，供视觉/IMU参考共同使用。"""
+        return max(self._capture_after.values())
+
     def set_controller(self, controller):
         """设置后续 PID/前馈控制器；传入 None 恢复内置比例律。"""
         self.controller = controller
@@ -113,6 +119,8 @@ class GimbalAim:
             if gap > 0 and captured_at - self._last_measurement_time > gap:
                 self._jump = {"yaw": 0, "pitch": 0}
         self._last_measurement_time = captured_at
+        self._source = "imu" if (result.get("source") == "imu" and
+                                    bool(getattr(self.cfg, "ENABLE_IMU_FEEDFORWARD", False))) else "vision"
         self._lost = 0
         self._scan_pos = 0
         deadband = self._deadband()
@@ -168,6 +176,8 @@ class GimbalAim:
 
     def _gain(self, axis, error):
         cfg = self.cfg
+        if self._source == "imu":
+            return max(0.0, min(1.0, float(getattr(cfg, "IMU_GAIN", 0.75))))
         fine = float(getattr(cfg, "GAIN_YAW" if axis == "yaw" else "GAIN_PITCH", 0.5))
         coarse_px = float(getattr(cfg, "COARSE_PX", 0.0))
         if bool(getattr(cfg, "AIM_PROGRESSIVE", False)) and coarse_px > self._deadband():
@@ -179,6 +189,8 @@ class GimbalAim:
         return fine
 
     def _rpm(self, error):
+        if self._source == "imu" and abs(error) > float(getattr(self.cfg, "COARSE_PX", 24)):
+            return max(1, min(5000, int(getattr(self.cfg, "IMU_RPM", 180))))
         coarse_px = float(getattr(self.cfg, "COARSE_PX", 0.0))
         fine = int(getattr(self.cfg, "RPM_FINE", 300))
         coarse = int(getattr(self.cfg, "RPM_COARSE", 1200))
@@ -206,7 +218,7 @@ class GimbalAim:
         cfg = self.cfg
         # 离群拒收：单帧超大误差先当误检丢弃，连续若干帧才采信（防甩头）。
         jump = float(getattr(cfg, "JUMP_REJECT_PX", 0.0))
-        if jump > 0 and abs(error) > jump:
+        if self._source != "imu" and jump > 0 and abs(error) > jump:
             self._jump[axis] += 1
             if self._jump[axis] < int(getattr(cfg, "JUMP_CONFIRM_FRAMES", 3)):
                 return None
@@ -225,6 +237,15 @@ class GimbalAim:
                 return None
         sign = float(getattr(cfg, "DIR_SIGN_YAW" if axis == "yaw" else "DIR_SIGN_PITCH", 1))
         max_pulses = int(getattr(cfg, "MAX_STEP_PULSES", 360))
+        if self._source == "imu":
+            ppd = float(getattr(cfg, axis.upper() + "_PULSES_PER_DEG", 0.0))
+            if ppd <= 0:
+                ppd = float(getattr(cfg, "GIMBAL_GEAR_RATIO", 0.0)) * float(
+                    getattr(cfg, "MOTOR_PULSES_PER_REV", 3200)) / 360.0
+            step_deg = float(getattr(cfg, "IMU_MAX_STEP_DEG", 30.0))
+            if not all(math.isfinite(v) for v in (ppd, step_deg)) or ppd <= 0 or not 0 < step_deg <= 45:
+                return None
+            max_pulses = min(0xFFFFFFFF, int(ppd * step_deg))
         if self.controller is not None:
             output = self.controller(axis, float(error), now)
             if output is None or not math.isfinite(float(output)) or float(output) == 0:
@@ -241,6 +262,7 @@ class GimbalAim:
         rpm = self._rpm(error)
         self.last_command_time[axis] = now
         duration = estimate_move_seconds(pulses, rpm,
+                                       getattr(cfg, "IMU_ACC", 80) if self._source == "imu" else
                                        getattr(cfg, "ACC_TRACK", getattr(cfg, "ACC_DEFAULT", 0)),
                                        getattr(cfg, "MOTOR_PULSES_PER_REV", 3200))
         self._busy_until[axis] = now + duration + max(0.0, float(getattr(cfg, "AIM_MOTION_MARGIN_S", 0.0)))

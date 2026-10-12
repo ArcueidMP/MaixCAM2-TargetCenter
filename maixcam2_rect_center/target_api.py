@@ -88,9 +88,14 @@ if _HERE not in sys.path:
 
 from vision.rectangle_center import RectangleCenterDetector
 from vision.laser_spot import LaserSpotDetector, deviation
+from vision.aim_control import VisionControl
+from vision.gimbal_search import SearchSweep
+from vision.imu_heading import HeadingFeedforward
+from vision.app_runtime import TrackingApplication
 
 __all__ = ["Result", "load_config", "to_gray", "detect_black_frame",
-           "CenterTracker", "track_center", "reset", "AimLoop"]
+           "CenterTracker", "track_center", "reset", "AimLoop",
+           "TrackingApplication", "SearchSweep", "HeadingFeedforward"]
 
 _default_tracker = None
 
@@ -272,10 +277,12 @@ class AimLoop:
         cmds       dict  {"yaw": (ccw, pulses, rpm) or None, "pitch": ...}
     """
 
-    def __init__(self, cfg=None, enable_motors=True, with_laser=True, clock=None):
+    def __init__(self, cfg=None, enable_motors=True, with_laser=True, clock=None, heading=None):
         self.cfg = cfg if cfg is not None else load_config()
         self._clock = clock if clock is not None else time
         self._stopped = True
+        self._controller = None
+        self.heading = heading
         self.tracker = CenterTracker(self.cfg, with_laser=with_laser)
         self.link = None
         self.aim = None
@@ -299,40 +306,51 @@ class AimLoop:
         res["cmds"] = {"yaw": None, "pitch": None}
         if self.aim is None or self.link is None:
             return res
-        fb = self.link.poll(now)
-        if fb and fb.get("fault") and self.aim.state != "FAULT":
-            self.stop(now)
-            self.aim.fault("link:%s" % fb.get("reason", "unknown"))
-        if self.aim.state == "FAULT":
-            res["aim_state"] = "FAULT"
-            return res
-        if not res.get("aim_valid") and not self._stopped:
-            self.stop(now)
-        out = self.aim.update(res, now=now)
-        res["aim_state"] = out["state"]
-        for axis in out.get("stop_axes", ()):
-            if self.link.stop(axis=axis, now=now) is False:
-                self.stop(now)
-                self.aim.fault("stop:%s" % axis)
-                res["aim_state"] = "FAULT"
-                return res
-        for axis, command in out["cmds"].items():
-            if command is not None:
-                ccw, pulses, rpm = command
-                accepted = self.link.move(axis, ccw, pulses, rpm,
-                                          getattr(self.cfg, "ACC_TRACK", getattr(self.cfg, "ACC_DEFAULT", 0)), now=now)
-                if accepted is False:
-                    self.stop(now)
-                    self.aim.fault("tx:%s" % axis)
-                    res["aim_state"] = "FAULT"
-                    res["cmds"] = {"yaw": None, "pitch": None}
-                    break
-                res["cmds"][axis] = command
-                self._stopped = False
+        controller = self._control()
+        controller.accept_result(res, captured, res.get("laser"))
+        res["aim_state"] = self.aim.state
+        res["cmds"] = dict(controller.last_commands)
+        res["control_source"] = controller.control_source
+        res["search_state"] = controller.search.state if controller.search is not None else None
+        self._stopped = controller.stale_stopped
         return res
+
+    def _control(self):
+        if (self._controller is None or self._controller.link is not self.link or
+                self._controller.aim is not self.aim):
+            self._controller = VisionControl(self.cfg, self.link, self.aim, None, None,
+                                             clock=self._clock, heading=self.heading)
+            self.heading = self._controller.heading
+        return self._controller
+
+    def request_search(self):
+        """启动/取消 SEARCH；由 step()/idle() 消费请求，不在按钮线程写串口。"""
+        if self.link is None or self.aim is None:
+            return False
+        self._control().request_search.set()
+        return True
+
+    def calibrate_imu_bias(self):
+        """请求静止偏置标定；先停机，运行时仍需保持底盘和云台静止。"""
+        controller = self._control()
+        if controller.heading is None or self.link is None or self.aim is None:
+            return False
+        controller.request_imu_bias.set()
+        return True
+
+    def imu_status(self):
+        return self._control().imu_status()
+
+    def idle(self):
+        """无新图像时维持 ACK、搜索、IMU 补偿和视觉过期停机。"""
+        self._control().idle()
 
     def stop(self, now=None):
         now = self._clock.perf_counter() if now is None else float(now)
+        if self._controller is not None:
+            accepted = self._controller.stop(now)
+            self._stopped = True if accepted else self._stopped
+            return accepted
         if self.link is not None:
             if self.link.stop(now=now) is False:
                 if self.aim is not None:
@@ -345,3 +363,9 @@ class AimLoop:
 
     def close(self):
         self.stop()
+        if self._controller is not None:
+            self._controller.close()
+        if self.link is not None:
+            close = getattr(self.link, "close", None)
+            if close is not None:
+                close()

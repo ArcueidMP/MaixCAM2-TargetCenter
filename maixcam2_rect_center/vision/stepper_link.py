@@ -320,3 +320,18 @@ class StepperLink:
 
     def stats(self):
         return dict(self._stats)
+
+    def close(self):
+        """控制线程停止后释放 UART；无 close 方法的 SDK 对象通过清引用析构。"""
+        ports, self._ports = self._ports, {}
+        self._stats["yaw"] = self._stats["pitch"] = False
+        error = None
+        for port in ports.values():
+            close = getattr(port, "close", None)
+            if close is not None:
+                try:
+                    close()
+                except Exception as exc:
+                    error = error or exc
+        if error is not None:
+            raise error

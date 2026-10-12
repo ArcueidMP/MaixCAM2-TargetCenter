@@ -9,9 +9,11 @@
 | 轨 | 目录 | BUILD_ID | 状态 |
 |---|---|---|---|
 | A（DeepSeek） | 根 | `2026-10-05-r7` | 性能治理 + 抗抖跟踪已完成 |
-| B（名义 GPT） | `maixcam2_rect_center/` | `2026-10-12-smooth-tracking-v0.5.3` | 按采图时间预测 + 同帧全图重捕获 + 两轴渐进减速/动作等待/停机采图屏障；见 B README v0.5.3 |
+| B（名义 GPT） | `maixcam2_rect_center/` | `2026-10-12-search-imu-stream-v0.6.0` | 视觉平滑追踪 + 应用 API + 独立进程图传 + SEARCH/IMU；标定门槛保留，见 B README v0.6.0 |
 
-**B 轨 v0.5.3（10-12，当前）** —— 用户确认先做视觉识别与云台平滑追踪；按采图间隔预测、同帧 ROI→全图共享预算、角点循环匹配/内外沿切换清历史、分辨率/断流/异常时钟重置。25/25 动态帧有效、max 0.678px；原29/30/0误检保持。两轴独立渐变增益/速度，默认 .30/.65、60/150RPM、80p；按 ACC_TRACK=80 曲线估算等待并要求动作/停机后的新采图。停机或运动写入 False 进入 FAULT；API 与主程序同口径。24 个有限运动/延迟/标定比例模型都进入2px且不重叠/越零，最慢2.43s；移动10px/s+100ms延迟峰值6.86px，停下.67s进死区。PC稳态约1.1–1.2ms；实机30fps/机械超调仍需上板验证。单文件 MODULES 必须 stepper_link→gimbal_aim（新增估算依赖）。
+**B 轨 v0.6.0（10-12，当前）** —— 用户追加完成后四项：main 委托 TrackingApplication；AimLoop 共用 VisionControl；MaixVision 保留会话但隔离原生 Display 图传，独立进程连接已有本机7899协议0桥。SEARCH 相对双轴±45°交叉扫，命中/取消立即停，不盲回中，新采图才接追踪。官方 maix.ext_dev.imu，相机IMU包含车+云台实际运动，捕获对齐参考、惯性短时保持4s；30°独立动作限幅/180RPM/.75增益，视觉80p不变。用户确认未标定：PPD/gear=0、AXES_CALIBRATED=False、ENABLE_IMU=False保留，具体步骤见 B《硬件标定与上板检查》。24个90°有限动作模型全部≤3.30s回视野，100p/deg视觉微调最迟14.74s；不是实车4s保证。20项构建/回归全通过，包22文件/单文件19源；实际MaixVision客户端、30fps、激光命中仍需上板。自检完整曲线等待、持久FAULT、线程退出所有权与staleIMU停车已回归。上游Chemcrin可读，写入403；用户授权改推ArcueidMP fork的codex/target-center-tracking分支。
+
+**B 轨 v0.5.3（10-12）** —— 用户确认先做视觉识别与云台平滑追踪；按采图间隔预测、同帧 ROI→全图共享预算、角点循环匹配/内外沿切换清历史、分辨率/断流/异常时钟重置。25/25 动态帧有效、max 0.678px；原29/30/0误检保持。两轴独立渐变增益/速度，默认 .30/.65、60/150RPM、80p；按 ACC_TRACK=80 曲线估算等待并要求动作/停机后的新采图。停机或运动写入 False 进入 FAULT；API 与主程序同口径。24 个有限运动/延迟/标定比例模型都进入2px且不重叠/越零，最慢2.43s；移动10px/s+100ms延迟峰值6.86px，停下.67s进死区。PC稳态约1.1–1.2ms；实机30fps/机械超调仍需上板验证。单文件 MODULES 必须 stepper_link→gimbal_aim（新增估算依赖）。
 
 **B 轨 v0.5.2（10-12）** —— **运动预测 + 搜索单帧完成**（用户实报 v0.5.1 之后仍"重捕获很慢、速度快捕获不到"）：
 - **根因（PC 量化实证）**：① **无运动预测**——`track` 只按 `TRACK_RADIUS=12`px 窄带精修，单帧位移 >12px 即掉出，
@@ -72,8 +74,8 @@
   仓库根 = A 轨（其 `main.py`/`config.py`/`dist`/`tools` 都在根）。
 
 ## 4 · 门禁（两轨通用）
-`"D:/Python311/python.exe" -B tools/check_app.py --manifest`（C1..C10 + 包内清单）。B 轨包内 **18 文件**
-（app.yaml/main/config/target_api/assets/vision×13），dist 已排除。改源码必更新 BUILD_ID，板端日志与本地逐字一致才算新代码。
+`"D:/Python311/python.exe" -B tools/check_app.py --manifest`（C1..C10 + 包内清单）。B 轨包内 **22 文件**
+（app.yaml/main/config/target_api/assets/vision×17），dist 已排除。改源码必更新 BUILD_ID，板端日志与本地逐字一致才算新代码。
 **WorkBuddy 托管 venv 装不上 numpy/cv2 —— 一律用 `"D:/Python311/python.exe"`。**
 
 ## 5 · A 轨性能（README §三′）
