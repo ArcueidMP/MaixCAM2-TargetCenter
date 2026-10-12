@@ -172,6 +172,8 @@ class RectangleCenterDetector:
         self._smooth = None
         self._track = None
         self._prev_quad = None                                 # 上上帧的候选四角（运动预测用）
+        self._track_timestamp = self._prev_timestamp = None
+        self._frame_shape = None
         self._lost = 0                                         # 连续未检出帧数（>0 时不预测）
         self._locked_th = None
         self._frame = 0
@@ -185,6 +187,23 @@ class RectangleCenterDetector:
         self._proposals = 0
         self._deadline = float("inf")
         self._roi_retry = True
+
+    def reset(self):
+        """清空图像坐标与运动历史；换分辨率、断流后不能复用旧框。"""
+        self.last = self._smooth = self._track = self._prev_quad = None
+        self._track_timestamp = self._prev_timestamp = None
+        self._frame_shape = None
+        self._lost = self._frame = 0
+        self._locked_th = None
+        self._roi_retry = True
+        self._search_jobs.clear()
+        return self
+
+    def _continuous_time(self, timestamp):
+        if timestamp is None or self._track_timestamp is None:
+            return timestamp is None and self._track_timestamp is None
+        gap = timestamp - self._track_timestamp
+        return 0 < gap <= float(getattr(self.cfg, "PREDICT_MAX_GAP_S", 0.25))
 
     def _valid_quad(self, q, shape, margin=1):
         """四边形体检：不越界、凸、边长下限、无明显退化尖角。
@@ -397,7 +416,7 @@ class RectangleCenterDetector:
         # 亮面孔比与背景粘连的黑环更稳定。
         return sorted(candidates, key=lambda c: c[1] != "inner")
 
-    def _motion_delta(self):
+    def _motion_delta(self, timestamp=None):
         """上两帧四角的**逐角位移**（图像坐标）；无历史或刚失锁则 None。
 
         逐角位移天然同时包含平移、缩放与旋转，直接加在"上一帧四角"上即为匀速外推。
@@ -409,6 +428,14 @@ class RectangleCenterDetector:
         if self._prev_quad is None or self._track is None or self._lost:
             return None
         delta = np.asarray(self._track["quad"], np.float32) - np.asarray(self._prev_quad, np.float32)
+        if timestamp is not None:
+            if self._prev_timestamp is None or not self._continuous_time(timestamp):
+                return None
+            interval = self._track_timestamp - self._prev_timestamp
+            if interval <= 0:
+                return None
+            # 最新帧线程会丢弃旧帧；按采图间隔外推，不能把每次回调当作等间隔视频帧。
+            delta = delta * ((timestamp - self._track_timestamp) / interval)
         step = float(np.linalg.norm(delta, axis=1).max())
         cap = float(getattr(self.cfg, "PREDICT_MAX_PX", 60.0))
         if cap > 0 and step > cap:
@@ -627,6 +654,19 @@ class RectangleCenterDetector:
             g = g[:, :, 0]
         if g.ndim != 2 or g.dtype != np.uint8:
             raise ValueError("process expects a uint8 grayscale image")
+        if min(g.shape) < 2:
+            self.reset()
+            self.last = dict(valid=False, stage="empty_frame", search_count=0,
+                             thresholds=0, proposals=0, detector_ms=0.0)
+            return self.last
+        timestamp = None if timestamp is None else float(timestamp)
+        if timestamp is not None and not np.isfinite(timestamp):
+            raise ValueError("timestamp must be finite")
+        if self._frame_shape != g.shape:
+            self.reset()
+            self._frame_shape = g.shape
+        if self._track is not None and not self._continuous_time(timestamp):
+            self._prev_quad = self._prev_timestamp = self._smooth = None
         self._frame += 1
         # 每帧重置的临时统计与时间预算（预算内没找到就留给下一帧继续）。
         self._search_count = self._threshold_count = 0
@@ -638,7 +678,7 @@ class RectangleCenterDetector:
         # 预测失准（突然停止/变向）时自动回落到上一帧位置，两级都试。
         if self._track is not None:
             kind = self._track["kind"]
-            delta = self._motion_delta()
+            delta = self._motion_delta(timestamp)
             guesses = []
             if delta is not None:
                 guesses.append(self._track["quad"] + delta)
@@ -654,17 +694,22 @@ class RectangleCenterDetector:
         # ---- ② roi_search：刚失锁 → 在上一帧外框（含预测位移）外扩的窗口内搜一次 ----
         if candidate is None and self._track is not None and self._roi_retry:
             q = np.asarray(self._track["outer_quad"], np.float32)
-            delta = self._motion_delta()
+            delta = self._motion_delta(timestamp)
             if delta is not None:
                 q = q + delta                                  # 窗口中心跟上预测位移
             lo, hi = q.min(axis=0), q.max(axis=0)
             pad = np.maximum((hi - lo) * self.cfg.ROI_PADDING, 24)         # 外扩量（至少 24px）
-            lo = np.maximum(0, np.floor(lo - pad)).astype(int)
-            hi = np.minimum([g.shape[1], g.shape[0]], np.ceil(hi + pad)).astype(int)
-            candidate = self._search(g, (int(lo[0]), int(lo[1]), int(hi[0] - lo[0]), int(hi[1] - lo[1])))
+            size = np.array([g.shape[1], g.shape[0]])
+            lo = np.clip(np.floor(lo - pad), 0, size).astype(int)
+            hi = np.clip(np.ceil(hi + pad), 0, size).astype(int)
+            if np.all(hi - lo >= 2):
+                candidate = self._search(g, (int(lo[0]), int(lo[1]), int(hi[0] - lo[0]), int(hi[1] - lo[1])))
             stage = "roi_search"
             self._roi_retry = False                                        # 只允许一次 ROI 搜索
-        elif candidate is None:
+        if (candidate is None and
+                (self._search_count == 0 or
+                 (not getattr(self.cfg, "SEARCH_SPLIT_FRAMES", False) and
+                  self._proposals < self.cfg.SEARCH_MAX_PROPOSALS))):
             # ---- ③ full_search：彻底丢失 → 全图多阈值 + Canny 兜底 ----
             candidate = self._search(g)
             stage = "full_search"
@@ -673,15 +718,29 @@ class RectangleCenterDetector:
             self._smooth = None
             self._lost += 1
             self._prev_quad = None
+            self._prev_timestamp = None
             self.last = dict(valid=False, stage="no_black_frame", search_count=self._search_count,
                              thresholds=self._threshold_count, proposals=self._proposals,
                              detector_ms=(time.perf_counter() - started) * 1000)
             return self.last
         # ---- 找到：锁定、清进度、算中心 ----
         # 预测历史只在"连续两帧都成功"时可用：上上帧 = 旧 _track，失锁后清空避免用旧速度外推。
-        self._prev_quad = (self._track["quad"] if (self._track is not None and not self._lost)
-                           else None)
+        self._prev_quad = None
+        self._prev_timestamp = None
+        if (self._track is not None and not self._lost and
+                self._track["kind"] == candidate["kind"] and self._continuous_time(timestamp)):
+            # 重搜会重新选“左上角”，旋转跨过该分界时编号可能循环移位。
+            # 只匹配同一种内/外框的物理角，避免把胶带厚度或编号切换当作速度。
+            previous = np.asarray(self._track["quad"], np.float32)
+            if stage == "track":
+                self._prev_quad = previous                 # 窄带精修保留编号，稳态无需匹配
+            else:
+                matches = np.stack([np.roll(previous, shift, axis=0) for shift in range(4)])
+                errors = np.sum((matches - candidate["quad"]) ** 2, axis=(1, 2))
+                self._prev_quad = matches[int(np.argmin(errors))]
+            self._prev_timestamp = self._track_timestamp
         self._track = candidate
+        self._track_timestamp = timestamp
         self._lost = 0
         self._roi_retry = True
         self._search_jobs.clear()

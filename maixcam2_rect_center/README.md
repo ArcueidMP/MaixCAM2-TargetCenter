@@ -1,11 +1,58 @@
 # MaixCAM2 黑框中心：四边精修、快速跟踪与双轴云台瞄准
 
-构建号 `2026-10-12-motion-predict-v0.5.2`，应用版本 `0.5.2`。在 MaixVision 中打开本文件夹，选择“运行项目”。
+构建号 `2026-10-12-smooth-tracking-v0.5.3`，应用版本 `0.5.3`。在 MaixVision 中打开本文件夹，选择“运行项目”。
 必须一起下发应用包内的 **18 个文件**（`app.yaml` / `main.py` / `config.py` / `target_api.py` /
 `assets/icon.png` / `vision/` 下 13 个 `.py`），不能只运行当前 `main.py`。
 
 > 只想临时试参数时，也可以先 `python tools/build_single.py` 生成 `dist/main_single.py`，
 > 再用「运行当前文件」—— 那是自包含的单文件版，语义与分模块完全一致。改了源码记得重新生成。
+
+## 2026-10-12（v0.5.3）：按采图时间追踪与平滑云台闭环
+
+本轮重点是视觉定位和像素偏差闭环。相机、识别、显示仍分别按原有线程运行，识别仍使用四边窄带精修，靶心仍由黑框几何反算。
+
+### 视觉追踪
+
+- 将相机采图时刻传入检测器：速度由相邻采图时间计算，识别线程跳帧时按实际间隔预测，而不是固定外推一帧。`CenterTracker.track(frame, now=...)` 的 `now` 是单调时钟的采图时间，单位秒；不提供时保留原有逐帧预测用法。
+- 局部 ROI 找不到时，在同一帧继续全图重捕获，共享 `SEARCH_MAX_PROPOSALS` 上限；显式拆帧模式仍保留软预算。极大预测位移把 ROI 推出画面时跳过空裁剪。
+- 重搜旋转后的四角按物理角循环匹配；内外沿切换时清除速度，避免把角点编号或胶带厚度当作运动。
+- 换分辨率、空帧、时钟倒退/重复/模式切换、间隔超过 `PREDICT_MAX_GAP_S=0.25` 时清理相关历史。画面无靶纸仍返回无效结果。
+
+动态回归包含跳变、快速反向、变采样间隔、透视抖动：**25/25 帧有效，最大中心误差 0.678px**。另覆盖分辨率 640×480→80×60→640×480、越界 ROI、时钟不连续、内外沿切换、候选预算。原视觉基线仍为 **29/30、max 0.803px、0/5 误检**；强反光 fixture #2 保持安全拒绝。稳态 PC 交替比较约 **1.1–1.2ms**，未见明显退化；同帧重捕获会增加丢锁帧的最坏开销。
+
+### 云台闭环
+
+两轴按自己的像素误差连续调整增益和转速。默认细调增益 `0.30`、粗调 `0.65`，转速从 `60` 到 `150RPM`，单次最多 `80` 脉冲，追踪加减速档位 `ACC_TRACK=80`。接近中心时逐渐减小步长和速度；闭环继续使用未平滑的 `raw_u/raw_v`，不会通过加重显示低通引入额外滞后。
+
+`AIM_WAIT_MOTION=True` 根据三角/梯形加减速曲线估算每段动作结束时间，加 `AIM_MOTION_MARGIN_S=0.03` 后等待采图时间晚于该时刻的新画面。进入死区、误差反向或失锁时可提前停机；停机前已排队的图像不能触发新动作。重复、倒序或非有限误差不会追加动作。
+
+`AimLoop` 与主程序都先检查故障，视觉失效停机一次，运动/停机写入失败进入 FAULT；连续发送也不会刷新并掩盖未回复命令的 ACK 超时。同步相机暂时不返回图像时，串口轮询和失锁看门狗仍运行。
+
+有限运动仿真覆盖 ±50px、标定比例 0.75/1/1.25、视觉延迟 0/33/100/167ms 的 **24 个组合**：全部进入 2px 死区，无动作重叠或越过中心，最慢 **2.43s**。目标 10px/s 移动 2s 后停止、延迟 100ms 的模型最大追踪误差 **6.86px**，停止后 **0.67s** 进入死区。仿真使用相对指令 FIFO 和连续加减速模型，不代表所有驱动器的实际排队语义。
+
+**上板仍需验证**：`PULSE_PER_PX_*` 和 `DIR_SIGN_*` 必须沿用实测标定，检查回差与实际动作时间，再调增益、死区、转速和等待余量。30fps、实机超调和机械抖动不能由 PC 仿真保证。图传开关、搜索按钮和 IMU 前馈沿用现有实现，本轮未扩展。
+
+### 本版验证命令
+
+在本目录使用已安装 NumPy/OpenCV 的 Python 执行；云端可用 `/workspace/.venvs/maixcam2/bin/python`：
+
+```bash
+python -B tools/build_single.py --check
+python -B tools/build_single.py --smoke
+python -B tools/check_app.py --manifest
+python -B tools/test_performance.py
+python -B tools/test_tracking.py
+python -B tools/test_target_api.py
+python -B tools/test_gimbal_aim.py
+python -B tools/test_gimbal_tracking.py
+python -B tools/test_aimloop_tracking.py
+python -B tools/test_main_self_test.py
+python -B tools/test_runtime_performance.py
+python -B tools/test_laser.py
+python -B tools/test_images_e2e.py
+```
+
+应用包仍为 18 文件，单文件包含 15 个源文件。构建顺序已将 `stepper_link` 放在依赖它的 `gimbal_aim` 前。
 
 ## 2026-10-12 修复（v0.5.2）：运动预测 + 搜索单帧完成 —— 治「速度快捕获不到 / 重捕获很慢」
 

@@ -49,7 +49,8 @@ class VisionControl:
     def process(self, gray, captured_at):
         """识别线程的单帧主流程：识别 → 光斑 → 偏差 → 串口 → 闭环 → 打包给显示层。"""
         started = self._clock.perf_counter()
-        result = self.detector.process(gray)                # ① 黑框识别
+        result = self.detector.process(gray, timestamp=captured_at)  # ① 按采图时间预测
+        result["captured_at"] = float(captured_at)
         detected = self._clock.perf_counter()
         if self.laser is not None and not self.laser_static:
             self.laser_state = self.laser.process(gray, detected)   # ② detect 模式才实测光斑
@@ -58,7 +59,7 @@ class VisionControl:
             result["laser_u"], result["laser_v"] = self.laser_state["u"], self.laser_state["v"]
             result["dx"], result["dy"] = dv                 # dx=靶心−光斑（闭环用的那个偏差）
         now = self._clock.perf_counter()
-        fresh = now - captured_at <= self.cfg.RESULT_MAX_AGE_S   # 结果是否还"新鲜"
+        fresh = 0 <= now - captured_at <= self.cfg.RESULT_MAX_AGE_S  # 拒绝过期/时钟错位结果
         result["aim_valid"] = bool(dv is not None and fresh)
         self.last_capture = captured_at
         # 过期结果不外发：串口与闭环都用降级后的 output，避免拿旧定位驱动电机。
@@ -82,6 +83,18 @@ class VisionControl:
             return "calibrate %s" % self.calibrator.axis
         return self.aim.state if self.aim is not None else "vision"
 
+    def _stop_motion(self, now, axis=None, reset=True):
+        """停机帧未写成功时保持 FAULT，不能按已停机继续追加动作。"""
+        accepted = self.link.stop(axis=axis, now=now)
+        if accepted is False:
+            if axis is not None:
+                self.link.stop(now=now)                    # 尝试停止另一轴，随后阻断所有动作
+            self.aim.fault("stop:%s" % (axis or "all"))
+            return False
+        if reset:
+            self.aim.motion_stopped(axis, now=now)
+        return True
+
     def _control(self, result, now, new_measurement):
         """闭环调度中枢：故障检查 → 按钮自检 → 标定 → 自检 → 失锁停机 → 追踪下发。
 
@@ -94,7 +107,7 @@ class VisionControl:
         feedback = link.poll(now)                            # 非阻塞收两条串口的返回帧
         if feedback and bool(feedback.get("fault")) and aim.state != "FAULT":
             reason = feedback.get("reason")
-            link.stop(now=now)
+            self._stop_motion(now)
             aim.fault("link:%s" % reason)                    # 链路故障 → 进入 FAULT
         if self.request_test.is_set():                       # 屏幕按钮置位的自检请求
             self.request_test.clear()
@@ -107,7 +120,8 @@ class VisionControl:
             elif not self.cfg.GIMBAL_SELF_TEST:
                 print("[ui] GIMBAL_SELF_TEST=False，忽略自检")
             else:
-                link.stop(now=now)                           # 先停当前动作再起自检
+                if not self._stop_motion(now):              # 先停当前动作再起自检
+                    return
                 self.self_test = GimbalSelfTest(self.cfg, link, now)
                 print("[ui] 收到点击 -> 启动上电自检（%d 步）" % len(self.self_test.sequence))
         # 链路故障必须阻断已启动的自检/标定，不只阻断普通追踪。
@@ -122,18 +136,26 @@ class VisionControl:
         if not new_measurement:
             # idle 路径：没有新视觉误差。若已超时且尚未停机，则停一次并置 aim 无效（防"漂"）。
             if now - self.last_capture > self.cfg.RESULT_MAX_AGE_S and not self.stale_stopped:
-                link.stop(now=now)
+                self._stop_motion(now)
                 aim.update({"aim_valid": False}, now=now)
                 self.stale_stopped = True
             return
         if not result.get("aim_valid"):
             if not self.stale_stopped:                       # 视觉失效：停一次电机，不回零
-                link.stop(now=now)
+                self._stop_motion(now)
             self.stale_stopped = True
         else:
             self.stale_stopped = False
-        commands = aim.update(result, now=now)["cmds"]       # 状态机算出的两轴增量指令
+        output = aim.update(result, now=now)                # 状态机算出的两轴增量指令
+        for axis in output.get("stop_axes", ()):
+            if not self._stop_motion(now, axis=axis, reset=False):
+                return
+        commands = output["cmds"]
         for axis, command in commands.items():
             if command is not None:
                 ccw, pulses, rpm = command
-                link.move(axis, ccw, pulses, rpm, self.cfg.ACC_DEFAULT, now=now)
+                accepted = link.move(axis, ccw, pulses, rpm, self.cfg.ACC_TRACK, now=now)
+                if accepted is False:
+                    self._stop_motion(now)
+                    aim.fault("tx:%s" % axis)
+                    break

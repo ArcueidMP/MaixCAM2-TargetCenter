@@ -148,6 +148,8 @@ def to_gray(frame, image_module=None):
                 from maix import image as image_module
             a = image_module.image2cv(frame, ensure_bgr=False, copy=False)
     a = np.asarray(a)
+    if a.size == 0:
+        return None
     if a.ndim == 3 and a.shape[2] == 1:
         a = a[:, :, 0]
     elif a.ndim == 3 and a.shape[2] == 3:
@@ -222,12 +224,13 @@ class CenterTracker:
         return self
 
     def track(self, frame, now=None):
-        """追踪一帧：返回 ``Result``；``valid`` 表示本帧是否拿到靶心。"""
+        """追踪一帧；now 为单调递增的采图时刻（秒），供丢帧后的运动预测使用。"""
         gray = to_gray(frame)
-        if gray is None:
+        if gray is None or gray.size == 0:
+            self.detector.reset()
             return Result(valid=False, stage="empty_frame", center=None,
                           dx=None, dy=None, aim_valid=False, ms=0.0)
-        raw = self.detector.process(gray)
+        raw = self.detector.process(gray, timestamp=now)
         res = _wrap(raw, gray)
         if not res.get("valid"):
             return res
@@ -269,8 +272,10 @@ class AimLoop:
         cmds       dict  {"yaw": (ccw, pulses, rpm) or None, "pitch": ...}
     """
 
-    def __init__(self, cfg=None, enable_motors=True, with_laser=True):
+    def __init__(self, cfg=None, enable_motors=True, with_laser=True, clock=None):
         self.cfg = cfg if cfg is not None else load_config()
+        self._clock = clock if clock is not None else time
+        self._stopped = True
         self.tracker = CenterTracker(self.cfg, with_laser=with_laser)
         self.link = None
         self.aim = None
@@ -282,31 +287,61 @@ class AimLoop:
             self.aim = GimbalAim(self.cfg)
 
     def step(self, frame, now=None):
-        now = time.perf_counter() if now is None else float(now)
-        res = self.tracker.track(frame, now)
+        """处理一帧；now 为采图时刻，与 clock.perf_counter 使用同一单调时钟。"""
+        captured = self._clock.perf_counter() if now is None else float(now)
+        res = self.tracker.track(frame, captured)
+        now = self._clock.perf_counter()
+        res["captured_at"] = captured
+        res["age_s"] = max(0.0, now - captured)
+        if not 0 <= now - captured <= float(getattr(self.cfg, "RESULT_MAX_AGE_S", 0.20)):
+            res["aim_valid"] = False
         res["aim_state"] = None
         res["cmds"] = {"yaw": None, "pitch": None}
         if self.aim is None or self.link is None:
             return res
-        if self.aim.state != "FAULT":
-            out = self.aim.update(res, now=now)
-            res["aim_state"] = out["state"]
-            for axis, command in out["cmds"].items():
-                if command is not None:
-                    ccw, pulses, rpm = command
-                    self.link.move(axis, ccw, pulses, rpm,
-                                   getattr(self.cfg, "ACC_DEFAULT", 0), now=now)
-                    res["cmds"][axis] = command
         fb = self.link.poll(now)
-        if fb.get("fault"):
-            self.link.stop(now=now)
-            self.aim.fault("link:%s" % fb["reason"])
+        if fb and fb.get("fault") and self.aim.state != "FAULT":
+            self.stop(now)
+            self.aim.fault("link:%s" % fb.get("reason", "unknown"))
+        if self.aim.state == "FAULT":
             res["aim_state"] = "FAULT"
+            return res
+        if not res.get("aim_valid") and not self._stopped:
+            self.stop(now)
+        out = self.aim.update(res, now=now)
+        res["aim_state"] = out["state"]
+        for axis in out.get("stop_axes", ()):
+            if self.link.stop(axis=axis, now=now) is False:
+                self.stop(now)
+                self.aim.fault("stop:%s" % axis)
+                res["aim_state"] = "FAULT"
+                return res
+        for axis, command in out["cmds"].items():
+            if command is not None:
+                ccw, pulses, rpm = command
+                accepted = self.link.move(axis, ccw, pulses, rpm,
+                                          getattr(self.cfg, "ACC_TRACK", getattr(self.cfg, "ACC_DEFAULT", 0)), now=now)
+                if accepted is False:
+                    self.stop(now)
+                    self.aim.fault("tx:%s" % axis)
+                    res["aim_state"] = "FAULT"
+                    res["cmds"] = {"yaw": None, "pitch": None}
+                    break
+                res["cmds"][axis] = command
+                self._stopped = False
         return res
 
-    def stop(self):
+    def stop(self, now=None):
+        now = self._clock.perf_counter() if now is None else float(now)
         if self.link is not None:
-            self.link.stop()
+            if self.link.stop(now=now) is False:
+                if self.aim is not None:
+                    self.aim.fault("stop:all")
+                return False
+        if self.aim is not None:
+            self.aim.motion_stopped(now=now)
+        self._stopped = True
+        return True
 
     def close(self):
         self.stop()

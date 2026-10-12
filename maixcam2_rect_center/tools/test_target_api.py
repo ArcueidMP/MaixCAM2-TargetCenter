@@ -100,6 +100,39 @@ def test_track_api():
     check(tr.track(image).valid, "reset() 后可重新锁定")
 
 
+def test_capture_time_tracking():
+    """最新帧槽会丢帧：now 必须沿 API 进入预测，不能把每次调用当等间隔帧。"""
+    tr = CenterTracker()
+    q = np.array([[100, 90], [240, 90], [240, 300], [100, 300]], np.float32)
+    offsets = (0, 10, 40, 50, 80, 90, 120)
+    timestamps = (0.0, .033, .133, .166, .266, .299, .399)
+    stages, errors = [], []
+    for offset, timestamp in zip(offsets, timestamps):
+        image, truth = scene(q + [offset, 0])
+        res = tr.track(image, now=timestamp)
+        stages.append(res.stage)
+        errors.append(float(np.linalg.norm([res.get("raw_u", -999),
+                                           res.get("raw_v", -999)] - truth)))
+    check(max(errors) < 1.5, "丢帧间隔变化时每帧中心准确", "max=%.3fpx" % max(errors))
+    check(stages == ["full_search"] + ["track"] * (len(offsets) - 1),
+          "API 将采图时间传入预测，丢帧后仍走快速跟踪", str(stages))
+
+
+def test_empty_frame_clears_tracking():
+    """空帧不得继续保留旧靶的速度/锁定；恢复画面必须重新验证全图。"""
+    tr = CenterTracker()
+    image, _ = scene(BASE_Q)
+    moved, _ = scene(BASE_Q + [8, 0])
+    tr.track(image, now=1.0)
+    check(tr.track(moved, now=1.033).stage == "track", "空帧前已建立连续跟踪")
+    lost = tr.track(None, now=1.066)
+    check(not lost and lost.stage == "empty_frame" and not lost.aim_valid,
+          "空帧立即输出无效结果")
+    recovered = tr.track(moved, now=1.099)
+    check(recovered.valid and recovered.stage == "full_search",
+          "空帧后重新捕获，不沿用旧跟踪状态", recovered.stage)
+
+
 def test_signature_functional():
     image, _ = scene(BASE_Q)
     r1 = track_center(image)
@@ -152,6 +185,7 @@ def test_aimloop_without_motors():
 
 def main():
     tests = [test_to_gray, test_detect_api, test_detect_rejects_blank, test_track_api,
+             test_capture_time_tracking, test_empty_frame_clears_tracking,
              test_signature_functional, test_laser_deviation, test_config_override,
              test_aimloop_without_motors]
     for fn in tests:

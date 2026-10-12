@@ -156,7 +156,7 @@
 
 ## 4. 改完**必须**做的三件事（对齐根 AGENTS.md §3′）
 
-1. **提升 `main.py` 顶部 `BUILD_ID`**（当前 `2026-10-12-motion-predict-v0.5.2`，格式 `YYYY-MM-DD-<slug>-vN`）。
+1. **提升 `main.py` 顶部 `BUILD_ID`**（当前 `2026-10-12-smooth-tracking-v0.5.3`，格式 `YYYY-MM-DD-<slug>-vN`）。
    板端会打印 `[rect-center] <BUILD_ID> ...`，**与本地逐字一致才算跑的是新代码**；
    不更新就无法判断是否生效。**改了 `main.py`/`config.py`/`vision/*`/`target_api.py` 任一个都要做。**
 2. **重新生成单文件版**（`dist/` 不进应用包，但"运行当前文件"要用它）：
@@ -174,6 +174,9 @@
    "D:/Python311/python.exe" -B tools/test_gimbal_aim.py        # 云台协议/闭环/看门狗/标定/自检/低通（当前 PASS(29)）
    "D:/Python311/python.exe" -B tools/test_main_self_test.py    # 端到端跑 main()：上电自检优先 / FAULT 阻断
    "D:/Python311/python.exe" -B tools/test_runtime_performance.py  # 显示隔离 + 实测显示帧率 + 搜索/串口有界
+   "D:/Python311/python.exe" -B tools/test_tracking.py             # 快移/转向/丢帧/透视抖动/分辨率与预算
+   "D:/Python311/python.exe" -B tools/test_gimbal_tracking.py       # 非瞬时动作/视觉延迟/标定误差/停机采图屏障
+   "D:/Python311/python.exe" -B tools/test_aimloop_tracking.py      # API 故障/失锁/停机失败/过期采图
    ```
    改光斑（`laser_spot.py` / `config.LASER_*`）还要跑 `tools/test_laser.py`；
    改视觉阈值（`MIN_*`/`MAX_*`/`SCORE_*` 类）**必须**确认 `test_performance` 无回归；

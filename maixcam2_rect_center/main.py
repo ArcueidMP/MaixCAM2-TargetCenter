@@ -102,7 +102,7 @@ from vision.preview import (Preview, TouchButtons, display_result,
 from vision.aim_control import VisionControl, send_uart
 from vision.telemetry import format_perf_line, format_slow_loop, MAIN_LOOP_SLOW_MS
 
-BUILD_ID = "2026-10-12-motion-predict-v0.5.2"
+BUILD_ID = "2026-10-12-smooth-tracking-v0.5.3"
 
 # ---- 兼容别名（v0.4.6 模块化后保留旧私有名）--------------------------------
 # tools/test_runtime_performance.py 直接 `from main import (_FrameRate, _LatestVision,
@@ -208,6 +208,10 @@ def main():
             started = time.perf_counter()
             img = cam.read()                             # ① 取帧（灰度）
             if img is None:
+                if worker.thread is None:
+                    controller.idle()                    # 同步模式也要维持失锁停机/串口保活
+                if worker.error is not None:
+                    raise RuntimeError("vision worker failed: " + worker.error)
                 continue
             captured = time.perf_counter()
             read_times.append((captured - started) * 1000)   # read 耗时样本

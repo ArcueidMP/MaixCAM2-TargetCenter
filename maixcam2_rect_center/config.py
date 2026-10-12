@@ -70,15 +70,22 @@ class Config:
     DIR_SIGN_PITCH = -1
     PULSE_PER_PX_YAW = 3.67       # 必须用实机开环标定替换
     PULSE_PER_PX_PITCH = 3.67     # 必须用实机开环标定替换
-    GAIN_YAW = 0.5
-    GAIN_PITCH = 0.5
+    GAIN_YAW = 0.30
+    GAIN_PITCH = 0.30
     DEADBAND_PX = 2.0
-    MAX_STEP_PULSES = 360
-    RPM_FINE = 300
+    MAX_STEP_PULSES = 80
+    RPM_FINE = 60
     # 曲线加减速档位（位置模式）：0 = 不用曲线、直接以设定速度瞬时启停（卡顿/冲击根源，勿用）；
     # ≠0 时每 (256-acc)*50us 变 1RPM，acc 越小越柔（常用 20~80）。自检与闭环共用本值。
     ACC_DEFAULT = 80
+    ACC_TRACK = 80               # 追踪独立于自检，非零档位使动作按曲线启停
     COMMAND_INTERVAL_S = 0.08
+    # 接近靶心时两轴分别连续减小增益/转速，不因另一轴误差大而高速微调。
+    AIM_PROGRESSIVE = True
+    # 相对动作完成后还要等待一张采图时间晚于动作完成的画面，避免旧误差叠加指令。
+    AIM_WAIT_MOTION = True
+    AIM_MOTION_MARGIN_S = 0.03
+    AIM_HISTORY_MAX_GAP_S = 0.30
 
     # 上电自检：度数对应的脉冲数必须按实际减速机构标定。
     # 0 表示未标定，程序跳过自动扫动，避免用错误比例撞限位。
@@ -112,8 +119,8 @@ class Config:
     # 粗/精两段增益：|e| > COARSE_PX 用 GAIN_COARSE（大步快速逼近），否则用 GAIN_YAW/PITCH。
     # 必须保持 gain <= 1，否则增量闭环不收敛（需求文档 §7.4）。
     COARSE_PX = 24.0
-    GAIN_COARSE = 0.9
-    RPM_COARSE = 1200
+    GAIN_COARSE = 0.65
+    RPM_COARSE = 150
 
     # ---- 链路健康（ACK / E2 看门狗，需求文档 §7.9）------------------------
     ENABLE_ACK_WATCHDOG = True
@@ -192,6 +199,8 @@ class Config:
     # PREDICT_MAX_PX 是单帧预测位移上限，防噪点把预测甩飞（板端帧率低、目标位移可能很大时才需调大）。
     ENABLE_MOTION_PREDICT = True
     PREDICT_MAX_PX = 60.0
+    # 捕获时间间隔超过此值或时钟回退时重建速度，避免断流后沿旧速度外推。
+    PREDICT_MAX_GAP_S = 0.25
     ROI_PADDING = 0.20
     MIN_EDGE_COVERAGE = 0.55
     MAX_DARK_BRIGHT_RATIO = 0.72

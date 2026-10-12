@@ -60,8 +60,8 @@ MODULES = (
     ("vision.rectangle_center", "vision/rectangle_center.py"),
     ("vision.laser_spot", "vision/laser_spot.py"),
     ("vision.gimbal_self_test", "vision/gimbal_self_test.py"),
-    ("vision.gimbal_aim", "vision/gimbal_aim.py"),
     ("vision.stepper_link", "vision/stepper_link.py"),
+    ("vision.gimbal_aim", "vision/gimbal_aim.py"),  # 依赖 stepper_link 的运动时长估算
     ("vision.aim_control", "vision/aim_control.py"),
     ("vision.gimbal_calibrate", "vision/gimbal_calibrate.py"),
     ("target_api", "target_api.py"),

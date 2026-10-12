@@ -10,11 +10,39 @@
 `0x00 0xEE`=错误命令（见 §6.1）。
 """
 
+import math
 import time
 
 CR = 0x6B
 STATUS_OK = 0x02
 STATUS_E2 = 0xE2
+
+
+def estimate_move_seconds(pulses, rpm, acc=0, pulses_per_rev=3200):
+    """估算从静止到静止的位置运动时长（秒），含驱动器的加减速曲线。
+
+    非零 acc 每 ``(256-acc)*50us`` 改变 1 RPM；短行程使用三角曲线，
+    长行程使用梯形曲线。这里只做排程估算，不代表收到实际到位反馈。
+    """
+    pulses, rpm, pulses_per_rev = float(pulses), float(rpm), float(pulses_per_rev)
+    if not all(math.isfinite(v) for v in (pulses, rpm, pulses_per_rev)):
+        raise ValueError("motion parameters must be finite")
+    if pulses <= 0:
+        return 0.0
+    if rpm <= 0 or pulses_per_rev <= 0:
+        raise ValueError("rpm and pulses_per_rev must be positive")
+    rpm = min(5000.0, rpm)
+    speed = rpm * pulses_per_rev / 60.0
+    acc = max(0, min(255, int(acc)))
+    if acc == 0:
+        return pulses / speed
+    ramp = (256 - acc) * 50e-6
+    acceleration = pulses_per_rev / (60.0 * ramp)
+    ramp_seconds = rpm * ramp
+    ramp_distance = speed * ramp_seconds
+    if pulses <= ramp_distance:
+        return 2.0 * math.sqrt(pulses / acceleration)
+    return 2.0 * ramp_seconds + (pulses - ramp_distance) / speed
 
 
 def _frame(addr, func, data=()):
@@ -78,6 +106,8 @@ class StepperLink:
         self._last_status = {"yaw": None, "pitch": None}
         self._last_cmd = {"yaw": 0.0, "pitch": 0.0}
         self._last_ack = {"yaw": 0.0, "pitch": 0.0}
+        # 保留最早一条尚未确认的命令时间；持续发新命令不能推迟断链检测。
+        self._pending_ack_since = {"yaw": None, "pitch": None}
         self._timeout_count = {"yaw": 0, "pitch": 0}
         self._e2_times = []
         self.fault_reason = None
@@ -147,10 +177,12 @@ class StepperLink:
             return False
         try:
             n = port.write(payload)
-            if n is not None and int(n) < 0:
+            if n is not None and int(n) != len(payload):
                 raise IOError("write returned %s" % n)
             self._stats["tx"] += 1
             self._last_cmd[axis] = time.perf_counter() if now is None else float(now)
+            if self._pending_ack_since[axis] is None:
+                self._pending_ack_since[axis] = self._last_cmd[axis]
             return True
         except Exception as exc:
             self._stats["err"] += 1
@@ -234,6 +266,7 @@ class StepperLink:
                 continue
             # 凡是能解析出状态的帧都证明链路活着 -> 刷新该轴 ACK 时刻。
             self._last_ack[axis] = now
+            self._pending_ack_since[axis] = None
             if status == STATUS_OK:
                 out["ok"] += 1
                 self._stats["ok"] += 1
@@ -261,10 +294,14 @@ class StepperLink:
         timeout_ms = float(getattr(self.cfg, "RX_TIMEOUT_MS", 0) or 0)
         if timeout_ms > 0 and self._stats["ok"] > 0:
             for axis in self._ports:
-                if now - self._last_cmd[axis] <= timeout_ms / 1000.0:
-                    self._timeout_count[axis] = 0
-                    continue
-                if self._last_ack[axis] >= self._last_cmd[axis]:
+                pending = self._pending_ack_since[axis]
+                if pending is None:
+                    # 兼容只注入时间戳的离线链路，也排除已经得到 ACK 的命令。
+                    if self._last_ack[axis] >= self._last_cmd[axis]:
+                        self._timeout_count[axis] = 0
+                        continue
+                    pending = self._last_cmd[axis]
+                if now - pending <= timeout_ms / 1000.0:
                     self._timeout_count[axis] = 0
                     continue
                 self._timeout_count[axis] += 1
