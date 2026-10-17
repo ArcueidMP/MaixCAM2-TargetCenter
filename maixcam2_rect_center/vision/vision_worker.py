@@ -34,6 +34,7 @@ class LatestFrameWorker:
         self._pending = self._latest = None
         self._stop = False
         self.error = None
+        self._snapshot_cache = (None, 0., 0.)
         self.dropped = 0                          # 因来不及处理而被覆盖的帧数（丢帧计数）
         self.rate = FrameRate()                   # 识别帧率（detect_fps 口径）
         self.thread = None
@@ -88,9 +89,14 @@ class LatestFrameWorker:
 
     def snapshot(self, now):
         """取回最近一次识别结果 + 识别帧率（主线程调用，非阻塞）。"""
-        with self._condition:
+        if not self._condition.acquire(False):
+            return self._snapshot_cache
+        try:
             fps, low1 = self.rate.values(now)
-            return self._latest, fps, low1
+            self._snapshot_cache = self._latest, fps, low1
+            return self._snapshot_cache
+        finally:
+            self._condition.release()
 
     def close(self):
         """停线程；必须等它真正退出——UART 归识别线程独占，未退干净就动硬件会打架。"""

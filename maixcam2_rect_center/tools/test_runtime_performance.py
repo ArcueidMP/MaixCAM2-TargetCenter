@@ -96,7 +96,7 @@ def test_bounded_search_and_current_evidence():
         #   · 单帧内最多把全部阈值 + Canny 兜底走一遍（thresholds 有上限）；
         #   · 单帧耗时受 SEARCH_BUDGET_MS 软预算约束（超时即停、跨帧续扫）。
         assert out["search_count"] <= 1, out
-        assert out["thresholds"] <= len(Config.DARK_THRESHOLDS) + 2, out
+        assert out["masks"] <= 2, out
         assert out["proposals"] <= Config.SEARCH_MAX_PROPOSALS and not out["valid"]
         assert ms <= Config.SEARCH_BUDGET_MS + 60, ("单帧搜索超预算", ms, out)
     image, truth = scene([[180, 70], [445, 80], [475, 400], [150, 420]])
@@ -224,30 +224,16 @@ def test_slow_show_does_not_block_main_loop():
 
 
 def test_maixvision_stream_policy():
-    """MaixVision 图传策略：默认必须把 MAIXVISION 置 0（从源头不建图传、拆掉 500ms 忙等）。
-
-    契约与 MaixCDK 对齐：maixvision_mode() 只在 MAIXVISION=="1" 时为真；图传通道在建 Display
-    时按它创建。故这里锁死三种情形：默认置 0、显式关闭策略则保持 1、非 MaixVision 模式不动。
-    """
-    old = os.environ.get("MAIXVISION")
-    try:
-        os.environ["MAIXVISION"] = "1"
-        assert _apply_maixvision_stream_policy(Config) is True       # 默认 DISABLE_MAIXVISION_STREAM=True
-        assert os.environ.get("MAIXVISION") == "0", "默认策略必须掐断图传"
-
-        os.environ["MAIXVISION"] = "1"
-        keep = type("Cfg", (Config,), dict(DISABLE_MAIXVISION_STREAM=False))
-        assert _apply_maixvision_stream_policy(keep) is False        # 显式保留图传
-        assert os.environ.get("MAIXVISION") == "1", "关闭策略时不得改动环境变量"
-
-        os.environ.pop("MAIXVISION", None)
-        assert _apply_maixvision_stream_policy(Config) is False      # 非 MaixVision 模式：无副作用
-        assert "MAIXVISION" not in os.environ
-    finally:
-        if old is None:
-            os.environ.pop("MAIXVISION", None)
-        else:
-            os.environ["MAIXVISION"] = old
+    from vision.preview import _local_display_call
+    with patch.dict(os.environ, MAIXVISION="1"):
+        assert _apply_maixvision_stream_policy(Config) is False
+        assert _local_display_call(lambda: os.environ["MAIXVISION"]) == "0"
+        assert os.environ["MAIXVISION"] == "1"
+        try:
+            _local_display_call(lambda: 1/0)
+        except ZeroDivisionError:
+            pass
+        assert os.environ["MAIXVISION"] == "1"
 
 
 def main():

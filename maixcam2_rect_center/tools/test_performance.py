@@ -127,8 +127,8 @@ def run(legacy_path=None):
         report['legacy'] = benchmark(lambda cfg: mod.RectangleCenterDetector(LegacyConfig), data[0][0])
         report['speedup'] = round(report['legacy']['median_ms'] / report['optimized']['median_ms'],2)
     print(json.dumps(report, ensure_ascii=False, indent=2))
-    assert len(failed) <= 8, 'too many missed fixtures'
-    assert max(errors) < 3, 'corner/center regression'
+    assert not failed, 'all 30 fixtures must be found'
+    assert max(errors) <= .7, 'center precision must be <=0.7px'
     assert not false_positives, 'solid rectangles falsely accepted'
     assert max(movement_errors) < 3, 'motion tracking drift'
     assert not lost['valid'] and reacquired['valid'], 'loss/reacquisition failed'

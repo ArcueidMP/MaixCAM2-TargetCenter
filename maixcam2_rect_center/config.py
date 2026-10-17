@@ -20,18 +20,10 @@ class Config:
     SHOW_WIDTH = 0
     SHOW_FPS = 30
     SHOW_JPEG_QUALITY = 70   # 只影响 MaixVision JPEG 图传，检测始终用原始灰度图。
-    # ★ MaixVision 图传总开关（决定"能跑满全帧"还是"被 500ms 忙等拖垮"）。
-    #   背景：MaixCDK 的 maixvision_mode() 只看**环境变量 MAIXVISION 是否为 "1"**；
-    #   display.Display() 构造时据此创建图传通道 img_trans，而 show() 的第一步就是
-    #   img_trans->send_image()。若处于 MaixVision 模式但画面预览**没真正连上**，
-    #   该函数会 `while(!init){ if(ticks-t>500) return; }` **忙等 500ms 并空转 CPU**
-    #   （源码 components/vision/src/maix_image_trans.cpp）——以 ~2 次/秒计 ≈ 烧掉近一个核，
-    #   相机 read / 识别 / 闭环随之塌方（板端实测 show≈505ms、read≈107ms、detect_fps=0）。
-    #   True（默认）：main() 在建 Display **之前**把 MAIXVISION 置 "0" ⇒ 不建图传 ⇒ show() 只
-    #     画本地屏（官方 1~5ms）⇒ 全帧。代价：MaixVision 的"画面预览"面板收不到图（终端日志照常）。
-    #   False：保留图传。想用 MaixVision 看画面、且能保证预览真连上（连上后是异步入队，不忙等）时再设。
-    #   注：从设备本地启动应用时本来就没有图传，此开关无副作用。
-    DISABLE_MAIXVISION_STREAM = True
+    # 本地 Display 构造时临时 MAIXVISION=0，完成后恢复会话。
+    # False: 独立进程连接本机 MaixVision 桥；True: 只用本地屏。
+    # JPEG/网络不进入原生 show()，预览断连不会触发 500ms 忙等。
+    DISABLE_MAIXVISION_STREAM = False
     VISION_ASYNC = True
     # ★ 显示线程化：True = 绘制完成后把画布交给**独立显示线程**去 show()，主循环**永不等待 show**。
     #   屏幕驱动或 MaixVision 图传慢时，只表现为"预览掉帧"（丢帧而非排队），
@@ -157,31 +149,10 @@ class Config:
     # Canny and polygon gates. Tune only these values on a new lens.
     CANNY_LOW = 35
     CANNY_HIGH = 120
-    # 失锁时先试上次有效阈值，再试 Otsu 和备用阈值；成功即停止。
-    DARK_THRESHOLDS = (25, 40, 55, 70, 85, 100, 120, 145)
-    # 稳态只采样四边窄带；失锁时缩小图搜索，每档验证成功就立即停止。
+    # Canny 一张掩膜；未找到完整四边时才补 Otsu 一张。所有轮廓在低分辨率处理。
     SEARCH_WIDTH = 320
-    # 搜索策略：**单帧穷尽** —— 一帧内按序试完全部阈值（末尾 Canny 兜底）直到找到。
-    # ⚠ 历史：v0.4.3 曾改成"每帧只轮换 1 个阈值、只验 1 个候选"，实测丢锁后要 11+ 帧才重捕获
-    #   （大角度/移动场景肉眼即"丢框"）；v0.5.1 改回单帧穷尽。
-    # SEARCH_SPLIT_FRAMES=False（默认）⇒ 单帧内一定把搜索跑完，重捕获恒为 1 帧（与旧路径一致）。
-    #   板端搜索远慢于 PC，跨帧拆分会让"重捕获"变成十几帧，故默认**不拆**。
-    # SEARCH_SPLIT_FRAMES=True ⇒ 按 SEARCH_BUDGET_MS 软预算跨帧续扫，只在极端慢板卡、
-    #   宁可单帧轻一点也不在乎多花几帧时才开。
-    SEARCH_SPLIT_FRAMES = False
-    SEARCH_BUDGET_MS = 25.0      # 仅在 SEARCH_SPLIT_FRAMES=True 时生效的软预算
-    SEARCH_MAX_PROPOSALS = 128   # 单帧验证候选数硬上限（安全阀，正常场景远用不到）
-    SEARCH_GEOMETRY_STEPS = 8
-    MAX_CONTOURS = 128
-    LINE_MAX_PROPOSALS = 36
-    ENABLE_LINE_RECOVERY = False
-    LINE_SEARCH_INTERVAL = 15
-    ACQUIRE_CONFIRM_FRAMES = 3
-    CONFIRM_CORNER_PX = 12.0
-    RECHECK_INTERVAL = 20
-    MAX_LINE_RESIDUAL_PX = 2.0
-    MIN_TRANSITION_COVERAGE = 0.50
-    MAX_BOUNDARY_WIDTH_ERROR = 0.30
+    SEARCH_SPLIT_FRAMES = False  # 历史兼容项；新搜索始终在当前帧完成。
+    SEARCH_MAX_PROPOSALS = 128   # 仅 SEARCH_EXHAUSTIVE=False 时生效；ROI 不阻断全图重搜。
     MAX_CANDIDATES = 8
     EDGE_SAMPLES = 24
     REFINE_RADIUS = 6
@@ -244,3 +215,85 @@ class Config:
     LASER_MAX_JUMP_PX = 40.0
     # 位置平滑（0 = 不平滑，直接用最新质心）。
     LASER_SMOOTH_ALPHA = 0.60
+
+    # v0.8: bounded Canny/Otsu search; exhaustive verification remains enabled.
+    EDGE_CLOSE_PX = 3
+    SEARCH_MAX_CONTOURS = 16
+    SEARCH_EXHAUSTIVE = True
+    # 仅供旧工具读取，新检测器不使用以下旧搜索参数。
+    DARK_THRESHOLDS = (25, 40, 55, 70, 85, 100, 120, 145)
+    SEARCH_BUDGET_MS = 25.0
+    MAX_CONTOURS = 128
+    ENABLE_LINE_RECOVERY = False
+    HULL_FILL_RATIO = 0.60
+    MIN_EDGE_LENGTH_PX = 12.0
+    STRONG_EDGE_COVERAGE = 0.85
+    REFINE_ITERATIONS = 2
+    REFINE_RADIUS_WIDE = 20
+    RECOVER_MIN_CONTRAST = 80
+    RECOVER_MAX_DARK = 100
+    PREDICT_MAX_GAP_S = 0.25
+    KALMAN_ENABLE = True
+    KALMAN_PROCESS_PX = 40.0
+    KALMAN_MEASURE_PX = 0.9
+    KALMAN_RESET_PX = 25.0
+    KALMAN_MAX_PREDICT_S = 0.25
+    KALMAN_VELOCITY_LIMIT_PX_S = 6000
+    FRONT_VIEW_SHORT_PX = 0
+    FRONT_VIEW_MAX_ERROR_PX = 5.0
+
+    # Relative commands need both motion completion AND a newer captured frame.
+    AIM_PROFILE = "smooth"
+    AIM_PROGRESSIVE = True
+    ACC_TRACK = 80
+    AIM_WAIT_MOTION = True
+    AIM_MOTION_MARGIN_S = 0.03
+    AIM_HISTORY_MAX_GAP_S = 0.30
+    DIVERGE_GUARD = True
+    DIVERGE_CONFIRM_FRAMES = 6
+    DIVERGE_RATIO = 1.15
+    DIVERGE_MIN_PX = 4.0
+    GIMBAL_CALIBRATED = True
+    CALIBRATE_VISUAL_TIMEOUT_S = 3.0
+    SELF_TEST_TIMEOUT_S = 10.0
+    ENABLE_SEARCH_BUTTON = True
+    SEARCH_YAW_DEG = SEARCH_PITCH_DEG = 45.0
+    SEARCH_RPM = SEARCH_ACC = 60
+    SEARCH_SETTLE_S = 0.10
+    SEARCH_TIMEOUT_S = 60.0
+    SEARCH_PULSES = 400
+    SEARCH_USE_IMU = True
+    SEARCH_IMU_MARGIN_DEG = 3.0
+
+    ENABLE_IMU_FEEDFORWARD = False
+    IMU_YAW_AXIS = (0, 0, 1)
+    IMU_PITCH_AXIS = (0, -1, 0)
+    IMU_MAX_GAP_S = 0.20
+    IMU_MAX_AGE_S = 0.20
+    IMU_SAMPLE_HZ = 208
+    IMU_MOUNT = "gimbal"
+    IMU_BIAS_CALIBRATE_S = 1.0
+    IMU_BIAS_MAX_STD_DPS = 0.25
+    IMU_BIAS_MAX_DPS = 2.0
+    IMU_HOLD_MAX_S = 0.25
+    SHOW_STREAM_HOST = "127.0.0.1"
+    SHOW_STREAM_PORT = 7899
+    SHOW_STREAM_WIDTH = 480
+    SHOW_STREAM_SLOW_MS = 300
+    SHOW_STREAM_RETRY_S = 2.0
+    SHOW_STREAM_RETRY_MAX_S = 15.0
+
+
+def apply_aim_profile(cfg):
+    """Only these six values belong to a profile; unknown names fail at startup."""
+    profiles = {"smooth": (.30, .30, .65, 60, 150, 80),
+                "responsive": (.50, .50, .90, 120, 400, 360)}
+    name = cfg.AIM_PROFILE
+    if name not in profiles:
+        raise ValueError("unknown AIM_PROFILE: %s" % name)
+    for key, value in zip(("GAIN_YAW", "GAIN_PITCH", "GAIN_COARSE", "RPM_FINE", "RPM_COARSE", "MAX_STEP_PULSES"), profiles[name]):
+        setattr(cfg, key, value)
+    return cfg
+
+
+apply_aim_profile(Config)

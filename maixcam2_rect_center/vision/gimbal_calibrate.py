@@ -21,6 +21,9 @@
 保持纯 Python（不 import maix），可在 PC 上用假链路回归。
 """
 
+import math
+from .stepper_link import estimate_move_seconds
+
 
 class GimbalCalibrator:
     def __init__(self, cfg, link, now=0.0):
@@ -33,7 +36,7 @@ class GimbalCalibrator:
         self.base = self.out = self.back = None
         self.report = None
         self.reason = None
-        self.started = float(now)
+        self.last_visual = self.started = float(now)
         self.deadline = float(now) + float(getattr(cfg, "CALIBRATE_SETTLE_S", 1.0))
         self.limit_s = float(getattr(cfg, "CALIBRATE_TIMEOUT_S", 20.0))
         self.state = "BASELINE"
@@ -55,11 +58,17 @@ class GimbalCalibrator:
             return self.state
         if now - self.started > self.limit_s:
             return self._fault("timeout_no_valid_aim(%.1fs)" % self.limit_s)
+        if result and result.get("aim_valid"):
+            self.last_visual = now
+        elif now-self.last_visual > getattr(self.cfg, "CALIBRATE_VISUAL_TIMEOUT_S", 3.):
+            return self._fault("visual_timeout")
         if now < self.deadline:
             return self.state
         dv = None
         if result and result.get("aim_valid") and result.get("dx") is not None:
             dv = (float(result["dx"]), float(result["dy"]))
+            if not all(map(math.isfinite, dv)):
+                return self._fault("non_finite_measurement")
         if self.state == "BASELINE":
             if dv is None:
                 return self.state
@@ -113,9 +122,9 @@ class GimbalCalibrator:
     def _move_seconds(self):
         rpm = max(1, int(getattr(self.cfg, "CALIBRATE_RPM", 300)))
         ppr = max(1.0, float(getattr(self.cfg, "MOTOR_PULSES_PER_REV", 3200)))
-        travel = self.pulses / (ppr * rpm / 60.0)
+        travel = estimate_move_seconds(self.pulses, rpm, getattr(self.cfg, "ACC_DEFAULT", 80), ppr)
         settle = float(getattr(self.cfg, "CALIBRATE_SETTLE_S", 1.0))
-        return travel * 1.4 + settle
+        return travel + settle
 
     def _send(self, ccw):
         ok = self.link.move(self.axis, ccw, self.pulses,
@@ -127,6 +136,8 @@ class GimbalCalibrator:
 
     def _fault(self, reason):
         self.state, self.reason = "FAULT", str(reason)
+        if self.link.stop(self.axis) is False:
+            self.reason = "stop:"+self.axis
         print("[calib] fault: %s" % self.reason)
         return self.state
 

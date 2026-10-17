@@ -6,6 +6,8 @@
     · ==0 = 按 `SELF_TEST_*_DEG × *_PULSES_PER_DEG` 换算角度；未标定（两者均 0）则跳过。
 """
 
+from .stepper_link import estimate_move_seconds
+
 
 class GimbalSelfTest:
     """非阻塞自检状态机。角度通过实测的电机脉冲/输出轴度数换算。"""
@@ -15,6 +17,7 @@ class GimbalSelfTest:
         self.link = link
         self.state = "IDLE"
         self.index = 0
+        self.started = float(now)
         self.deadline = float(now)
         self.sequence = []
         self.reason = None
@@ -77,6 +80,10 @@ class GimbalSelfTest:
         if self.done:
             return self.state
         now = float(now)
+        if now-self.started > getattr(self.cfg, "SELF_TEST_TIMEOUT_S", 10.):
+            self.state, self.reason = "FAULT", "timeout"
+            self.link.stop()
+            return self.state
         if now < self.deadline:
             return self.state
         if self.index >= len(self.sequence):
@@ -97,7 +104,7 @@ class GimbalSelfTest:
             print("[self-test] fault: %s command failed" % axis)
             return self.state
         pulses_per_rev = float(getattr(self.cfg, "MOTOR_PULSES_PER_REV", 3200))
-        move_s = pulses / max(1.0, pulses_per_rev * max(1, rpm) / 60.0)
+        move_s = estimate_move_seconds(pulses, rpm, getattr(self.cfg, "ACC_DEFAULT", 80), pulses_per_rev)
         settle_s = float(getattr(self.cfg, "SELF_TEST_SETTLE_S", 0.35))
         self.deadline = now + move_s + settle_s
         self.index += 1
@@ -108,41 +115,14 @@ class GimbalSelfTest:
 
 
 def probe_imu():
-    """尽力实例化 MaixPy IMU 并读取一次样本；不影响主程序运行。"""
+    """Probe the official DUAL interface; release the device in the same thread."""
+    device = None
     try:
-        import maix
-        imu = getattr(maix, "imu", None)
-        if imu is None:
-            import importlib
-            imu = importlib.import_module("maix.imu")
-        names = [name for name in dir(imu) if not name.startswith("_")]
-        device = None
-        sample = None
-        errors = []
-        for class_name in ("IMU", "Imu", "imu"):
-            constructor = getattr(imu, class_name, None)
-            if not callable(constructor):
-                continue
-            try:
-                device = constructor()
-                break
-            except Exception as exc:
-                errors.append("%s(): %s" % (class_name, exc))
-        if device is None:
-            return {"available": False, "module": imu, "names": names,
-                    "error": "; ".join(errors) or "module has no recognized IMU constructor"}
-        for method_name in ("read", "get_data", "get_accel_gyro", "get_gyro"):
-            method = getattr(device, method_name, None)
-            if callable(method):
-                try:
-                    sample = method()
-                    return {"available": True, "module": imu, "names": names,
-                            "device": device, "method": method_name,
-                            "sample": sample, "error": None}
-                except Exception as exc:
-                    errors.append("%s(): %s" % (method_name, exc))
-        return {"available": False, "module": imu, "names": names,
-                "device": device, "error": "; ".join(errors) or
-                "IMU object has no recognized read method"}
+        from .imu_heading import open_imu, read_gyro
+        device = open_imu()
+        return dict(available=True, method="maix.ext_dev.imu", sample=read_gyro(device), error=None)
     except Exception as exc:
-        return {"available": False, "module": None, "names": [], "error": str(exc)}
+        return dict(available=False, method="maix.ext_dev.imu", sample=None, error=str(exc))
+    finally:
+        if device is not None and hasattr(device, "close"):
+            device.close()

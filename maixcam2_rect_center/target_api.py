@@ -48,7 +48,7 @@
 统一返回 ``Result``（dict 子类，支持 ``res["u"]`` 与 ``res.u`` 两种写法）：
 
     valid      bool    是否识别/追踪到黑框
-    u, v       float   靶心像素坐标（已按 CENTER_ALPHA 平滑，供显示/常规使用）
+    u, v       float   靶心像素坐标（已按卡尔曼/可选 EMA 平滑，供显示/常规使用）
     raw_u/v    float   未平滑中心（闭环用，见 config.AIM_USE_RAW）
     center     tuple   (u, v)；无效时为 None
     quad       (4,2)   外框四角，顺序已规整（左上起逆时针）
@@ -128,7 +128,13 @@ def load_config(**overrides):
     from config import Config
     if not overrides:
         return Config
-    return type("ApiConfig", (Config,), dict(overrides))
+    cfg = type("ApiConfig", (Config,), dict(overrides))
+    if "AIM_PROFILE" in overrides:
+        from config import apply_aim_profile
+        apply_aim_profile(cfg)
+        for key, value in overrides.items():
+            setattr(cfg, key, value)
+    return cfg
 
 
 def to_gray(frame, image_module=None):
@@ -154,7 +160,7 @@ def to_gray(frame, image_module=None):
         a = cv2.cvtColor(a, cv2.COLOR_RGB2GRAY)
     elif a.ndim == 3 and a.shape[2] == 4:
         a = cv2.cvtColor(a, cv2.COLOR_RGBA2GRAY)
-    if a.ndim != 2:
+    if a.ndim != 2 or a.size == 0:
         return None
     if a.dtype != np.uint8:
         a = np.clip(a, 0, 255).astype(np.uint8)
@@ -167,6 +173,7 @@ def _wrap(raw, gray):
     res["center"] = (res["u"], res["v"]) if res.get("valid") else None
     if gray is not None:
         res["image_size"] = (int(gray.shape[1]), int(gray.shape[0]))
+    res.setdefault("ms", res.get("detector_ms", 0.))
     res.setdefault("dx", None)
     res.setdefault("dy", None)
     res.setdefault("aim_valid", False)
@@ -177,7 +184,7 @@ def _wrap(raw, gray):
 def detect_black_frame(frame, cfg=None, detector=None):
     """**无状态**识别黑框，返回 ``Result``（没识别到则 ``valid=False``，``bool(res)`` 为假）。
 
-    每帧都是一次完整的"缩小图多阈值扫描 → 四边暗带验证 → 亚像素精修"，不依赖上一帧，
+    每帧都是一次完整的"缩小图Canny/Otsu 候选 → 四边暗带验证 → 亚像素精修"，不依赖上一帧，
     适合"只在某几问里取一次黑框"的用法。想复用实例提速可传 ``detector``（但那样就带状态了，
     连续调用会走窄带跟踪路径）。
 
@@ -192,6 +199,7 @@ def detect_black_frame(frame, cfg=None, detector=None):
         return Result(valid=False, stage="empty_frame", center=None,
                       dx=None, dy=None, aim_valid=False, ms=0.0)
     started = time.perf_counter()
+    det.reset()  # This API is stateless even when callers reuse a detector allocation.
     raw = det.process(gray)
     out = _wrap(raw, gray)
     out["ms"] = out.get("detector_ms", (time.perf_counter() - started) * 1000.0)
@@ -225,9 +233,10 @@ class CenterTracker:
         """追踪一帧：返回 ``Result``；``valid`` 表示本帧是否拿到靶心。"""
         gray = to_gray(frame)
         if gray is None:
+            self.detector.reset()
             return Result(valid=False, stage="empty_frame", center=None,
                           dx=None, dy=None, aim_valid=False, ms=0.0)
-        raw = self.detector.process(gray)
+        raw = self.detector.process(gray, timestamp=now)
         res = _wrap(raw, gray)
         if not res.get("valid"):
             return res
@@ -269,44 +278,63 @@ class AimLoop:
         cmds       dict  {"yaw": (ccw, pulses, rpm) or None, "pitch": ...}
     """
 
-    def __init__(self, cfg=None, enable_motors=True, with_laser=True):
+    def __init__(self, cfg=None, enable_motors=True, with_laser=True, clock=None, heading=None):
         self.cfg = cfg if cfg is not None else load_config()
+        self.clock = clock if clock is not None else time
         self.tracker = CenterTracker(self.cfg, with_laser=with_laser)
-        self.link = None
-        self.aim = None
+        self.link = self.aim = None
+        self.closed = False
         if enable_motors:
             from vision.stepper_link import StepperLink
             from vision.gimbal_aim import GimbalAim
-            self.link = StepperLink(self.cfg)
-            self.link.enable()
+            self.link = StepperLink(self.cfg, clock=self.clock)
             self.aim = GimbalAim(self.cfg)
+            if self.link.enable() is False:
+                self.aim.fault("enable_failed")
+        from vision.aim_control import VisionControl
+        calibrator = None
+        if enable_motors:
+            from vision.gimbal_calibrate import GimbalCalibrator
+            cal_cfg = type("YawCalibration", (self.cfg,), {"CALIBRATE_AXIS": "yaw"}) if self.cfg.CALIBRATE_AXIS == "auto" else self.cfg
+            calibrator = GimbalCalibrator(cal_cfg, self.link, self.clock.perf_counter())
+            if calibrator.done:
+                calibrator = None
+            if heading is None and (getattr(self.cfg, "ENABLE_IMU_FEEDFORWARD", False) or (getattr(self.cfg, "ENABLE_SEARCH_BUTTON", True) and getattr(self.cfg, "SEARCH_USE_IMU", True))):
+                from vision.imu_heading import HeadingFeedforward
+                heading = HeadingFeedforward(self.cfg, clock=self.clock)
+        self.control = VisionControl(self.cfg, self.link, self.aim, calibrator, clock=self.clock, heading=heading)
+        if self.cfg.CALIBRATE_AXIS == "auto":
+            self.control._auto_axis = "yaw"
 
     def step(self, frame, now=None):
-        now = time.perf_counter() if now is None else float(now)
-        res = self.tracker.track(frame, now)
-        res["aim_state"] = None
-        res["cmds"] = {"yaw": None, "pitch": None}
-        if self.aim is None or self.link is None:
-            return res
-        if self.aim.state != "FAULT":
-            out = self.aim.update(res, now=now)
-            res["aim_state"] = out["state"]
-            for axis, command in out["cmds"].items():
-                if command is not None:
-                    ccw, pulses, rpm = command
-                    self.link.move(axis, ccw, pulses, rpm,
-                                   getattr(self.cfg, "ACC_DEFAULT", 0), now=now)
-                    res["cmds"][axis] = command
-        fb = self.link.poll(now)
-        if fb.get("fault"):
-            self.link.stop(now=now)
-            self.aim.fault("link:%s" % fb["reason"])
-            res["aim_state"] = "FAULT"
-        return res
+        if self.closed:
+            raise RuntimeError("AimLoop is closed")
+        captured = self.clock.perf_counter() if now is None else float(now)
+        res = self.tracker.track(frame, captured)
+        out = self.control.accept_result(res, captured)
+        return _wrap(out, to_gray(frame))
+
+    def idle(self):
+        if not self.closed:
+            self.control.idle()
+
+    def request_search(self):
+        if not self.closed:
+            self.control.request_search.set()
 
     def stop(self):
         if self.link is not None:
-            self.link.stop()
+            self.control._stop_motion(self.clock.perf_counter())
 
     def close(self):
-        self.stop()
+        if self.closed:
+            return
+        self.closed = True
+        try:
+            self.stop()
+        finally:
+            try:
+                self.control.close()
+            finally:
+                if self.link is not None:
+                    self.link.close()

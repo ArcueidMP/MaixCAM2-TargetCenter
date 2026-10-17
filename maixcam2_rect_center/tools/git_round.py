@@ -11,7 +11,7 @@
 
 用法（在 maixcam2_rect_center/ 下，本机 Python 用 "D:/Python311/python.exe"）：
     python -B tools/git_round.py --check
-        只做检查：BUILD_ID 一致性 / build_single --check / patch --check / 待提交清单。
+        只做检查：BUILD_ID 一致性 / build_single --check / check_app --manifest / 待提交清单。
     python -B tools/git_round.py -m "gpt: 摘要"
         先跑上面的检查；通过后精确 add 本轨目录并 commit。
     python -B tools/git_round.py -m "gpt: 摘要" --with-memory
@@ -34,7 +34,7 @@ REPO = os.path.dirname(ROOT)              # 25Efork/（仓库根）
 SELF_DIR = os.path.basename(ROOT)         # "maixcam2_rect_center"
 MEM_DIR = ".workbuddy/memory"
 BUILD_RE = r'^BUILD_ID = "([^"]*)"'
-PREFIXES = ("gpt:", "repo:", "docs:", "tools:", "deepseek:")
+PREFIXES = ("gpt:", "repo:", "docs:", "tools:", "code:", "deepseek:")
 
 
 def run(cmd, cwd=None):
@@ -84,14 +84,13 @@ def checks(verbose=True):
         warns.append("build_single --check 未通过 -> 先跑 tools/build_single.py")
 
     if verbose:
-        print("\n=== [3/4] 防覆盖接线是否完整（apply_gimbal_track_patch --check）===")
-    rc, out = run([sys.executable, "-B", "tools/apply_gimbal_track_patch.py", "--check"],
-                  cwd=ROOT)
+        print("\n=== [3/4] 当前模块化应用门禁（check_app --manifest）===")
+    rc, out = run([sys.executable, "-B", "tools/check_app.py", "--manifest"], cwd=ROOT)
     if verbose:
-        print("  " + "\n  ".join(out.strip().splitlines()))
-    if "0 处需要处理" not in out:
+        print(out.strip())
+    if rc != 0:
         ok = False
-        warns.append("main.py 接线缺项（可能被覆盖）-> 跑 tools/apply_gimbal_track_patch.py 补齐")
+        warns.append("应用门禁未通过")
 
     if verbose:
         print("\n=== [4/4] 本轨待提交清单（git status --short）===")
@@ -118,6 +117,11 @@ def do_commit(message, with_memory):
     if with_memory:
         paths.append(MEM_DIR)
 
+    rc, out = run(["git", "diff", "--cached", "--name-only", "-z"])
+    unrelated = [p for p in out.split("\0") if p and not any(p == root or p.startswith(root+"/") for root in paths)]
+    if rc != 0 or unrelated:
+        print("[git_round] 暂存区含本轮路径以外的改动，停止提交：" + repr(unrelated))
+        return 3
     rc, out = run(["git", "add", "--"] + paths)
     if rc != 0:
         print("[git_round] git add 失败：\n" + out)

@@ -1,7 +1,7 @@
 id: maixcam2_rect_center
 name: MaixCAM2 Rectangle Center
 name[zh]: MaixCAM2 矩形黑框中心
-version: 0.5.2
+version: 0.8.0
 icon: assets/icon.png
 author: 25Efork
 desc: Detect a black rectangle and output its perspective-correct center; a laser-spot panel shows the spot-to-center pixel offset; optional two-axis ZDT gimbal aiming closed loop; reusable target_api for other tasks.
@@ -20,8 +20,6 @@ exclude:
   - .gitattributes
   # 文档一律不进包：显式列出（打包器若不支持通配也能生效）+ *.md 兜底
   - README.md
-  - B轨代码技术解析与功能分析.md
-  - MaixCAM应用代码规范.md
   - "*.md"
   # 调试落盘图不进包（assets/icon.png 是图标，必须保留，故不能排 *.png）
   - screenshot*.png

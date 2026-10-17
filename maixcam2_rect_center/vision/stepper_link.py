@@ -11,6 +11,7 @@
 """
 
 import time
+import math
 
 CR = 0x6B
 STATUS_OK = 0x02
@@ -69,7 +70,8 @@ def _readback_pin(pinmap, pin):
 class StepperLink:
     """两条独立 UART 链路；任一轴打开失败不会阻塞另一轴。"""
 
-    def __init__(self, cfg):
+    def __init__(self, cfg, clock=None):
+        self._clock = clock if clock is not None else time
         self.cfg = cfg
         self._ports = {}
         self._rxbuf = {"yaw": bytearray(), "pitch": bytearray()}
@@ -78,6 +80,7 @@ class StepperLink:
         self._last_status = {"yaw": None, "pitch": None}
         self._last_cmd = {"yaw": 0.0, "pitch": 0.0}
         self._last_ack = {"yaw": 0.0, "pitch": 0.0}
+        self._pending_ack_since = {"yaw": None, "pitch": None}
         self._timeout_count = {"yaw": 0, "pitch": 0}
         self._e2_times = []
         self.fault_reason = None
@@ -147,10 +150,15 @@ class StepperLink:
             return False
         try:
             n = port.write(payload)
-            if n is not None and int(n) < 0:
+            if n is not None and int(n) != len(payload):
                 raise IOError("write returned %s" % n)
             self._stats["tx"] += 1
-            self._last_cmd[axis] = time.perf_counter() if now is None else float(now)
+            self._last_cmd[axis] = self._clock.perf_counter() if now is None else float(now)
+            pending = getattr(self, "_pending_ack_since", None)
+            if pending is None:
+                pending = self._pending_ack_since = {"yaw": None, "pitch": None}
+            if pending[axis] is None:
+                pending[axis] = self._last_cmd[axis]
             return True
         except Exception as exc:
             self._stats["err"] += 1
@@ -224,6 +232,8 @@ class StepperLink:
         返回 dict(ok, e2, reenabled, fault, reason)。本方法不碰 MaixPy，可直接单测。
         """
         now = float(now)
+        if not hasattr(self, "_pending_ack_since"):
+            self._pending_ack_since = {"yaw": None, "pitch": None}
         out = {"frames": list(frames), "ok": 0, "e2": 0,
                "reenabled": [], "fault": False, "reason": None}
         e2_axes = []
@@ -234,6 +244,8 @@ class StepperLink:
                 continue
             # 凡是能解析出状态的帧都证明链路活着 -> 刷新该轴 ACK 时刻。
             self._last_ack[axis] = now
+            self._pending_ack_since[axis] = None
+            self._timeout_count[axis] = 0
             if status == STATUS_OK:
                 out["ok"] += 1
                 self._stats["ok"] += 1
@@ -261,7 +273,10 @@ class StepperLink:
         timeout_ms = float(getattr(self.cfg, "RX_TIMEOUT_MS", 0) or 0)
         if timeout_ms > 0 and self._stats["ok"] > 0:
             for axis in self._ports:
-                if now - self._last_cmd[axis] <= timeout_ms / 1000.0:
+                pending = self._pending_ack_since.get(axis)
+                if pending is None and self._last_cmd[axis] > self._last_ack[axis]:
+                    pending = self._last_cmd[axis]
+                if pending is None or now - pending <= timeout_ms / 1000.0:
                     self._timeout_count[axis] = 0
                     continue
                 if self._last_ack[axis] >= self._last_cmd[axis]:
@@ -278,8 +293,36 @@ class StepperLink:
 
     def poll(self, now=None):
         """非阻塞读两条串口并处理反馈；返回 `_ingest` 的 dict（含 frames）。"""
-        now = time.perf_counter() if now is None else float(now)
+        now = self._clock.perf_counter() if now is None else float(now)
         return self._ingest(self._drain(), now)
 
     def stats(self):
         return dict(self._stats)
+
+    def close(self):
+        for port in tuple(self._ports.values()):
+            try:
+                port.close()
+            except Exception:
+                pass
+        self._ports.clear()
+
+
+def estimate_move_seconds(pulses, rpm, acc=0, pulses_per_rev=3200):
+    values = tuple(map(float, (pulses, rpm, acc, pulses_per_rev)))
+    if not all(math.isfinite(v) for v in values):
+        raise ValueError("non-finite motion parameters")
+    pulses, rpm, acc, ppr = values
+    if ppr <= 0 or rpm <= 0 or not 0 <= acc <= 255:
+        raise ValueError("invalid motion parameters")
+    pulses, rpm = abs(pulses), min(5000., rpm)
+    speed = rpm*ppr/60
+    if acc == 0:
+        return pulses/speed
+    ramp = (256-acc)*50e-6
+    acceleration = ppr/(60*ramp)
+    ramp_seconds = rpm*ramp
+    ramp_distance = speed*ramp_seconds
+    if pulses <= ramp_distance:
+        return 2*math.sqrt(pulses/acceleration)
+    return 2*ramp_seconds+(pulses-ramp_distance)/speed

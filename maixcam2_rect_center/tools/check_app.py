@@ -244,7 +244,7 @@ BANNED_CALLS = {
 }
 BANNED_MODULES = {"matplotlib", "pyplot", "tkinter", "PyQt5", "PySide", "PySide2", "PyQt6"}
 BANNED_BUILTINS = {"input", "raw_input"}
-LOSSLESS_SINK_HINT = ("imencode", "imwrite")
+LOSSLESS_SINK_HINT = ("imwrite",)  # imencode returns memory; it does not write flash.
 
 # AST 解析失败（语法错误）时的兜底：至少把"禁止项"粗筛出来，不要静默跳过 C5。
 _FALLBACK_PATTERNS = [(re.compile(p), msg) for p, msg in [

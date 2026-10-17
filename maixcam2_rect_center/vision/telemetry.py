@@ -11,7 +11,7 @@ MAIN_LOOP_SLOW_MS = 66.0
 def format_perf_line(build_id, capture_fps, display_fps, display_low1, vision_fps,
                      result, read_avg, draw_avg, loop_avg,
                      show_avg, show_p95, show_max, show_n,
-                     age_s, shown, drop_show, drop_vision):
+                     age_s, shown, drop_show, drop_vision, detector_result=None):
     """拼装 [perf] 行。
 
     读法：[perf] 里 capture / disp / detect_fps 是三路**不同**口径 ——
@@ -19,6 +19,7 @@ def format_perf_line(build_id, capture_fps, display_fps, display_low1, vision_fp
       read/draw/loop 属于**主循环**，show 属于**显示线程** —— 分开看就能一眼判定
       "到底谁在吃时间"（这正是 1.5fps 归因的关键）。
     """
+    det = result if detector_result is None else detector_result
     return ("[perf] %s capture=%.1f disp=%.1f low1=%.1f detect_fps=%.1f "
             "valid=%s stage=%s | read=%.1f draw=%.1f loop=%.1f ms | "
             "show avg=%.1f p95=%.1f max=%.1fms n=%d | "
@@ -27,7 +28,9 @@ def format_perf_line(build_id, capture_fps, display_fps, display_low1, vision_fp
              result.get("valid", False), result.get("stage"),
              read_avg, draw_avg, loop_avg,
              show_avg, show_p95, show_max, show_n,
-             age_s * 1000, shown, drop_show, drop_vision))
+             age_s * 1000, shown, drop_show, drop_vision)) + (
+            " det_valid=%s det_stage=%s det_ms=%.1f det_masks=%d" %
+            (det.get("valid", False), det.get("stage"), det.get("detector_ms", 0.), det.get("masks", 0)))
 
 
 def format_slow_loop(loop_avg):

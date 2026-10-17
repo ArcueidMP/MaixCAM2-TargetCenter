@@ -16,6 +16,10 @@ from vision.gimbal_calibrate import GimbalCalibrator
 
 
 class Cfg:
+    # Isolate the legacy two-level law; new dynamic scheduling is tested separately.
+    AIM_PROGRESSIVE = False
+    AIM_WAIT_MOTION = False
+    AIM_HISTORY_MAX_GAP_S = 10.0
     DEADBAND_PX = 2.0
     COMMAND_INTERVAL_S = 0.0
     PULSE_PER_PX_YAW = 3.67
